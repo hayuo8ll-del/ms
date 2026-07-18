@@ -1,0 +1,28 @@
+name: Scheduler Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  run-scheduler:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+
+      - name: Run scheduler.py
+        working-directory: backend
+        run: python3 scheduler.py
