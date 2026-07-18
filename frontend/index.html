@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>生産計画 自動立案</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>生産計画 自動立案</h1>
+    <button id="run-plan" type="button">計画を立案する</button>
+  </header>
+
+  <main>
+    <section id="summary" class="summary-grid" aria-live="polite"></section>
+
+    <section class="panel">
+      <h2>受注別スケジュール</h2>
+      <div class="table-scroll">
+        <table id="orders-table">
+          <thead>
+            <tr>
+              <th>状態</th>
+              <th>受注ID</th>
+              <th>品名</th>
+              <th>納期</th>
+              <th>完了予定</th>
+              <th>遅延</th>
+              <th>コスト</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>工程別 稼働負荷（定時 / 残業）</h2>
+      <div id="work-center-load"></div>
+    </section>
+
+    <section class="panel">
+      <h2>工程スケジュール明細</h2>
+      <div class="table-scroll">
+        <table id="steps-table">
+          <thead>
+            <tr>
+              <th>受注ID</th>
+              <th>工程</th>
+              <th>開始</th>
+              <th>終了</th>
+              <th>定時(h)</th>
+              <th>残業(h)</th>
+              <th>コスト</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <p id="error-banner" role="alert" hidden></p>
+
+  <script src="app.js"></script>
+</body>
+</html>
