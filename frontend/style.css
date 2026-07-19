@@ -95,19 +95,64 @@ header h1 {
   color: var(--text);
 }
 
-button#run-plan {
-  background: var(--accent-a);
-  color: #fff;
+.controls a#download-template {
+  color: var(--accent-a);
+  font-size: 12px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.controls a#download-template:hover {
+  text-decoration: underline;
+}
+
+.controls .divider {
+  width: 1px;
+  height: 20px;
+  background: var(--line);
+  margin: 0 4px;
+}
+
+button#run-plan,
+button#import-button {
   border: none;
   border-radius: 8px;
   padding: 0.55rem 1rem;
   font-size: 0.9rem;
   cursor: pointer;
+  white-space: nowrap;
 }
 
-button#run-plan:disabled {
+button#run-plan {
+  background: var(--accent-a);
+  color: #fff;
+}
+
+button#import-button {
+  background: transparent;
+  border: 1px solid var(--accent-a);
+  color: var(--accent-a);
+}
+
+button#run-plan:disabled,
+button#import-button:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+#import-result {
+  margin: 0 24px 12px;
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-b) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-b) 40%, transparent);
+  color: var(--accent-b);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+#import-result[hidden] {
+  display: none;
 }
 
 .kpis {
@@ -311,6 +356,9 @@ footer {
   border-radius: 8px;
   background: var(--danger-bg);
   color: var(--danger);
+  white-space: pre-line;
+  font-family: var(--mono);
+  font-size: 12px;
 }
 
 #error-banner[hidden] {

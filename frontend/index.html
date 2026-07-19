@@ -13,6 +13,10 @@
       <span class="tag">仮データ版 — SAMPLE DATA</span>
     </div>
     <div class="controls">
+      <a id="download-template" href="/api/import/template" download>Excelテンプレートをダウンロード</a>
+      <input type="file" id="import-file" accept=".xlsx" hidden />
+      <button id="import-button" type="button">Excelを取り込む</button>
+      <span class="divider"></span>
       <label for="start-date">計画開始日</label>
       <input type="date" id="start-date" />
       <button id="run-plan" type="button">計画を立案する</button>
@@ -20,6 +24,8 @@
   </header>
 
   <section class="kpis" id="kpis" aria-live="polite"></section>
+
+  <p id="import-result" role="status" hidden></p>
 
   <section class="warnings" id="warnings" hidden>
     <div class="w-title">警告</div>
@@ -41,7 +47,7 @@
 
   <footer>
     config/equipment_master.json ・ changeover_matrix.json ・ orders_sample.json を読み込んで生成。
-    実データ移行時は config/ 配下のJSONを差し替えるだけでよい。
+    実データ移行時は「Excelテンプレートをダウンロード」→編集→「Excelを取り込む」で config/ を差し替えられる。
   </footer>
 
   <p id="error-banner" role="alert" hidden></p>

@@ -6,6 +6,9 @@ const warningListEl = document.getElementById("warning-list");
 const ganttEl = document.getElementById("gantt");
 const utilGridEl = document.getElementById("util-grid");
 const errorBanner = document.getElementById("error-banner");
+const importButton = document.getElementById("import-button");
+const importFileInput = document.getElementById("import-file");
+const importResultEl = document.getElementById("import-result");
 
 const HOUR_PX = 26;
 
@@ -157,5 +160,49 @@ async function runPlan() {
   }
 }
 
+async function importExcel() {
+  const file = importFileInput.files[0];
+  if (!file) return;
+
+  errorBanner.hidden = true;
+  importResultEl.hidden = true;
+  importButton.disabled = true;
+  importButton.textContent = "取り込み中...";
+
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch("/api/import", { method: "POST", body: formData });
+    const data = await res.json();
+
+    if (!res.ok) {
+      const details = Array.isArray(data.detail) ? data.detail : [];
+      if (details.length > 0) {
+        const lines = details.map((d) => `[${d.sheet}${d.row ? " 行" + d.row : ""}] ${d.message}`);
+        throw new Error(lines.join("\n"));
+      }
+      throw new Error(typeof data.detail === "string" ? data.detail : "取り込みに失敗しました。");
+    }
+
+    importResultEl.hidden = false;
+    importResultEl.textContent =
+      `取り込み完了: 工程${data.stages}件 / 号機${data.machines}台 / ` +
+      `段取り替えルール${data.changeover_rules}件 / 受注${data.orders}件 / ` +
+      `在庫品目${data.inventory_items}件 / 原材料${data.raw_materials}件`;
+
+    startDateInput.value = "";
+    await runPlan();
+  } catch (err) {
+    errorBanner.hidden = false;
+    errorBanner.textContent = `Excel取り込みエラー:\n${err.message}`;
+  } finally {
+    importButton.disabled = false;
+    importButton.textContent = "Excelを取り込む";
+    importFileInput.value = "";
+  }
+}
+
 runButton.addEventListener("click", runPlan);
+importButton.addEventListener("click", () => importFileInput.click());
+importFileInput.addEventListener("change", importExcel);
 runPlan();

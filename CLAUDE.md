@@ -13,7 +13,9 @@ changeover time between product types, lot splitting into parallel sub-lots afte
 3, raw-material/inventory availability, and a real shift calendar (configurable
 day/night shift windows). Master data (equipment, changeover times, orders/inventory)
 lives in `config/*.json`; swapping in real data means replacing those files only — no
-code changes.
+code changes. Real data can be brought in either by editing those JSON files directly,
+or via the web UI's Excel import (download a template, edit it, upload it — see
+`backend/excel_import.py`).
 
 ## Commands
 
@@ -26,6 +28,9 @@ matching the existing CI workflow at `.github/workflows/scheduler-test.yml`).
   `http://localhost:8000/`
 - Run tests: `cd backend && pytest` (or a single test:
   `cd backend && pytest tests/test_scheduler.py::test_lot_splitting_creates_configured_number_of_parallel_reels`)
+- Download a fresh Excel import template (reflecting the current `config/*.json`):
+  `curl -o template.xlsx http://localhost:8000/api/import/template` while the API is
+  running.
 
 There is no separate frontend build step — `frontend/` is static HTML/CSS/JS served
 directly by FastAPI's `StaticFiles` mount.
@@ -72,19 +77,42 @@ directly by FastAPI's `StaticFiles` mount.
   current stock is below safety stock. Also has a `__main__` block used as a CI smoke
   test (`python3 scheduler.py`) that runs the algorithm against `config/` and prints a
   summary — must keep working without exceptions.
-- `backend/main.py` — FastAPI app. `GET /api/equipment`, `GET /api/orders`, and
-  `POST /api/plan` (optional `start_date`, defaults to today) which reloads `config/*.json`
-  fresh on every call and returns the `PlanResult`. Mounts `frontend/` at `/`.
+- `backend/excel_import.py` — converts between `config/*.json` and a single `.xlsx`
+  workbook with fixed sheet names/columns: `Stages`, `Machines`, `LotSplitting`,
+  `ShiftModes`, `Settings` (key/value: `defaultShiftMode`, `planStart`), `Changeover`,
+  `AShiftOnlyTransitions`, `Orders`, `Inventory`, `RawMaterials`,
+  `RawMaterialIncoming`. `export_workbook()` builds a workbook pre-filled with the
+  current `config/*.json` contents (used as a downloadable template).
+  `parse_workbook()` reads an uploaded workbook, validates every row (collecting all
+  issues — sheet name, row number, message — rather than stopping at the first one),
+  and returns JSON-shaped dicts; on any validation failure it raises
+  `ImportValidationError` and *nothing* is written. `save_config()` writes the parsed
+  dicts to `config/*.json` (only called after validation succeeds).
+- `backend/main.py` — FastAPI app. `GET /api/equipment`, `GET /api/orders`,
+  `POST /api/plan` (optional `start_date`, defaults to today; reloads `config/*.json`
+  fresh on every call and returns the `PlanResult`), `POST /api/import` (multipart
+  `.xlsx` upload; 422 with a list of `{sheet, row, message}` on validation failure,
+  otherwise overwrites `config/*.json` and returns import counts), and
+  `GET /api/import/template` (downloads the current config as a pre-filled `.xlsx`).
+  Mounts `frontend/` at `/`.
 - `backend/tests/test_scheduler.py` — unit tests using small synthetic
   equipment/changeover/orders fixtures (not the sample config) covering: earliest-ready
   machine selection, changeover time being consumed before a run starts, A-shift-only
   transitions, lot-splitting fan-out count, the uninterruptible-stage/shift-boundary
   push, batch rounding, material-availability delay (and shortage warning), safety-stock
   warning, EDD ordering, and due-date delay warnings.
+- `backend/tests/test_excel_import.py` — covers a minimal-workbook round trip through
+  the scheduler, an export→import round trip against the real `config/*.json`, and
+  validation-error cases (missing required sheet, non-numeric field with row number,
+  unknown stage reference, duplicate order ID, a stage with no machines, a corrupted
+  file).
 - `frontend/` — static `index.html` + `app.js` + `style.css`. On load (and on button
   click, with an optional plan-start date) calls `POST /api/plan` and renders: KPI cards,
   a warnings panel, and a per-stage/per-machine Gantt chart (each `ScheduledOp` drawn as
-  a bar positioned/sized by its start/end time) plus per-machine utilization cards.
+  a bar positioned/sized by its start/end time) plus per-machine utilization cards. The
+  header also has an Excel template download link and an upload button that posts to
+  `/api/import`, shows a success summary or a detailed per-row error list, and
+  automatically re-runs the plan on success.
 
 ## Known limitations / next steps
 
