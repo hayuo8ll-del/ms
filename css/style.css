@@ -72,7 +72,46 @@ main { flex: 1; padding: 16px; }
 .big-btn:active { transform: translateY(3px); }
 .big-btn.green { background: var(--green); }
 .big-btn.blue { background: var(--blue); }
-.big-btn.ghost { background: #fff; color: var(--ink); }
+.big-btn.ghost { background: var(--card); color: var(--ink); }
+.big-btn.red-btn { background: var(--red); }
+
+/* ホームのあいさつ（アバター） */
+.hero { display: flex; align-items: center; gap: 14px; margin: 6px 4px 10px; }
+.hero-avatar {
+  font-size: 46px; width: 74px; height: 74px; flex: none;
+  background: var(--card); border-radius: 22px; box-shadow: var(--shadow);
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* よみあげボタン */
+.speak-btn {
+  position: absolute; top: 10px; right: 10px; border: none;
+  background: var(--bg2); width: 40px; height: 40px; border-radius: 12px;
+  font-size: 20px; cursor: pointer; line-height: 1;
+}
+.speak-btn:active { transform: translateY(2px); }
+.question-card { position: relative; }
+
+/* ショップ */
+.shop-tabs { display: flex; gap: 10px; margin-bottom: 14px; }
+.shop-tab {
+  flex: 1; border: none; background: var(--card); color: var(--ink); font-weight: 800;
+  font-size: 16px; padding: 12px; border-radius: 14px; box-shadow: var(--shadow); cursor: pointer;
+}
+.shop-tab.on { background: var(--orange); color: #fff; }
+.shop-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.shop-item {
+  background: var(--card); border-radius: 18px; box-shadow: var(--shadow);
+  padding: 12px 8px; text-align: center; border: 3px solid transparent;
+}
+.shop-item.active { border-color: var(--green); }
+.shop-emoji { font-size: 40px; line-height: 1; }
+.shop-swatch { width: 48px; height: 48px; border-radius: 50%; margin: 0 auto; box-shadow: inset 0 0 0 2px rgba(0,0,0,.08); }
+.shop-name { font-size: 13px; font-weight: 700; margin: 6px 0; }
+.shop-btn { border: none; border-radius: 10px; font-size: 13px; font-weight: 800; padding: 8px 6px; width: 100%; cursor: pointer; }
+.shop-btn.buy { background: #ffe9cf; color: var(--orange-d); }
+.shop-btn.use { background: var(--blue); color: #fff; }
+.shop-btn.using { background: var(--green); color: #fff; }
 
 /* グレード選択 */
 .grade-choose { display: grid; gap: 16px; margin-top: 10px; }
