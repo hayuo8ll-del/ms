@@ -1,186 +1,305 @@
-"""生産計画の自動立案エンジン。
+"""生産計画の自動立案エンジン(多設備ルーティング版)。
 
-有限能力（工程ごとの日次稼働時間）を前提に、納期の早い受注から順に
-（EDD: Earliest Due Date）各工程へ時間を割り付けていく前進スケジューリング。
-定時能力を使い切った分は残業枠に割り付け、コストを積み上げる。
+工程A→B→Cの複数号機・段取り替え・原材料在庫・シフトカレンダーを考慮した
+有限能力の前進スケジューリング。納期の早い受注から順に(EDD)処理する。
 
-CI ではこのファイルを直接 `python3 scheduler.py` で実行し、
-サンプルデータで例外なく立案できることをスモークテストしている。
+  - 各工程は複数の号機(設備)を持ち、段取り替え込みで最も早く着手できる号機を選ぶ
+  - 品種切替時は工程ごとの段取り替え時間マトリクスを適用し、シフト制約付き切替にも対応
+  - 工程Aの完了後、ロットを分割して後工程(B/C)へ並行投入する
+  - 「連続作業必須」工程は、シフト(勤務時間帯)をまたいで作業を中断できない
+  - 最終工程は指定単位への数量丸め(切り上げ)を行う
+  - 原材料の在庫・入庫予定によって着手可能時刻が制約される
+  - 安全在庫を下回る品目があれば警告を出す
+
+CI ではこのファイルを直接 `python3 scheduler.py` で実行し、config/ のサンプル
+データで例外なく立案できることをスモークテストしている。
 """
 from __future__ import annotations
 
-from collections import defaultdict
-from datetime import date, timedelta
+import math
+from dataclasses import dataclass
+from datetime import datetime, time, timedelta
 
 from models import (
-    DailyAllocation,
+    ChangeoverConfig,
+    EquipmentConfig,
+    MachineConfig,
+    MachineUtilization,
     Order,
-    OrderSchedule,
+    OrdersData,
     PlanResult,
-    PlanSummary,
-    StepSchedule,
-    WorkCenter,
+    PlanWarning,
+    ScheduledOp,
+    StageConfig,
 )
-
-_EPSILON = 1e-9
-
-
-def _is_business_day(day: date) -> bool:
-    return day.weekday() < 5
+from shift_calendar import ShiftCalendar
 
 
-def _next_business_day(day: date) -> date:
-    day += timedelta(days=1)
-    while not _is_business_day(day):
-        day += timedelta(days=1)
-    return day
-
-
-def _first_business_day_on_or_after(day: date) -> date:
-    while not _is_business_day(day):
-        day += timedelta(days=1)
-    return day
+@dataclass
+class _MachineState:
+    config: MachineConfig
+    free_at: datetime
+    last_product: str | None = None
 
 
 class Scheduler:
-    """工程の空き能力を管理しながら受注群を前進スケジューリングする。"""
+    """設備(号機)の空き状況とシフトカレンダーを管理しながら受注群を前進スケジューリングする。"""
 
-    def __init__(self, work_centers: list[WorkCenter]):
-        self.work_centers: dict[str, WorkCenter] = {wc.process_id: wc for wc in work_centers}
-        # (process_id, day) -> [regular_used, overtime_used]
-        self._usage: dict[tuple[str, date], list[float]] = defaultdict(lambda: [0.0, 0.0])
+    def __init__(
+        self,
+        equipment: EquipmentConfig,
+        changeover: ChangeoverConfig,
+        orders_data: OrdersData,
+        start_override: datetime | None = None,
+    ):
+        self.equipment = equipment
+        self.changeover = changeover
+        self.orders_data = orders_data
+        self.plan_start = start_override or orders_data.plan_start
+        self.stage_order: list[StageConfig] = equipment.stages_in_order()
+        self.calendar = ShiftCalendar(equipment.active_shift_defs(), self.plan_start)
 
-    def _available_capacity(self, process_id: str, day: date) -> tuple[float, float]:
-        wc = self.work_centers[process_id]
-        used_regular, used_overtime = self._usage[(process_id, day)]
-        return (
-            max(wc.daily_regular_hours - used_regular, 0.0),
-            max(wc.daily_overtime_hours - used_overtime, 0.0),
+        self._machines: dict[str, _MachineState] = {
+            m.machine_id: _MachineState(config=m, free_at=self.plan_start)
+            for stage in self.stage_order
+            for m in stage.machines
+        }
+
+        self.schedule: list[ScheduledOp] = []
+        self.warnings: list[PlanWarning] = []
+        self._material_consumed: dict[str, float] = {}
+
+    # -- 設備選択・段取り替え -------------------------------------------------
+
+    def _machines_for(self, stage: StageConfig) -> list[_MachineState]:
+        return [self._machines[m.machine_id] for m in stage.machines]
+
+    def _pick_machine(self, stage: StageConfig, product: str, earliest_start: datetime) -> _MachineState:
+        """段取り替え込みで最も早く着手できる号機を選ぶ。"""
+        best: _MachineState | None = None
+        best_ready: datetime | None = None
+        for mach in self._machines_for(stage):
+            co_minutes = self.changeover.minutes(stage.stage_id, mach.last_product, product)
+            candidate_earliest = max(mach.free_at, earliest_start)
+            ready = candidate_earliest + timedelta(minutes=co_minutes)
+            if best_ready is None or ready < best_ready:
+                best, best_ready = mach, ready
+        assert best is not None  # 各工程は最低1台の号機を持つ前提
+        return best
+
+    # -- 原材料制約 -----------------------------------------------------------
+
+    def _material_available_at(self, product: str, needed_qty: float) -> datetime:
+        """材料の在庫・入庫予定から、必要数量が揃うタイミングを返す。不足時は警告を出す。"""
+        mat = self.orders_data.raw_materials.get(product)
+        if mat is None:
+            return self.plan_start
+
+        already_used = self._material_consumed.get(product, 0.0)
+        available = mat.on_hand - already_used
+        if available >= needed_qty:
+            return self.plan_start
+
+        for inc_date, inc_qty in sorted(mat.incoming, key=lambda x: x[0]):
+            available += inc_qty
+            if available >= needed_qty:
+                return datetime.combine(inc_date, time(8, 30))
+
+        self.warnings.append(
+            PlanWarning(
+                order_id=product,
+                message=(
+                    f"{product} の原材料({mat.material_id})が入庫予定を含めても不足しています"
+                    f"(必要 {needed_qty:.0f} に対し見込み {available:.0f})。計画開始時刻のまま暫定的に立案しています。"
+                ),
+            )
         )
+        return self.plan_start
 
-    def _consume(self, process_id: str, day: date, regular: float, overtime: float) -> None:
-        usage = self._usage[(process_id, day)]
-        usage[0] += regular
-        usage[1] += overtime
+    # -- 1工程分の割り付け ------------------------------------------------------
 
-    def _schedule_step(self, process_id: str, hours_needed: float, earliest_start: date) -> StepSchedule:
-        if process_id not in self.work_centers:
-            raise ValueError(f"未定義の工程です: {process_id}")
+    def _schedule_op(
+        self,
+        stage: StageConfig,
+        order_id: str,
+        lot_id: str,
+        product: str,
+        qty: float,
+        earliest_start: datetime,
+    ) -> tuple[datetime, datetime]:
+        eff_qty = qty
+        note_parts: list[str] = []
+        if stage.batch_rounding:
+            eff_qty = math.ceil(qty / stage.batch_rounding) * stage.batch_rounding
+            if eff_qty != qty:
+                note_parts.append(f"数量を{stage.batch_rounding}単位に丸め({qty:.0f}→{eff_qty:.0f})")
 
-        wc = self.work_centers[process_id]
-        day = _first_business_day_on_or_after(earliest_start)
-        remaining = hours_needed
-        allocations: list[DailyAllocation] = []
-        total_regular = 0.0
-        total_overtime = 0.0
-        cost = 0.0
+        machine = self._pick_machine(stage, product, earliest_start)
+        co_minutes = self.changeover.minutes(stage.stage_id, machine.last_product, product)
+        requires_a_shift = self.changeover.requires_a_shift(stage.stage_id, machine.last_product, product)
+        co_duration = timedelta(minutes=co_minutes)
+        run_duration = timedelta(hours=eff_qty / machine.config.capacity_per_hour)
 
-        # 割り付ける時間が0（工程スキップ相当）でも安全に終了する
-        while remaining > _EPSILON:
-            reg_avail, ot_avail = self._available_capacity(process_id, day)
-            reg_use = min(remaining, reg_avail)
-            remaining -= reg_use
+        base_earliest = max(machine.free_at, earliest_start)
 
-            ot_use = 0.0
-            if remaining > _EPSILON:
-                ot_use = min(remaining, ot_avail)
-                remaining -= ot_use
+        # start/end は正味の加工時間のみを表す(段取り替え時間は changeover_minutes に別記録し、
+        # start より前に消費される時間として扱う)。
+        if stage.uninterruptible:
+            total_duration = co_duration + run_duration
+            block_start = self.calendar.next_valid_start(base_earliest, total_duration, require_a_shift=requires_a_shift)
+            start = block_start + co_duration
+            end = start + run_duration
+            note_parts.append("連続作業(シフトをまたいで中断不可)")
+        else:
+            if requires_a_shift:
+                block_start = self.calendar.next_valid_start(base_earliest, timedelta(0), require_a_shift=True)
+            else:
+                block_start = self.calendar.next_available(base_earliest)
+            start = self.calendar.advance(block_start, co_duration) if co_minutes > 0 else block_start
+            end = self.calendar.advance(start, run_duration)
 
-            if reg_use > _EPSILON or ot_use > _EPSILON:
-                self._consume(process_id, day, reg_use, ot_use)
-                allocations.append(DailyAllocation(day, round(reg_use, 4), round(ot_use, 4)))
-                total_regular += reg_use
-                total_overtime += ot_use
-                cost += reg_use * wc.regular_cost_per_hour + ot_use * wc.overtime_cost_per_hour
+        machine.free_at = end
+        machine.last_product = product
 
-            if remaining > _EPSILON:
-                day = _next_business_day(day)
-
-        start_date = allocations[0].day if allocations else earliest_start
-        end_date = allocations[-1].day if allocations else earliest_start
-        return StepSchedule(
-            process_id=process_id,
-            start_date=start_date,
-            end_date=end_date,
-            allocations=allocations,
-            regular_hours=round(total_regular, 4),
-            overtime_hours=round(total_overtime, 4),
-            cost=round(cost, 4),
+        self.schedule.append(
+            ScheduledOp(
+                order_id=order_id,
+                lot_id=lot_id,
+                stage_id=stage.stage_id,
+                machine_id=machine.config.machine_id,
+                product=product,
+                quantity=eff_qty,
+                start=start,
+                end=end,
+                changeover_minutes=co_minutes,
+                note="; ".join(note_parts),
+            )
         )
+        return start, end
 
-    def plan(self, orders: list[Order], start_date: date) -> PlanResult:
-        """納期優先(EDD) → 優先度 → 受注ID の順に前進スケジューリングする。"""
-        ordered = sorted(orders, key=lambda o: (o.due_date, o.priority, o.order_id))
-        order_schedules: list[OrderSchedule] = []
+    # -- 受注単位のスケジューリング ---------------------------------------------
 
-        for order in ordered:
-            next_start = start_date
-            step_schedules: list[StepSchedule] = []
-            order_cost = 0.0
+    def _schedule_order(self, order: Order) -> None:
+        due = datetime.combine(order.due_date, time(20, 30))
 
-            for step in order.routing:
-                hours_needed = step.hours_per_unit * order.quantity
-                step_sched = self._schedule_step(step.process_id, hours_needed, next_start)
-                step_schedules.append(step_sched)
-                order_cost += step_sched.cost
-                # 後工程は前工程が完了した翌営業日以降にしか着手できない
-                next_start = _next_business_day(step_sched.end_date)
+        material_ready = self._material_available_at(order.product, order.quantity)
+        self._material_consumed[order.product] = self._material_consumed.get(order.product, 0.0) + order.quantity
 
-            completion_date = step_schedules[-1].end_date if step_schedules else start_date
-            delay_days = max((completion_date - order.due_date).days, 0)
+        split_index = None
+        for idx, stage in enumerate(self.stage_order):
+            if stage.stage_id == self.equipment.lot_split_after:
+                split_index = idx
+                break
 
-            order_schedules.append(
-                OrderSchedule(
+        pre_split_stages = self.stage_order[: split_index + 1] if split_index is not None else self.stage_order
+        post_split_stages = self.stage_order[split_index + 1 :] if split_index is not None else []
+
+        cursor = material_ready
+        lot_id = f"{order.order_id}-LOT"
+        for stage in pre_split_stages:
+            _start, cursor = self._schedule_op(stage, order.order_id, lot_id, order.product, order.quantity, cursor)
+
+        completion = cursor
+        if post_split_stages:
+            split_into = max(self.equipment.lot_split_into, 1)
+            reel_qty = math.ceil(order.quantity / split_into)
+            reel_end_times: list[datetime] = []
+            for i in range(split_into):
+                qty = min(reel_qty, order.quantity - reel_qty * i)
+                if qty <= 0:
+                    continue
+                reel_id = f"{order.order_id}-R{i + 1}"
+                reel_cursor = cursor
+                for stage in post_split_stages:
+                    _start, reel_cursor = self._schedule_op(stage, order.order_id, reel_id, order.product, qty, reel_cursor)
+                reel_end_times.append(reel_cursor)
+            completion = max(reel_end_times) if reel_end_times else cursor
+
+        if completion > due:
+            delay = completion - due
+            delay_days = delay.days + (1 if delay.seconds > 0 else 0)
+            self.warnings.append(
+                PlanWarning(
                     order_id=order.order_id,
-                    product_name=order.product_name,
-                    due_date=order.due_date,
-                    completion_date=completion_date,
-                    delay_days=delay_days,
-                    steps=step_schedules,
-                    total_cost=round(order_cost, 4),
+                    message=(
+                        f"納期({order.due_date.isoformat()})に対して完了予定が "
+                        f"{completion.strftime('%Y-%m-%d %H:%M')} となり、約{delay_days}日の遅延見込みです。"
+                    ),
                 )
             )
 
-        return PlanResult(orders=order_schedules, summary=self._summarize(order_schedules))
+    # -- 在庫警告・稼働率 --------------------------------------------------------
 
-    @staticmethod
-    def _summarize(order_schedules: list[OrderSchedule]) -> PlanSummary:
-        total = len(order_schedules)
-        delayed = sum(1 for o in order_schedules if o.delay_days > 0)
-        total_cost = sum(o.total_cost for o in order_schedules)
-        total_regular = sum(s.regular_hours for o in order_schedules for s in o.steps)
-        total_overtime = sum(s.overtime_hours for o in order_schedules for s in o.steps)
-        return PlanSummary(
-            total_orders=total,
-            on_time_orders=total - delayed,
-            delayed_orders=delayed,
-            total_cost=round(total_cost, 2),
-            total_regular_hours=round(total_regular, 2),
-            total_overtime_hours=round(total_overtime, 2),
+    def _check_safety_stock(self) -> None:
+        for product, inv in self.orders_data.inventory.items():
+            if inv.current_stock < inv.safety_stock:
+                self.warnings.append(
+                    PlanWarning(
+                        order_id=product,
+                        message=f"{product} の現在庫({inv.current_stock:.0f})が安全在庫({inv.safety_stock:.0f})を下回っています。",
+                    )
+                )
+
+    def _utilization_summary(self) -> list[MachineUtilization]:
+        result = []
+        for stage in self.stage_order:
+            for m_cfg in stage.machines:
+                mach = self._machines[m_cfg.machine_id]
+                busy_minutes = sum(
+                    (op.end - op.start).total_seconds() / 60
+                    for op in self.schedule
+                    if op.machine_id == m_cfg.machine_id
+                )
+                available_minutes = max(self.calendar.available_minutes_between(self.plan_start, mach.free_at), 1.0)
+                result.append(
+                    MachineUtilization(
+                        machine_id=m_cfg.machine_id,
+                        name=m_cfg.name,
+                        stage_id=stage.stage_id,
+                        stage_name=stage.name,
+                        utilization_pct=round(min(busy_minutes / available_minutes, 1.0) * 100, 1),
+                    )
+                )
+        return result
+
+    # -- エントリポイント --------------------------------------------------------
+
+    def run(self) -> PlanResult:
+        orders_sorted = sorted(self.orders_data.orders, key=lambda o: o.due_date)  # EDD
+        for order in orders_sorted:
+            self._schedule_order(order)
+
+        self._check_safety_stock()
+
+        return PlanResult(
+            plan_start=self.plan_start,
+            schedule=self.schedule,
+            warnings=self.warnings,
+            machine_utilization=self._utilization_summary(),
         )
 
 
 def _print_demo_result() -> None:
-    from mock_data import sample_orders, sample_work_centers
+    from datetime import date as _date
 
-    scheduler = Scheduler(sample_work_centers())
-    result = scheduler.plan(sample_orders(), start_date=date.today())
+    from config_loader import load_changeover_config, load_equipment_config, load_orders_data
 
-    print("=== 生産計画 自動立案結果（サンプルデータ） ===")
-    for order_sched in result.orders:
-        status = "遅延" if order_sched.delay_days > 0 else "順調"
-        print(
-            f"[{status}] {order_sched.order_id} {order_sched.product_name}: "
-            f"納期={order_sched.due_date} 完了予定={order_sched.completion_date} "
-            f"遅延={order_sched.delay_days}日 コスト={order_sched.total_cost:.0f}円"
-        )
+    equipment = load_equipment_config()
+    changeover = load_changeover_config()
+    orders_data = load_orders_data()
 
-    summary = result.summary
-    print("---")
-    print(f"受注数: {summary.total_orders} 件")
-    print(f"納期遵守: {summary.on_time_orders} 件 / 遅延: {summary.delayed_orders} 件")
-    print(f"総コスト: {summary.total_cost:.0f} 円")
-    print(f"定時稼働: {summary.total_regular_hours:.1f}h / 残業: {summary.total_overtime_hours:.1f}h")
+    start_override = datetime.combine(_date.today(), time(8, 30))
+    scheduler = Scheduler(equipment, changeover, orders_data, start_override=start_override)
+    result = scheduler.run()
+
+    print("=== 生産計画 自動立案結果(サンプルデータ) ===")
+    print(f"スケジュール件数: {len(result.schedule)}")
+    print(f"警告件数: {len(result.warnings)}")
+    for w in result.warnings:
+        print(f"  - [{w.order_id}] {w.message}")
+    print("--- 設備稼働率 ---")
+    for u in result.machine_utilization:
+        print(f"  [{u.stage_name}] {u.name}: {u.utilization_pct}%")
 
 
 if __name__ == "__main__":

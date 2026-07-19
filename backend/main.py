@@ -1,95 +1,54 @@
 """生産計画自動立案APIサーバー。
 
-`cd backend && uvicorn main:app --reload` で起動し、http://localhost:8000/
-で画面（frontend/）を、`/api/*` でAPIを提供する。
+config/ 配下のJSON(equipment_master.json / changeover_matrix.json / orders_sample.json)を
+読み込んでスケジューリングする。実データへ移行する際は config/ の中身を差し替えるだけでよい。
+
+`cd backend && uvicorn main:app --reload` で起動し、http://localhost:8000/ で画面を提供する。
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, time
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from mock_data import sample_orders, sample_work_centers
-from models import Order, ProcessStep, WorkCenter
+from config_loader import load_changeover_config, load_equipment_config, load_orders_data
 from scheduler import Scheduler
 
 app = FastAPI(title="生産計画自動立案API")
 
 
-class ProcessStepIn(BaseModel):
-    process_id: str
-    hours_per_unit: float
-
-
-class OrderIn(BaseModel):
-    order_id: str
-    product_name: str
-    quantity: int
-    due_date: date
-    routing: list[ProcessStepIn]
-    priority: int = 0
-
-
-class WorkCenterIn(BaseModel):
-    process_id: str
-    name: str
-    daily_regular_hours: float
-    daily_overtime_hours: float = 0.0
-    regular_cost_per_hour: float = 0.0
-    overtime_cost_per_hour: float = 0.0
-
-
 class PlanRequest(BaseModel):
-    orders: list[OrderIn] | None = None
-    work_centers: list[WorkCenterIn] | None = None
     start_date: date | None = None
 
 
-def _to_domain_orders(orders_in: list[OrderIn]) -> list[Order]:
-    return [
-        Order(
-            order_id=o.order_id,
-            product_name=o.product_name,
-            quantity=o.quantity,
-            due_date=o.due_date,
-            routing=[ProcessStep(s.process_id, s.hours_per_unit) for s in o.routing],
-            priority=o.priority,
-        )
-        for o in orders_in
-    ]
-
-
-def _to_domain_work_centers(work_centers_in: list[WorkCenterIn]) -> list[WorkCenter]:
-    return [WorkCenter(**wc.model_dump()) for wc in work_centers_in]
+@app.get("/api/equipment")
+def get_equipment():
+    """工程・号機構成、シフト設定(config/equipment_master.json)。"""
+    return load_equipment_config()
 
 
 @app.get("/api/orders")
-def get_orders() -> list[Order]:
-    """立案対象の受注一覧（現状は仮データ）。"""
-    return sample_orders()
-
-
-@app.get("/api/work-centers")
-def get_work_centers() -> list[WorkCenter]:
-    """工程マスタ（能力・コスト、現状は仮データ）。"""
-    return sample_work_centers()
+def get_orders():
+    """受注・在庫・原材料データ(config/orders_sample.json)。"""
+    return load_orders_data()
 
 
 @app.post("/api/plan")
 def create_plan(req: PlanRequest):
-    """受注・工程マスタから生産計画を自動立案する。
+    """受注・設備・段取り替え設定から生産計画を自動立案する。
 
-    orders / work_centers を省略した場合は仮データで立案する。
+    start_date を省略した場合は当日をプラン開始日とする。
     """
-    orders = _to_domain_orders(req.orders) if req.orders else sample_orders()
-    work_centers = _to_domain_work_centers(req.work_centers) if req.work_centers else sample_work_centers()
-    start = req.start_date or date.today()
+    equipment = load_equipment_config()
+    changeover = load_changeover_config()
+    orders_data = load_orders_data()
 
-    scheduler = Scheduler(work_centers)
-    return scheduler.plan(orders, start)
+    start_override = datetime.combine(req.start_date or date.today(), time(8, 30))
+    scheduler = Scheduler(equipment, changeover, orders_data, start_override=start_override)
+    return scheduler.run()
 
 
 _FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"

@@ -1,0 +1,22 @@
+{
+  "_comment": "仮の受注・在庫・材料データ。動作確認用のサンプルです。",
+  "quantityNote": "各号機の稼働時間(シフト長)に対して1ロット(リール)が収まるよう、数量は元の仮データからスケールダウンしています。",
+  "orders": [
+    { "orderId": "ORD-001", "product": "製品X", "quantity": 12000, "dueDate": "2026-07-25" },
+    { "orderId": "ORD-002", "product": "製品Y", "quantity": 7200, "dueDate": "2026-07-23" },
+    { "orderId": "ORD-003", "product": "製品Z", "quantity": 9600, "dueDate": "2026-07-28" },
+    { "orderId": "ORD-004", "product": "製品X", "quantity": 4800, "dueDate": "2026-07-22" },
+    { "orderId": "ORD-005", "product": "製品Y", "quantity": 12000, "dueDate": "2026-07-30" }
+  ],
+  "inventory": {
+    "製品X": { "currentStock": 1500, "safetyStock": 900 },
+    "製品Y": { "currentStock": 600, "safetyStock": 900 },
+    "製品Z": { "currentStock": 2400, "safetyStock": 1200 }
+  },
+  "rawMaterials": {
+    "製品X": { "materialId": "MAT-X", "onHand": 18000, "incoming": [{ "date": "2026-07-24", "quantity": 6000 }] },
+    "製品Y": { "materialId": "MAT-Y", "onHand": 9000, "incoming": [{ "date": "2026-07-21", "quantity": 10500 }] },
+    "製品Z": { "materialId": "MAT-Z", "onHand": 15000, "incoming": [] }
+  },
+  "planStart": "2026-07-19T08:30:00"
+}

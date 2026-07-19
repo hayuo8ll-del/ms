@@ -1,0 +1,63 @@
+{
+  "_comment": "これは仮データです。会社PCへ移行する際は、この equipment_master.json の中身だけを実際の号機構成に差し替えてください。コード側の修正は不要です。",
+  "stages": [
+    {
+      "stageId": "STAGE1",
+      "stageName": "工程A(実装 相当)",
+      "order": 1,
+      "machines": [
+        { "machineId": "A-1", "name": "A-1号機", "capacityPerHour": 1200 },
+        { "machineId": "A-2", "name": "A-2号機", "capacityPerHour": 1200 }
+      ]
+    },
+    {
+      "stageId": "STAGE2",
+      "stageName": "工程B(封止 相当)",
+      "order": 2,
+      "machines": [
+        { "machineId": "B-1", "name": "B-1号機", "capacityPerHour": 500 },
+        { "machineId": "B-2", "name": "B-2号機", "capacityPerHour": 500 },
+        { "machineId": "B-3", "name": "B-3号機", "capacityPerHour": 500 },
+        { "machineId": "B-4", "name": "B-4号機", "capacityPerHour": 450 },
+        { "machineId": "B-5", "name": "B-5号機", "capacityPerHour": 450 }
+      ],
+      "uninterruptible": true,
+      "uninterruptibleNote": "1ロット(リール)を開始したら同一シフト内で完了させる必要がある制約(硬化工程などを想定)"
+    },
+    {
+      "stageId": "STAGE3",
+      "stageName": "工程C(検査 相当)",
+      "order": 3,
+      "machines": [
+        { "machineId": "C-1", "name": "C-1号機", "capacityPerHour": 800 },
+        { "machineId": "C-2", "name": "C-2号機", "capacityPerHour": 800 },
+        { "machineId": "C-3", "name": "C-3号機", "capacityPerHour": 750 },
+        { "machineId": "C-4", "name": "C-4号機", "capacityPerHour": 750 }
+      ],
+      "batchRounding": 1920,
+      "batchRoundingNote": "完了数量は指定単位の倍数に切り上げ(検査ロットの最小単位を想定)"
+    }
+  ],
+  "lotSplitting": {
+    "stageAfter": "STAGE1",
+    "splitInto": 4,
+    "note": "工程Aの完了後、注文数量を均等に分割して工程B/Cへ並行投入する(デフォルト4分割)"
+  },
+  "shiftModes": {
+    "22h": [
+      { "shiftName": "A勤", "start": "08:30", "end": "20:30" },
+      { "shiftName": "B勤", "start": "20:30", "end": "08:30" }
+    ],
+    "16h": [
+      { "shiftName": "A勤", "start": "08:30", "end": "17:30" },
+      { "shiftName": "B勤", "start": "20:30", "end": "05:30" }
+    ],
+    "11h": [
+      { "shiftName": "A勤", "start": "08:30", "end": "20:30" }
+    ],
+    "8h": [
+      { "shiftName": "A勤", "start": "08:30", "end": "17:30" }
+    ]
+  },
+  "defaultShiftMode": "16h"
+}

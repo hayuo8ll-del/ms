@@ -7,59 +7,42 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header class="app-header">
-    <h1>生産計画 自動立案</h1>
-    <button id="run-plan" type="button">計画を立案する</button>
+  <header>
+    <div class="title-group">
+      <h1>生産計画スケジューラ</h1>
+      <span class="tag">仮データ版 — SAMPLE DATA</span>
+    </div>
+    <div class="controls">
+      <label for="start-date">計画開始日</label>
+      <input type="date" id="start-date" />
+      <button id="run-plan" type="button">計画を立案する</button>
+    </div>
   </header>
 
-  <main>
-    <section id="summary" class="summary-grid" aria-live="polite"></section>
+  <section class="kpis" id="kpis" aria-live="polite"></section>
 
-    <section class="panel">
-      <h2>受注別スケジュール</h2>
-      <div class="table-scroll">
-        <table id="orders-table">
-          <thead>
-            <tr>
-              <th>状態</th>
-              <th>受注ID</th>
-              <th>品名</th>
-              <th>納期</th>
-              <th>完了予定</th>
-              <th>遅延</th>
-              <th>コスト</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
+  <section class="warnings" id="warnings" hidden>
+    <div class="w-title">警告</div>
+    <div id="warning-list"></div>
+  </section>
 
-    <section class="panel">
-      <h2>工程別 稼働負荷（定時 / 残業）</h2>
-      <div id="work-center-load"></div>
-    </section>
+  <div class="legend">
+    <span><span class="dot stage-STAGE1"></span>工程A</span>
+    <span><span class="dot stage-STAGE2"></span>工程B(連続作業制約あり)</span>
+    <span><span class="dot stage-STAGE3"></span>工程C(数量丸めあり)</span>
+  </div>
 
-    <section class="panel">
-      <h2>工程スケジュール明細</h2>
-      <div class="table-scroll">
-        <table id="steps-table">
-          <thead>
-            <tr>
-              <th>受注ID</th>
-              <th>工程</th>
-              <th>開始</th>
-              <th>終了</th>
-              <th>定時(h)</th>
-              <th>残業(h)</th>
-              <th>コスト</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
-  </main>
+  <section class="gantt-wrap" id="gantt"></section>
+
+  <section class="util-panel">
+    <div class="util-title">設備稼働率</div>
+    <div class="util-grid" id="util-grid"></div>
+  </section>
+
+  <footer>
+    config/equipment_master.json ・ changeover_matrix.json ・ orders_sample.json を読み込んで生成。
+    実データ移行時は config/ 配下のJSONを差し替えるだけでよい。
+  </footer>
 
   <p id="error-banner" role="alert" hidden></p>
 
