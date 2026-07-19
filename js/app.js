@@ -17,13 +17,15 @@ function freshProfile() {
     owned: { avatars: ["kid"], themes: ["orange"] },
     avatar: "kid",
     theme: "orange",
-    settings: { sound: true, speak: null, perRound: QUESTIONS_PER_ROUND },
+    settings: { sound: true, speak: null, perRound: QUESTIONS_PER_ROUND, attackTime: 60 },
+    bestAttack: 0,      // タイムアタックの最高正解数
   };
 }
 // 旧データに新フィールドを補う
 function migrate(p, grade) {
   const d = freshProfile();
   for (const k of Object.keys(d)) if (p[k] === undefined) p[k] = d[k];
+  if (p.settings.attackTime === undefined) p.settings.attackTime = 60;
   if (!p.owned) p.owned = { avatars: ["kid"], themes: ["orange"] };
   if (!p.owned.avatars) p.owned.avatars = ["kid"];
   if (!p.owned.themes) p.owned.themes = ["orange"];
@@ -155,6 +157,7 @@ function checkBadges(roundResult) {
   if (p.reviewCleared >= 10) grant("review10");
   if (p.owned.avatars.length + p.owned.themes.length > 2) grant("shopper");
   if (p.writeCount >= 20) grant("writer");
+  if (p.bestAttack >= 15) grant("speed");
   return earned;
 }
 
@@ -171,6 +174,7 @@ function refreshTop() {
 
 /* ========== 画面：グレード選択 ========== */
 function showGradeSelect() {
+  clearAttackTimer();
   render(`
     <h1 class="title">だれが べんきょうする？ 🌻</h1>
     <p class="subtitle">なつやすみ、いっしょに たのしく べんきょうしよう！</p>
@@ -191,6 +195,7 @@ function showGradeSelect() {
 
 /* ========== 画面：ホーム（教科えらび） ========== */
 function showHome() {
+  clearAttackTimer();
   refreshTop();
   const p = prof();
   const subjects = SUBJECTS[state.grade];
@@ -215,6 +220,7 @@ function showHome() {
     </div>
     <p class="subtitle">教科を えらんでね</p>
     <div class="grid">${cards}</div>
+    <button class="big-btn blue" id="attackBtn">⏱️ タイムアタック（コイン2ばい！）</button>
     <button class="big-btn" id="writeBtn">✍️ かきとり れんしゅう</button>
     ${reviewBtn}
     <div class="grid" style="margin-top:14px">
@@ -224,6 +230,7 @@ function showHome() {
   `);
   screen().querySelectorAll("[data-subject]").forEach(b =>
     b.onclick = () => startRound(b.dataset.subject));
+  document.getElementById("attackBtn").onclick = showAttackMenu;
   document.getElementById("writeBtn").onclick = showWritingMenu;
   document.getElementById("badgeBtn").onclick = showBadges;
   document.getElementById("shopBtn").onclick = showShop;
@@ -232,11 +239,17 @@ function showHome() {
 
 /* ========== ラウンド（クイズ） ========== */
 let round = null;
+let attackTimer = null;
+function clearAttackTimer() {
+  if (attackTimer) { clearInterval(attackTimer); attackTimer = null; }
+  if (round && round.nextTimer) { clearTimeout(round.nextTimer); round.nextTimer = null; }
+}
 function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; }
   return arr;
 }
 function startRound(subject) {
+  clearAttackTimer();
   const n = prof().settings.perRound || QUESTIONS_PER_ROUND;
   let questions;
   if (subject === "math") {
@@ -249,6 +262,7 @@ function startRound(subject) {
   showQuestion();
 }
 function startReview() {
+  clearAttackTimer();
   const p = prof();
   const n = p.settings.perRound || QUESTIONS_PER_ROUND;
   const pool = shuffle(p.wrong.map(w => ({ ...w })));
@@ -257,9 +271,124 @@ function startReview() {
   showQuestion();
 }
 
+/* ========== タイムアタック ========== */
+function showAttackMenu() {
+  clearAttackTimer();
+  const p = prof();
+  const subs = SUBJECTS[state.grade];
+  const cards = subs.map(s => `
+    <button class="card" data-atk="${s.id}">
+      <span class="emoji">${s.emoji}</span><span class="name">${s.name}</span>
+    </button>`).join("");
+  render(`
+    <h1 class="title">タイムアタック ⏱️</h1>
+    <p class="subtitle">${p.settings.attackTime}秒で なんもん とけるかな？<br>正かいで <b>コイン2ばい</b>＋コンボボーナス！</p>
+    <p class="subtitle" style="margin-top:4px">これまでの さいこう記録：<b>${p.bestAttack}問</b> 🏅</p>
+    <p class="subtitle">教科を えらんでね</p>
+    <div class="grid">${cards}</div>
+    <button class="big-btn ghost" id="mixBtn">🎲 ぜんぶ ミックス</button>
+    <button class="big-btn" id="backBtn">もどる</button>
+  `);
+  screen().querySelectorAll("[data-atk]").forEach(b => b.onclick = () => startTimeAttack(b.dataset.atk));
+  document.getElementById("mixBtn").onclick = () => startTimeAttack("mix");
+  document.getElementById("backBtn").onclick = showHome;
+}
+
+function buildAttackQuestions(subject, n) {
+  const grade = state.grade;
+  const out = [];
+  const addChoice = (arr, subj) => arr.map(x => ({ ...x, input: "choice", subject: subj }));
+  if (subject === "math") {
+    return generateMathSet(grade, n).map(q => ({ ...q, subject: "math" }));
+  }
+  if (subject === "mix") {
+    // 算数＋各教科をまぜる
+    let pool = generateMathSet(grade, Math.ceil(n / 2)).map(q => ({ ...q, subject: "math" }));
+    for (const s of ["kokugo", "english", "other"]) pool = pool.concat(addChoice(DATA[grade][s], s));
+    return shuffle(pool).slice(0, n);
+  }
+  // 単一教科（選択式）：足りなければ繰り返して n 問に
+  let base = addChoice(DATA[grade][subject], subject);
+  while (base.length < n) base = base.concat(addChoice(DATA[grade][subject], subject));
+  return shuffle(base).slice(0, n);
+}
+
+function startTimeAttack(subject) {
+  clearAttackTimer();
+  const p = prof();
+  const secs = p.settings.attackTime || 60;
+  const questions = buildAttackQuestions(subject, 120);
+  round = {
+    subject, timed: true, questions, idx: 0, correct: 0, combo: 0, maxCombo: 0,
+    current: "", locked: false, review: false, ended: false,
+    timeTotal: secs * 1000, timeLeft: secs * 1000, endAt: Date.now() + secs * 1000,
+  };
+  showQuestion();
+  attackTimer = setInterval(() => {
+    round.timeLeft = Math.max(0, round.endAt - Date.now());
+    const bar = document.getElementById("taBar");
+    const sec = document.getElementById("taSec");
+    if (bar) bar.style.width = (round.timeLeft / round.timeTotal) * 100 + "%";
+    if (sec) { const s = Math.ceil(round.timeLeft / 1000); sec.textContent = s; sec.classList.toggle("urgent", s <= 10); }
+    const combo = document.getElementById("combo");
+    if (combo) combo.textContent = round.combo >= 3 ? `🔥 ${round.combo} コンボ！` : "";
+    if (round.timeLeft <= 0) finishTimeAttack();
+  }, 100);
+}
+
+function finishTimeAttack() {
+  if (round.ended) return;
+  round.ended = true;
+  clearAttackTimer();
+  const p = prof();
+  const base = round.correct * 10;
+  const doubled = base * 2;                         // コイン2倍
+  const comboBonus = (round.maxCombo || 0) * 5;     // コンボボーナス
+  const gained = doubled + comboBonus;
+  p.coins += gained;
+
+  const isBest = round.correct > p.bestAttack;
+  if (isBest) p.bestAttack = round.correct;
+
+  const today = todayStr();
+  if (p.lastStudyDate !== today) {
+    if (p.lastStudyDate && daysBetween(p.lastStudyDate, today) === 1) p.streak++;
+    else p.streak = 1;
+    p.lastStudyDate = today;
+  }
+  const newBadges = checkBadges(null);
+  saveState(); refreshTop();
+  if (round.correct >= 8) confetti();
+
+  const badgeHtml = newBadges.map(id => {
+    const b = BADGES.find(x => x.id === id);
+    return `<div class="badge-pop">🎊 あたらしいバッジ ${b.emoji} 「${b.name}」ゲット！</div>`;
+  }).join("");
+
+  render(`
+    <div class="result">
+      <div class="big-emoji">⏱️</div>
+      <div class="score">${round.correct}問 せいかい！</div>
+      ${isBest ? `<div class="badge-pop">🏅 じこ さいこう記録こうしん！</div>` : ""}
+      <div class="reward">
+        コイン ${base}×2 = ${doubled}🪙${comboBonus ? `<br>コンボボーナス（さいだい${round.maxCombo}）+${comboBonus}🪙` : ""}<br>
+        <b>ごうけい ${gained}🪙 ゲット！</b>
+      </div>
+      ${badgeHtml}
+      <button class="big-btn green" id="againBtn">もういちど チャレンジ</button>
+      <button class="big-btn blue" id="menuBtn">教科を かえる</button>
+      <button class="big-btn ghost" id="homeBtn2" style="margin-top:10px">ホームに もどる</button>
+    </div>
+  `);
+  document.getElementById("againBtn").onclick = () => startTimeAttack(round.subject);
+  document.getElementById("menuBtn").onclick = showAttackMenu;
+  document.getElementById("homeBtn2").onclick = showHome;
+}
+
 function subjectName(id) {
   if (id === "review") return "ふくしゅう";
-  return SUBJECTS[state.grade].find(s => s.id === id).name;
+  if (id === "mix") return "ミックス";
+  return (SUBJECTS[state.grade].find(s => s.id === id) || {}).name || id;
 }
 
 function showQuestion() {
@@ -285,12 +414,20 @@ function showQuestion() {
     </div>` : "";
 
   const label = round.review ? "🩹 ふくしゅう" : subjectName(round.subject);
+  const head = round.timed
+    ? `<div class="quiz-head">
+         <span class="qnum">⚡${round.correct}問</span>
+         <div class="ta-bar"><i id="taBar" style="width:${(round.timeLeft / (round.timeTotal)) * 100}%"></i></div>
+         <span class="qnum ta-sec" id="taSec">${Math.ceil(round.timeLeft / 1000)}</span>
+       </div>
+       ${round.combo >= 3 ? `<div class="combo" id="combo">🔥 ${round.combo} コンボ！</div>` : `<div class="combo" id="combo"></div>`}`
+    : `<div class="quiz-head">
+         <span class="qnum">${round.idx + 1}/${total}</span>
+         <div class="progress"><i style="width:${pct}%"></i></div>
+         <span class="qnum">${label}</span>
+       </div>`;
   render(`
-    <div class="quiz-head">
-      <span class="qnum">${round.idx + 1}/${total}</span>
-      <div class="progress"><i style="width:${pct}%"></i></div>
-      <span class="qnum">${label}</span>
-    </div>
+    ${head}
     <div class="question-card">
       <button class="speak-btn" id="speakBtn" title="よみあげ" aria-label="よみあげ">🔊</button>
       ${q.prompt ? `<div class="prompt">${q.prompt}</div>` : ""}
@@ -343,32 +480,40 @@ function submitAnswer(value) {
 }
 
 function finishQuestion(ok) {
+  if (round.ended) return;
   const q = round.questions[round.idx];
   const p = prof();
-  const subj = round.review ? q.subject : round.subject;
+  const subj = round.timed ? (q.subject || round.subject) : (round.review ? q.subject : round.subject);
   const fb = document.getElementById("feedback");
 
   if (ok) {
     round.correct++;
-    fb.textContent = "せいかい！ ⭕ +10🪙";
+    if (round.timed) { round.combo = (round.combo || 0) + 1; round.maxCombo = Math.max(round.maxCombo || 0, round.combo); }
+    fb.textContent = round.timed ? "⭕ せいかい！" : "せいかい！ ⭕ +10🪙";
     fb.className = "feedback ok";
     beep("ok");
     if (round.review) { if (removeWrong(subj, q)) p.reviewCleared++; }
-    else removeWrong(subj, q);
+    else if (!round.timed) removeWrong(subj, q);
   } else {
+    if (round.timed) round.combo = 0;
     fb.textContent = `おしい！ こたえは「${q.answer}」`;
     fb.className = "feedback ng";
     beep("ng");
-    if (!round.review) addWrong(subj, q);
+    if (!round.review && !round.timed) addWrong(subj, q);
   }
-  // 統計（復習は教科ごとに加算、通常も加算）
-  if (p.stats[subj]) { p.stats[subj].a++; if (ok) p.stats[subj].c++; }
+  // 統計（タイムアタックは除外して純粋な学習ログを保つ）
+  if (!round.timed && p.stats[subj]) { p.stats[subj].a++; if (ok) p.stats[subj].c++; }
 
-  setTimeout(() => {
+  const delay = round.timed ? (ok ? 450 : 800) : (ok ? 900 : 1600);
+  round.nextTimer = setTimeout(() => {
+    if (round.ended) return;
     round.idx++;
-    if (round.idx < round.questions.length) showQuestion();
+    if (round.timed) {
+      if (round.idx >= round.questions.length) round.idx = 0; // 足りなければ最初へ
+      showQuestion();
+    } else if (round.idx < round.questions.length) showQuestion();
     else finishRound();
-  }, ok ? 900 : 1600);
+  }, delay);
 }
 
 /* ========== ラウンド終了 ========== */
@@ -695,6 +840,7 @@ function finishWriting(newBadges) {
 
 /* ========== 画面：ほごしゃ ========== */
 function showParent() {
+  clearAttackTimer();
   const p = prof();
   const subjects = SUBJECTS[state.grade];
   const statRows = subjects.map(s => {
@@ -733,6 +879,7 @@ function showParent() {
       <div class="stat-row"><span>にがて問題（未こくふく）</span><b>${p.wrong.length}問</b></div>
       <div class="stat-row"><span>にがて こくふく数</span><b>${p.reviewCleared}問</b></div>
       <div class="stat-row"><span>かきとり れんしゅう</span><b>${p.writeCount}文字</b></div>
+      <div class="stat-row"><span>タイムアタック さいこう</span><b>${p.bestAttack}問</b></div>
       <div style="margin-top:10px" class="calendar">${cal}</div>
       <div class="hint" style="margin-top:6px">💮 = べんきょうした日（直近14日）</div>
     </div>
@@ -764,6 +911,12 @@ function showParent() {
           <option value="off" ${!p.settings.speak ? "selected" : ""}>オフ</option>
         </select>
       </div>
+      <div class="setting-row">
+        <span>タイムアタックの じかん</span>
+        <select id="attackTime">
+          ${[30, 60, 90, 120].map(n => `<option value="${n}" ${p.settings.attackTime === n ? "selected" : ""}>${n}秒</option>`).join("")}
+        </select>
+      </div>
       <div class="hint">よみあげは 1年生に おすすめ（たんまつが 日本語おんせいに たいおうしている ばあい）</div>
       <button class="big-btn ghost" id="resetBtn" style="margin-top:16px;color:#ff5a5a">この学年のデータを けす</button>
     </div>
@@ -777,6 +930,7 @@ function showParent() {
     p.settings.speak = e.target.value === "on"; saveState();
     if (p.settings.speak) speak("よみあげを おんに しました", true);
   };
+  document.getElementById("attackTime").onchange = e => { p.settings.attackTime = +e.target.value; saveState(); };
   document.getElementById("resetBtn").onclick = () => {
     if (confirm("この学年の コイン・バッジ・きろく・アイテムを ぜんぶ けしますか？")) {
       state.profiles[state.grade] = freshProfile();
@@ -788,8 +942,8 @@ function showParent() {
 }
 
 /* ---------- ヘッダーのボタン ---------- */
-document.getElementById("homeBtn").onclick = showGradeSelect;
-document.getElementById("parentBtn").onclick = showParent;
+document.getElementById("homeBtn").onclick = () => { clearAttackTimer(); showGradeSelect(); };
+document.getElementById("parentBtn").onclick = () => { clearAttackTimer(); showParent(); };
 
 /* ---------- Service Worker 登録（PWA） ---------- */
 if ("serviceWorker" in navigator) {

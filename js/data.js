@@ -194,6 +194,7 @@ const BADGES = [
   { id: "review10",  emoji: "🩹", name: "ふくしゅう王", desc: "にがてを10問こくふく" },
   { id: "shopper",   emoji: "🛍️", name: "はじめてのお買いもの", desc: "ショップで こうかん" },
   { id: "writer",    emoji: "✍️", name: "かきとり名人", desc: "20文字れんしゅう" },
+  { id: "speed",     emoji: "⚡", name: "スピードスター", desc: "タイムアタックで15問正かい" },
 ];
 
 /* 教科メニュー */

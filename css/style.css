@@ -153,6 +153,14 @@ main { flex: 1; padding: 16px; }
 .progress > i { display: block; height: 100%; background: var(--green); width: 0; transition: width .3s; }
 .qnum { font-weight: 800; color: var(--ink-soft); }
 
+/* タイムアタックのタイマー */
+.ta-bar { flex: 1; height: 16px; background: #fff; border-radius: 999px; overflow: hidden; box-shadow: inset 0 2px 4px rgba(0,0,0,.08); }
+.ta-bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--green), #ffd23d, var(--red)); background-size: 300% 100%; background-position: right; width: 100%; transition: width .12s linear; }
+.ta-sec { min-width: 40px; text-align: right; font-size: 20px; color: var(--orange-d); }
+.ta-sec.urgent { color: var(--red); animation: pulse .6s infinite; }
+@keyframes pulse { 50% { transform: scale(1.25); } }
+.combo { text-align: center; font-weight: 900; color: var(--orange-d); min-height: 24px; margin: 6px 0 2px; }
+
 .question-card {
   background: #fff; border-radius: var(--radius); box-shadow: var(--shadow);
   padding: 26px 20px; text-align: center; margin-bottom: 16px;
