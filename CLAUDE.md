@@ -27,9 +27,9 @@ answer-checked by evaluating the file in Node.
 Single-page app; screens are rendered by swapping `#screen`'s innerHTML from JS.
 
 - `index.html` — shell (topbar + `#screen`) and script tags.
-- `js/data.js` — non-math question banks (`DATA[grade][subject]`), `BADGES`, `SUBJECTS`, and `SHOP` (avatars + color themes).
+- `js/data.js` — non-math question banks (`DATA[grade][subject]`), `BADGES`, `SUBJECTS`, `SHOP` (avatars + color themes), and `WRITING_SETS` (かきとり character sets: hiragana/katakana/kanji as `{c, yomi}`).
 - `js/generators.js` — math question generators (`MATH_G1`/`MATH_G5`, `generateMathSet`), plus SVG helpers for the clock and area figures. Multiple-choice items live in `DATA`; numeric items use the on-screen keypad.
-- `js/app.js` — app core: state model + `migrate()`, screen renderers (grade select, home, quiz round, result, badges, shop, parent), scoring, badges, streak, the にがて/review pool (`addWrong`/`removeWrong`/`startReview`), voice read-aloud (`speak`/`toReadable`, Web Speech API), appearance (`applyTheme` sets CSS vars from `SHOP.themes`, `avatarEmoji`), and persistence.
+- `js/app.js` — app core: state model + `migrate()`, screen renderers (grade select, home, quiz round, result, badges, shop, かきとり/writing, parent), scoring, badges, streak, the にがて/review pool (`addWrong`/`removeWrong`/`startReview`), the writing pad (`setupPad` — pointer-events canvas, self-check awards coins), voice read-aloud (`speak`/`toReadable`, Web Speech API), appearance (`applyTheme` sets CSS vars from `SHOP.themes`, `avatarEmoji`), and persistence.
 - State is a single object persisted to `localStorage` under `natsuyasumi_v1`, with a separate profile per grade (`g1`/`g5`). When adding profile fields, extend `freshProfile()` **and** `migrate()` so existing saves upgrade cleanly.
 - `manifest.webmanifest` + `sw.js` provide the PWA/offline layer; `sw.js` uses a cache-first strategy and lists all app assets in `ASSETS` — **update that list AND bump the `CACHE` version string when adding or renaming files**.
 - `icons/` holds `icon.svg` plus a PNG set (96/192/512, `icon-512-maskable.png`, `apple-touch-icon.png`). The PNGs are rasterized from the SVG via Chromium (see git history for the one-off script); regenerate them if the SVG changes.

@@ -13,6 +13,7 @@ function freshProfile() {
     log: [],            // {date, subject, correct, total}
     wrong: [],          // にがて問題のスナップショット
     reviewCleared: 0,   // 復習でこくふくした数
+    writeCount: 0,      // かきとりで練習した文字数
     owned: { avatars: ["kid"], themes: ["orange"] },
     avatar: "kid",
     theme: "orange",
@@ -153,6 +154,7 @@ function checkBadges(roundResult) {
   if (["math", "kokugo", "english", "other"].every(s => p.stats[s].a > 0)) grant("allsubj");
   if (p.reviewCleared >= 10) grant("review10");
   if (p.owned.avatars.length + p.owned.themes.length > 2) grant("shopper");
+  if (p.writeCount >= 20) grant("writer");
   return earned;
 }
 
@@ -213,6 +215,7 @@ function showHome() {
     </div>
     <p class="subtitle">教科を えらんでね</p>
     <div class="grid">${cards}</div>
+    <button class="big-btn" id="writeBtn">✍️ かきとり れんしゅう</button>
     ${reviewBtn}
     <div class="grid" style="margin-top:14px">
       <button class="big-btn ghost" id="badgeBtn" style="margin:0">🏅 バッジ</button>
@@ -221,6 +224,7 @@ function showHome() {
   `);
   screen().querySelectorAll("[data-subject]").forEach(b =>
     b.onclick = () => startRound(b.dataset.subject));
+  document.getElementById("writeBtn").onclick = showWritingMenu;
   document.getElementById("badgeBtn").onclick = showBadges;
   document.getElementById("shopBtn").onclick = showShop;
   if (p.wrong.length > 0) document.getElementById("reviewBtn").onclick = startReview;
@@ -505,6 +509,152 @@ function useItem(kind, id) {
   saveState(); refreshTop(); showShop();
 }
 
+/* ========== 画面：かきとり（手書きなぞり練習） ========== */
+function showWritingMenu() {
+  const sets = WRITING_SETS[state.grade];
+  const cards = sets.map(s => `
+    <button class="card" data-set="${s.id}">
+      <span class="emoji">${s.emoji}</span>
+      <span class="name">${s.name}</span>
+      <span class="desc">${s.chars.length}文字</span>
+    </button>`).join("");
+  render(`
+    <h1 class="title">かきとり れんしゅう ✍️</h1>
+    <p class="subtitle">お手本を ゆびで なぞって かいてみよう！</p>
+    <div class="grid">${cards}</div>
+    <button class="big-btn" id="backBtn">もどる</button>
+  `);
+  screen().querySelectorAll("[data-set]").forEach(b => b.onclick = () => startWriting(b.dataset.set));
+  document.getElementById("backBtn").onclick = showHome;
+}
+
+let writeState = null;
+const MODEL_OPACITY = [0.22, 0.1, 0]; // こい / うすい / なし
+function startWriting(setId) {
+  const set = WRITING_SETS[state.grade].find(s => s.id === setId);
+  writeState = { set, idx: 0, opacityStep: 0 };
+  showWritingCard();
+}
+
+function showWritingCard() {
+  const { set, idx } = writeState;
+  const item = set.chars[idx];
+  const total = set.chars.length;
+  const pct = (idx / total) * 100;
+  const showYomi = item.yomi && item.yomi !== item.c;
+
+  render(`
+    <div class="quiz-head">
+      <span class="qnum">${idx + 1}/${total}</span>
+      <div class="progress"><i style="width:${pct}%"></i></div>
+      <span class="qnum">✍️ ${set.name}</span>
+    </div>
+    ${showYomi ? `<p class="subtitle" style="text-align:center;margin:2px 0 8px">よみ：${item.yomi}　<button class="speak-inline" id="speakBtn">🔊</button></p>`
+               : `<div style="text-align:center;margin-bottom:6px"><button class="speak-inline" id="speakBtn">🔊 きく</button></div>`}
+    <div class="pad-wrap">
+      <div class="pad-model" id="padModel" style="opacity:${MODEL_OPACITY[writeState.opacityStep]}">${item.c}</div>
+      <canvas id="padCanvas" class="pad-canvas"></canvas>
+    </div>
+    <div class="pad-controls">
+      <button class="key" id="modelBtn">お手本 ${["こい","うすい","なし"][writeState.opacityStep]}</button>
+      <button class="key del" id="clearBtn">けす</button>
+    </div>
+    <button class="big-btn green" id="doneBtn">かけた！ つぎへ ➡️</button>
+    <button class="big-btn ghost" id="quitBtn" style="margin-top:10px">やめる</button>
+    <div class="feedback" id="feedback"></div>
+  `);
+
+  setupPad();
+  const say = () => speak(item.yomi || item.c, true);
+  document.getElementById("speakBtn").onclick = say;
+  document.getElementById("modelBtn").onclick = () => {
+    writeState.opacityStep = (writeState.opacityStep + 1) % MODEL_OPACITY.length;
+    document.getElementById("padModel").style.opacity = MODEL_OPACITY[writeState.opacityStep];
+    document.getElementById("modelBtn").textContent = "お手本 " + ["こい","うすい","なし"][writeState.opacityStep];
+  };
+  document.getElementById("clearBtn").onclick = clearPad;
+  document.getElementById("doneBtn").onclick = writingDone;
+  document.getElementById("quitBtn").onclick = showWritingMenu;
+  speak(item.yomi || item.c); // 自動よみあげ（設定オン時）
+}
+
+let padCtx = null, padCanvas = null;
+function setupPad() {
+  padCanvas = document.getElementById("padCanvas");
+  const rect = padCanvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  padCanvas.width = Math.max(1, Math.round(rect.width * dpr));
+  padCanvas.height = Math.max(1, Math.round(rect.height * dpr));
+  padCtx = padCanvas.getContext("2d");
+  padCtx.scale(dpr, dpr);
+  padCtx.lineWidth = 12; padCtx.lineCap = "round"; padCtx.lineJoin = "round";
+  padCtx.strokeStyle = "#3a2b1a";
+
+  let drawing = false;
+  const pos = e => { const r = padCanvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  padCanvas.addEventListener("pointerdown", e => {
+    drawing = true; padCanvas.setPointerCapture(e.pointerId);
+    const [x, y] = pos(e); padCtx.beginPath(); padCtx.moveTo(x, y);
+    padCtx.lineTo(x + 0.1, y + 0.1); padCtx.stroke();
+  });
+  padCanvas.addEventListener("pointermove", e => {
+    if (!drawing) return; const [x, y] = pos(e); padCtx.lineTo(x, y); padCtx.stroke();
+  });
+  const stop = () => { drawing = false; };
+  padCanvas.addEventListener("pointerup", stop);
+  padCanvas.addEventListener("pointercancel", stop);
+  padCanvas.addEventListener("pointerleave", stop);
+}
+function clearPad() { if (padCtx && padCanvas) padCtx.clearRect(0, 0, padCanvas.width, padCanvas.height); }
+
+function writingDone() {
+  const p = prof();
+  p.coins += 5; p.writeCount++;
+  const today = todayStr();
+  if (p.lastStudyDate !== today) {
+    if (p.lastStudyDate && daysBetween(p.lastStudyDate, today) === 1) p.streak++;
+    else p.streak = 1;
+    p.lastStudyDate = today;
+  }
+  const newBadges = checkBadges(null);
+  saveState(); refreshTop();
+
+  writeState.idx++;
+  if (writeState.idx < writeState.set.chars.length) {
+    showWritingCard();
+    if (newBadges.length) {
+      const b = BADGES.find(x => x.id === newBadges[0]);
+      const fb = document.getElementById("feedback");
+      if (fb) { fb.className = "feedback ok"; fb.textContent = `🎊 ${b.emoji} 「${b.name}」ゲット！`; }
+    }
+  } else {
+    finishWriting(newBadges);
+  }
+}
+
+function finishWriting(newBadges) {
+  const total = writeState.set.chars.length;
+  confetti();
+  const badgeHtml = (newBadges || []).map(id => {
+    const b = BADGES.find(x => x.id === id);
+    return `<div class="badge-pop">🎊 あたらしいバッジ ${b.emoji} 「${b.name}」ゲット！</div>`;
+  }).join("");
+  render(`
+    <div class="result">
+      <div class="big-emoji">🏆</div>
+      <div class="score">${writeState.set.name} ぜんぶ かけた！</div>
+      <div class="reward">${total}文字 れんしゅう！ コイン ${total * 5}🪙 ゲット！</div>
+      ${badgeHtml}
+      <button class="big-btn green" id="againBtn">もういちど</button>
+      <button class="big-btn blue" id="menuBtn">ほかの かきとり</button>
+      <button class="big-btn ghost" id="homeBtn2" style="margin-top:10px">ホームに もどる</button>
+    </div>
+  `);
+  document.getElementById("againBtn").onclick = () => startWriting(writeState.set.id);
+  document.getElementById("menuBtn").onclick = showWritingMenu;
+  document.getElementById("homeBtn2").onclick = showHome;
+}
+
 /* ========== 画面：ほごしゃ ========== */
 function showParent() {
   const p = prof();
@@ -544,6 +694,7 @@ function showParent() {
       <div class="stat-row"><span>ためたコイン</span><b>${p.coins}🪙</b></div>
       <div class="stat-row"><span>にがて問題（未こくふく）</span><b>${p.wrong.length}問</b></div>
       <div class="stat-row"><span>にがて こくふく数</span><b>${p.reviewCleared}問</b></div>
+      <div class="stat-row"><span>かきとり れんしゅう</span><b>${p.writeCount}文字</b></div>
       <div style="margin-top:10px" class="calendar">${cal}</div>
       <div class="hint" style="margin-top:6px">💮 = べんきょうした日（直近14日）</div>
     </div>
