@@ -523,6 +523,7 @@ function showWritingMenu() {
     <p class="subtitle">お手本を ゆびで なぞって かいてみよう！</p>
     <div class="grid">${cards}</div>
     <button class="big-btn" id="backBtn">もどる</button>
+    <p class="hint" style="text-align:center;margin-top:12px">書き順データ: <b>KanjiVG</b>（CC BY-SA 3.0）kanjivg.tagaini.net</p>
   `);
   screen().querySelectorAll("[data-set]").forEach(b => b.onclick = () => startWriting(b.dataset.set));
   document.getElementById("backBtn").onclick = showHome;
@@ -536,12 +537,25 @@ function startWriting(setId) {
   showWritingCard();
 }
 
+const OP_LABEL = ["こい", "うすい", "なし"];
 function showWritingCard() {
   const { set, idx } = writeState;
   const item = set.chars[idx];
   const total = set.chars.length;
   const pct = (idx / total) * 100;
   const showYomi = item.yomi && item.yomi !== item.c;
+  const ds = STROKES[item.c];
+  const op = MODEL_OPACITY[writeState.opacityStep];
+
+  // お手本レイヤー（筆順データがあればSVG、なければフォント文字）
+  const modelLayer = ds
+    ? `<svg class="pad-model-svg" id="modelSvg" viewBox="0 0 109 109" style="opacity:${op}">
+         ${ds.map(d => `<path d="${d}"/>`).join("")}</svg>`
+    : `<div class="pad-model" id="modelSvg" style="opacity:${op}">${item.c}</div>`;
+  // 書き順アニメ用レイヤー（最初は非表示）
+  const orderLayer = ds
+    ? `<svg class="pad-order-svg" id="orderSvg" viewBox="0 0 109 109">
+         ${ds.map(d => `<path d="${d}" pathLength="1"/>`).join("")}</svg>` : "";
 
   render(`
     <div class="quiz-head">
@@ -549,14 +563,16 @@ function showWritingCard() {
       <div class="progress"><i style="width:${pct}%"></i></div>
       <span class="qnum">✍️ ${set.name}</span>
     </div>
-    ${showYomi ? `<p class="subtitle" style="text-align:center;margin:2px 0 8px">よみ：${item.yomi}　<button class="speak-inline" id="speakBtn">🔊</button></p>`
-               : `<div style="text-align:center;margin-bottom:6px"><button class="speak-inline" id="speakBtn">🔊 きく</button></div>`}
+    ${showYomi ? `<p class="subtitle" style="text-align:center;margin:2px 0 8px">よみ：${item.yomi}　<button class="speak-inline" id="speakBtn">🔊</button>　<span class="hint">${ds ? ds.length + "かく" : ""}</span></p>`
+               : `<div style="text-align:center;margin-bottom:6px"><button class="speak-inline" id="speakBtn">🔊 きく</button>　<span class="hint">${ds ? ds.length + "かく" : ""}</span></div>`}
     <div class="pad-wrap">
-      <div class="pad-model" id="padModel" style="opacity:${MODEL_OPACITY[writeState.opacityStep]}">${item.c}</div>
+      ${modelLayer}
+      ${orderLayer}
       <canvas id="padCanvas" class="pad-canvas"></canvas>
     </div>
-    <div class="pad-controls">
-      <button class="key" id="modelBtn">お手本 ${["こい","うすい","なし"][writeState.opacityStep]}</button>
+    <div class="pad-controls pad-controls-3">
+      <button class="key" id="orderBtn" ${ds ? "" : "disabled"}>▶ 書き順</button>
+      <button class="key" id="modelBtn">お手本 ${OP_LABEL[writeState.opacityStep]}</button>
       <button class="key del" id="clearBtn">けす</button>
     </div>
     <button class="big-btn green" id="doneBtn">かけた！ つぎへ ➡️</button>
@@ -565,17 +581,39 @@ function showWritingCard() {
   `);
 
   setupPad();
-  const say = () => speak(item.yomi || item.c, true);
-  document.getElementById("speakBtn").onclick = say;
+  document.getElementById("speakBtn").onclick = () => speak(item.yomi || item.c, true);
   document.getElementById("modelBtn").onclick = () => {
     writeState.opacityStep = (writeState.opacityStep + 1) % MODEL_OPACITY.length;
-    document.getElementById("padModel").style.opacity = MODEL_OPACITY[writeState.opacityStep];
-    document.getElementById("modelBtn").textContent = "お手本 " + ["こい","うすい","なし"][writeState.opacityStep];
+    document.getElementById("modelSvg").style.opacity = MODEL_OPACITY[writeState.opacityStep];
+    document.getElementById("modelBtn").textContent = "お手本 " + OP_LABEL[writeState.opacityStep];
   };
   document.getElementById("clearBtn").onclick = clearPad;
   document.getElementById("doneBtn").onclick = writingDone;
   document.getElementById("quitBtn").onclick = showWritingMenu;
-  speak(item.yomi || item.c); // 自動よみあげ（設定オン時）
+  if (ds) document.getElementById("orderBtn").onclick = animateStrokes;
+
+  speak(item.yomi || item.c);   // 自動よみあげ（設定オン時）
+  if (ds) setTimeout(animateStrokes, 350);  // カード表示時に書き順を1回さいせい
+}
+
+/* 書き順アニメ：ストロークを1画ずつ描く */
+let strokeTimers = [];
+function animateStrokes() {
+  const svg = document.getElementById("orderSvg");
+  if (!svg) return;
+  strokeTimers.forEach(clearTimeout); strokeTimers = [];
+  const paths = [...svg.querySelectorAll("path")];
+  paths.forEach(p => { p.style.transition = "none"; p.style.strokeDashoffset = "1"; p.style.opacity = "1"; });
+  void svg.getBoundingClientRect(); // reflow
+  let t = 0;
+  paths.forEach((p, i) => {
+    const dur = 460, gap = 170;
+    strokeTimers.push(setTimeout(() => {
+      p.style.transition = `stroke-dashoffset ${dur}ms linear`;
+      p.style.strokeDashoffset = "0";
+    }, t));
+    t += dur + gap;
+  });
 }
 
 let padCtx = null, padCanvas = null;
