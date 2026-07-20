@@ -75,6 +75,13 @@ main { flex: 1; padding: 16px; }
 .big-btn.ghost { background: var(--card); color: var(--ink); }
 .big-btn.red-btn { background: var(--red); }
 
+/* むずかしさ 切替（セグメント） */
+.diff-select { display: flex; flex-direction: column; gap: 6px; margin: 4px 4px 14px; }
+.diff-label { font-weight: 800; color: var(--ink-soft); font-size: 14px; }
+.seg { display: flex; width: 100%; background: var(--card); border-radius: 14px; padding: 4px; box-shadow: var(--shadow); gap: 4px; }
+.seg-btn { flex: 1; border: none; background: transparent; color: var(--ink); font-weight: 800; font-size: 15px; padding: 11px 4px; border-radius: 10px; cursor: pointer; white-space: nowrap; }
+.seg-btn.on { background: var(--orange); color: #fff; }
+
 /* ホームのあいさつ（アバター） */
 .hero { display: flex; align-items: center; gap: 14px; margin: 6px 4px 10px; }
 .hero-avatar {

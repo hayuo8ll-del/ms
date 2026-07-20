@@ -17,15 +17,19 @@ function freshProfile() {
     owned: { avatars: ["kid"], themes: ["orange"] },
     avatar: "kid",
     theme: "orange",
-    settings: { sound: true, speak: null, perRound: QUESTIONS_PER_ROUND, attackTime: 60 },
+    settings: { sound: true, speak: null, perRound: QUESTIONS_PER_ROUND, attackTime: 60, difficulty: "normal" },
     bestAttack: 0,      // タイムアタックの最高正解数
   };
 }
+const DIFF = { easy: "やさしい", normal: "ふつう", hard: "むずかしい" };
+function difficulty() { return prof().settings.difficulty || "normal"; }
+function choiceCount(diff) { return diff === "easy" ? 2 : diff === "hard" ? 4 : 3; }
 // 旧データに新フィールドを補う
 function migrate(p, grade) {
   const d = freshProfile();
   for (const k of Object.keys(d)) if (p[k] === undefined) p[k] = d[k];
   if (p.settings.attackTime === undefined) p.settings.attackTime = 60;
+  if (p.settings.difficulty === undefined) p.settings.difficulty = "normal";
   if (!p.owned) p.owned = { avatars: ["kid"], themes: ["orange"] };
   if (!p.owned.avatars) p.owned.avatars = ["kid"];
   if (!p.owned.themes) p.owned.themes = ["orange"];
@@ -71,7 +75,10 @@ function beep(type) {
 
 /* ---------- 音声よみあげ（SpeechSynthesis） ---------- */
 function toReadable(q) {
-  let t = (q.prompt ? q.prompt + "。 " : "") + (q.q || "");
+  let body = q.q || "";
+  // 「よみ／読み」を答える問題は、「」内の文字を読み上げない（答えを言ってしまうため）
+  if (/よみ|読み/.test(body)) body = body.replace(/「[^」]*」/g, "この かん字");
+  let t = (q.prompt ? q.prompt + "。 " : "") + body;
   t = t.replace(/(\d+)\/(\d+)/g, "$2ぶんの$1");           // 分数
   t = t.replace(/\s*\+\s*/g, " たす ").replace(/\s*×\s*/g, " かける ")
        .replace(/\s*÷\s*/g, " わる ").replace(/\s*-\s*/g, " ひく ")
@@ -218,6 +225,12 @@ function showHome() {
         <p class="subtitle" style="margin:4px 0 0">${streakMsg}</p>
       </div>
     </div>
+    <div class="diff-select">
+      <span class="diff-label">むずかしさ</span>
+      <div class="seg">
+        ${["easy", "normal", "hard"].map(k => `<button class="seg-btn ${difficulty() === k ? "on" : ""}" data-diff="${k}">${DIFF[k]}</button>`).join("")}
+      </div>
+    </div>
     <p class="subtitle">教科を えらんでね</p>
     <div class="grid">${cards}</div>
     <button class="big-btn blue" id="attackBtn">⏱️ タイムアタック（コイン2ばい！）</button>
@@ -230,6 +243,8 @@ function showHome() {
   `);
   screen().querySelectorAll("[data-subject]").forEach(b =>
     b.onclick = () => startRound(b.dataset.subject));
+  screen().querySelectorAll("[data-diff]").forEach(b =>
+    b.onclick = () => { prof().settings.difficulty = b.dataset.diff; saveState(); showHome(); });
   document.getElementById("attackBtn").onclick = showAttackMenu;
   document.getElementById("writeBtn").onclick = showWritingMenu;
   document.getElementById("badgeBtn").onclick = showBadges;
@@ -253,7 +268,7 @@ function startRound(subject) {
   const n = prof().settings.perRound || QUESTIONS_PER_ROUND;
   let questions;
   if (subject === "math") {
-    questions = generateMathSet(state.grade, n);
+    questions = generateMathSet(state.grade, n, difficulty());
   } else {
     const pool = shuffle([...DATA[state.grade][subject]]);
     questions = pool.slice(0, n).map(x => ({ ...x, input: "choice" }));
@@ -299,11 +314,11 @@ function buildAttackQuestions(subject, n) {
   const out = [];
   const addChoice = (arr, subj) => arr.map(x => ({ ...x, input: "choice", subject: subj }));
   if (subject === "math") {
-    return generateMathSet(grade, n).map(q => ({ ...q, subject: "math" }));
+    return generateMathSet(grade, n, difficulty()).map(q => ({ ...q, subject: "math" }));
   }
   if (subject === "mix") {
     // 算数＋各教科をまぜる
-    let pool = generateMathSet(grade, Math.ceil(n / 2)).map(q => ({ ...q, subject: "math" }));
+    let pool = generateMathSet(grade, Math.ceil(n / 2), difficulty()).map(q => ({ ...q, subject: "math" }));
     for (const s of ["kokugo", "english", "other"]) pool = pool.concat(addChoice(DATA[grade][s], s));
     return shuffle(pool).slice(0, n);
   }
@@ -396,7 +411,15 @@ function showQuestion() {
   const total = round.questions.length;
   const pct = (round.idx / total) * 100;
 
-  let choices = q.choices ? shuffle([...q.choices]) : null;
+  let choices = q.choices ? [...q.choices] : null;
+  if (choices) {
+    const cnt = choiceCount(difficulty());
+    if (choices.length > cnt) {
+      const others = shuffle(choices.filter(c => c !== q.answer)).slice(0, cnt - 1);
+      choices = [q.answer, ...others];
+    }
+    shuffle(choices);
+  }
 
   const bodyChoice = choices ? `
     <div class="choices">
@@ -892,6 +915,12 @@ function showParent() {
     <div class="panel">
       <h3>⚙️ せってい</h3>
       <div class="setting-row">
+        <span>むずかしさ</span>
+        <select id="difficulty">
+          ${["easy", "normal", "hard"].map(k => `<option value="${k}" ${p.settings.difficulty === k ? "selected" : ""}>${DIFF[k]}</option>`).join("")}
+        </select>
+      </div>
+      <div class="setting-row">
         <span>1回の問題数</span>
         <select id="perRound">
           ${[5, 10, 15, 20].map(n => `<option value="${n}" ${p.settings.perRound === n ? "selected" : ""}>${n}問</option>`).join("")}
@@ -924,6 +953,7 @@ function showParent() {
     <button class="big-btn" id="backBtn">もどる</button>
   `);
 
+  document.getElementById("difficulty").onchange = e => { p.settings.difficulty = e.target.value; saveState(); };
   document.getElementById("perRound").onchange = e => { p.settings.perRound = +e.target.value; saveState(); };
   document.getElementById("sound").onchange = e => { p.settings.sound = e.target.value === "on"; saveState(); };
   document.getElementById("speak").onchange = e => {
