@@ -4,7 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current State
 
-This repository (`ms`) is currently empty — it contains no source code, build configuration, or documentation yet. There are no build, lint, or test commands to run at this time.
+This repository (`ms`) contains no application source code or build configuration yet. It currently holds documentation only:
+
+- `claude-code-commands.md` — a Japanese-language reference of Claude Code CLI slash commands, flags, keyboard shortcuts, and settings file hierarchy.
+
+There are no build, lint, or test commands to run at this time.
 
 ## Instructions for Future Sessions
 
