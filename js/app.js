@@ -17,7 +17,7 @@ function freshProfile() {
     owned: { avatars: ["kid"], themes: ["orange"] },
     avatar: "kid",
     theme: "orange",
-    settings: { sound: true, speak: null, perRound: QUESTIONS_PER_ROUND, attackTime: 60, difficulty: "normal" },
+    settings: { sound: true, speak: null, perRound: QUESTIONS_PER_ROUND, attackTime: 60, difficulty: "normal", voiceURI: null },
     bestAttack: 0,      // タイムアタックの最高正解数
   };
 }
@@ -30,6 +30,7 @@ function migrate(p, grade) {
   for (const k of Object.keys(d)) if (p[k] === undefined) p[k] = d[k];
   if (p.settings.attackTime === undefined) p.settings.attackTime = 60;
   if (p.settings.difficulty === undefined) p.settings.difficulty = "normal";
+  if (p.settings.voiceURI === undefined) p.settings.voiceURI = null;
   if (!p.owned) p.owned = { avatars: ["kid"], themes: ["orange"] };
   if (!p.owned.avatars) p.owned.avatars = ["kid"];
   if (!p.owned.themes) p.owned.themes = ["orange"];
@@ -86,15 +87,41 @@ function toReadable(q) {
        .replace(/²/g, "へいほう").replace(/%/g, "パーセント");
   return t.trim();
 }
+/* 日本語の音声を列挙し、より自然な（高品質な）ものを優先して選ぶ */
+function jaVoices() {
+  if (!("speechSynthesis" in window)) return [];
+  return speechSynthesis.getVoices().filter(v => /^ja(\b|-|_)/i.test(v.lang) || /japan|日本語/i.test(v.name));
+}
+// 端末に入っている高品質ボイスの名前（新しめ・自然なもの）を優先
+const PREFERRED_VOICES = [
+  "Google 日本語", "Kyoko (Enhanced)", "Kyoko (Premium)", "O-ren (Enhanced)", "O-ren",
+  "Kyoko", "Otoya", "Microsoft Nanami", "Nanami", "Microsoft Ayumi", "Ayumi", "Microsoft Keita", "Sayaka", "Hattori",
+];
+function chooseVoice() {
+  const list = jaVoices();
+  if (!list.length) return null;
+  const sel = prof().settings.voiceURI;
+  if (sel) { const v = list.find(x => x.voiceURI === sel); if (v) return v; }
+  for (const name of PREFERRED_VOICES) { const v = list.find(x => x.name.includes(name)); if (v) return v; }
+  // ローカル(端末内)音声を優先、なければ先頭
+  return list.find(v => v.localService) || list[0];
+}
 function speak(text, force) {
   if (!force && !prof().settings.speak) return;
   try {
     if (!("speechSynthesis" in window)) return;
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = "ja-JP"; u.rate = 0.95; u.pitch = 1.05;
+    const v = chooseVoice();
+    if (v) { u.voice = v; u.lang = v.lang; } else { u.lang = "ja-JP"; }
+    u.rate = 0.92; u.pitch = 1.0;   // より自然な読み上げ
     speechSynthesis.speak(u);
   } catch (e) {}
+}
+// ボイス一覧は非同期で読み込まれるため、変化時に確保しておく
+if ("speechSynthesis" in window) {
+  speechSynthesis.getVoices();
+  speechSynthesis.onvoiceschanged = () => { speechSynthesis.getVoices(); };
 }
 
 /* ---------- 演出 ---------- */
@@ -459,6 +486,11 @@ function showQuestion() {
     </div>
     ${bodyChoice}${bodyNumber}
     <div class="feedback" id="feedback"></div>
+    <button class="memo-toggle" id="memoToggle">✏️ メモ（けいさん用）</button>
+    <div class="memo-wrap" id="memoWrap" style="display:none">
+      <canvas id="memoCanvas" class="memo-canvas"></canvas>
+      <button class="key del memo-clear" id="memoClear">メモを けす</button>
+    </div>
   `);
 
   round.locked = false; round.current = "";
@@ -469,7 +501,29 @@ function showQuestion() {
   } else {
     screen().querySelectorAll("[data-k]").forEach(b => b.onclick = () => keypad(b.dataset.k));
   }
+  setupMemo();
   speak(toReadable(q)); // 自動よみあげ（設定オン時）
+}
+
+/* けいさん用メモ（手書き）— 各問題ごとにまっさら、開閉はラウンド中いじ */
+let memoOpen = false, memoSketch = null;
+function setupMemo() {
+  const wrap = document.getElementById("memoWrap");
+  const toggle = document.getElementById("memoToggle");
+  if (!wrap || !toggle) return;
+  const openIt = () => {
+    wrap.style.display = "block";
+    toggle.textContent = "✏️ メモを とじる";
+    memoSketch = makeSketch(document.getElementById("memoCanvas"), { color: "#2b6ad4", width: 4 });
+  };
+  if (memoOpen) openIt();
+  toggle.onclick = () => {
+    memoOpen = !memoOpen;
+    if (memoOpen) openIt();
+    else { wrap.style.display = "none"; toggle.textContent = "✏️ メモ（けいさん用）"; memoSketch = null; }
+  };
+  const clr = document.getElementById("memoClear");
+  if (clr) clr.onclick = () => memoSketch && memoSketch.clear();
 }
 
 function keypad(k) {
@@ -784,32 +838,33 @@ function animateStrokes() {
   });
 }
 
+/* 指／マウス／スタイラスで描けるキャンバスを用意する共通関数 */
+function makeSketch(canvas, { color = "#3a2b1a", width = 12 } = {}) {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.max(1, Math.round(rect.width * dpr));
+  canvas.height = Math.max(1, Math.round(rect.height * dpr));
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+  ctx.lineWidth = width; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.strokeStyle = color;
+  let drawing = false;
+  const pos = e => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  canvas.addEventListener("pointerdown", e => {
+    drawing = true; canvas.setPointerCapture(e.pointerId);
+    const [x, y] = pos(e); ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 0.1, y + 0.1); ctx.stroke();
+  });
+  canvas.addEventListener("pointermove", e => { if (!drawing) return; const [x, y] = pos(e); ctx.lineTo(x, y); ctx.stroke(); });
+  const stop = () => { drawing = false; };
+  canvas.addEventListener("pointerup", stop);
+  canvas.addEventListener("pointercancel", stop);
+  canvas.addEventListener("pointerleave", stop);
+  return { ctx, clear: () => ctx.clearRect(0, 0, canvas.width, canvas.height) };
+}
+
 let padCtx = null, padCanvas = null;
 function setupPad() {
   padCanvas = document.getElementById("padCanvas");
-  const rect = padCanvas.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  padCanvas.width = Math.max(1, Math.round(rect.width * dpr));
-  padCanvas.height = Math.max(1, Math.round(rect.height * dpr));
-  padCtx = padCanvas.getContext("2d");
-  padCtx.scale(dpr, dpr);
-  padCtx.lineWidth = 12; padCtx.lineCap = "round"; padCtx.lineJoin = "round";
-  padCtx.strokeStyle = "#3a2b1a";
-
-  let drawing = false;
-  const pos = e => { const r = padCanvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
-  padCanvas.addEventListener("pointerdown", e => {
-    drawing = true; padCanvas.setPointerCapture(e.pointerId);
-    const [x, y] = pos(e); padCtx.beginPath(); padCtx.moveTo(x, y);
-    padCtx.lineTo(x + 0.1, y + 0.1); padCtx.stroke();
-  });
-  padCanvas.addEventListener("pointermove", e => {
-    if (!drawing) return; const [x, y] = pos(e); padCtx.lineTo(x, y); padCtx.stroke();
-  });
-  const stop = () => { drawing = false; };
-  padCanvas.addEventListener("pointerup", stop);
-  padCanvas.addEventListener("pointercancel", stop);
-  padCanvas.addEventListener("pointerleave", stop);
+  padCtx = makeSketch(padCanvas, { color: "#3a2b1a", width: 12 }).ctx;
 }
 function clearPad() { if (padCtx && padCanvas) padCtx.clearRect(0, 0, padCanvas.width, padCanvas.height); }
 
@@ -946,7 +1001,18 @@ function showParent() {
           ${[30, 60, 90, 120].map(n => `<option value="${n}" ${p.settings.attackTime === n ? "selected" : ""}>${n}秒</option>`).join("")}
         </select>
       </div>
-      <div class="hint">よみあげは 1年生に おすすめ（たんまつが 日本語おんせいに たいおうしている ばあい）</div>
+      <div class="setting-row">
+        <span>こえの しゅるい</span>
+        <select id="voice">
+          <option value="">おまかせ（自動で 自然な こえ）</option>
+          ${jaVoices().map(v => `<option value="${v.voiceURI}" ${p.settings.voiceURI === v.voiceURI ? "selected" : ""}>${v.name}</option>`).join("")}
+        </select>
+      </div>
+      <div class="setting-row">
+        <span></span>
+        <button class="shop-btn use" id="voiceTest" style="width:auto;padding:8px 16px">🔊 こえを ためす</button>
+      </div>
+      <div class="hint">よみあげは 1年生に おすすめ。こえの しゅるいは たんまつに 入っている 日本語ボイスから えらべます（${jaVoices().length}こ）。より 自然な こえは、iPhoneなら「設定→アクセシビリティ→読み上げ→声→日本語」で 高品質ボイスを、AndroidやPCなら「Google 日本語」等を 追加すると えらべます。</div>
       <button class="big-btn ghost" id="resetBtn" style="margin-top:16px;color:#ff5a5a">この学年のデータを けす</button>
     </div>
 
@@ -961,6 +1027,8 @@ function showParent() {
     if (p.settings.speak) speak("よみあげを おんに しました", true);
   };
   document.getElementById("attackTime").onchange = e => { p.settings.attackTime = +e.target.value; saveState(); };
+  document.getElementById("voice").onchange = e => { p.settings.voiceURI = e.target.value || null; saveState(); speak("こんにちは。この こえで よみあげます。", true); };
+  document.getElementById("voiceTest").onclick = () => speak("こんにちは。いっしょに べんきょう しましょう。", true);
   document.getElementById("resetBtn").onclick = () => {
     if (confirm("この学年の コイン・バッジ・きろく・アイテムを ぜんぶ けしますか？")) {
       state.profiles[state.grade] = freshProfile();

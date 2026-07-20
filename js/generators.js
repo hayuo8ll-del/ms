@@ -63,6 +63,22 @@ function clockHalf() {
     input: "choice", choices: [`${h}じ30ぷん`, `${h}じ`, `${(h % 12) + 1}じ30ぷん`, `${h}じ15ふん`] };
 }
 
+/* --- 1年生：追加の問題タイプ --- */
+function moneyG1(diff) {
+  const coin = diff === "easy" ? 10 : pick([5, 10, 100]);
+  const n = ri(2, diff === "hard" ? 6 : 5);
+  return { prompt: "おかね", q: `${coin}円が ${n}こで なん円？`, answer: `${coin * n}`, input: "number" };
+}
+function seqNextG1() { const a = ri(1, 18); return { prompt: "つぎの かず", q: `${a} の つぎの かずは？`, answer: `${a + 1}`, input: "number" }; }
+function moreLessG1(diff) {
+  const hi = diff === "hard" ? 90 : 15, dd = diff === "hard" ? 9 : 5;
+  if (Math.random() < 0.5) { const base = ri(3, hi), d = ri(1, dd); return { prompt: "", q: `${base}より ${d} 大きい かずは？`, answer: `${base + d}`, input: "number" }; }
+  const d = ri(1, dd), b2 = ri(d + 3, hi); return { prompt: "", q: `${b2}より ${d} 小さい かずは？`, answer: `${b2 - d}`, input: "number" };
+}
+function add2d1d() { const tens = ri(2, 8), ones = ri(0, 4); const t = tens * 10 + ones; const b = ri(1, 9 - ones); return { prompt: "2けたの たしざん", q: `${t} + ${b} =`, answer: `${t + b}`, input: "number" }; }
+function sub2d1d() { const tens = ri(2, 9), ones = ri(5, 9); const t = tens * 10 + ones; const b = ri(1, ones); return { prompt: "2けたの ひきざん", q: `${t} - ${b} =`, answer: `${t - b}`, input: "number" }; }
+function countBy(diff) { const step = pick(diff === "hard" ? [2, 5, 10] : [2, 5]); const start = step * ri(1, 4); return { prompt: `${step}ずつ`, q: `${start}, ${start + step}, ${start + step * 2}, つぎは？`, answer: `${start + step * 3}`, input: "number" }; }
+
 /* ===== 1年生の算数（やさしい/ふつう/むずかしい） ===== */
 function mathG1(diff) {
   if (diff === "easy") return [
@@ -70,6 +86,10 @@ function mathG1(diff) {
     () => { const a = ri(2, 9), b = ri(1, a); return { prompt: "ひきざん", q: `${a} - ${b} =`, answer: `${a - b}`, input: "number" }; },
     () => { const a = ri(1, 10), b = ri(1, 10); return { prompt: "大きいのは どっち？", q: `${a}  と  ${b}`, answer: a >= b ? `${a}` : `${b}`, input: "choice", choices: [`${a}`, `${b}`] }; },
     () => { const a = ri(1, 9); return { prompt: "10は □と", q: `10 = ${a} + □`, answer: `${10 - a}`, input: "number" }; },
+    seqNextG1,
+    () => moneyG1("easy"),
+    () => moreLessG1("easy"),
+    () => countBy("easy"),
   ];
   if (diff === "hard") return [
     () => { const a = ri(4, 9), b = ri(11 - a, 9); return { prompt: "くり上がり たしざん", q: `${a} + ${b} =`, answer: `${a + b}`, input: "number" }; },
@@ -78,6 +98,11 @@ function mathG1(diff) {
     () => { const t = ri(6, 18), a = ri(1, t - 1); return { prompt: "□に 入る かず", q: `${a} + □ = ${t}`, answer: `${t - a}`, input: "number" }; },
     () => { const a = ri(1, 100), b = ri(1, 100); return { prompt: "大きいのは どっち？", q: `${a}  と  ${b}`, answer: a >= b ? `${a}` : `${b}`, input: "choice", choices: [`${a}`, `${b}`] }; },
     clockHalf,
+    add2d1d,
+    sub2d1d,
+    () => moneyG1("hard"),
+    () => moreLessG1("hard"),
+    () => countBy("hard"),
   ];
   // normal
   return [
@@ -89,6 +114,10 @@ function mathG1(diff) {
     clockOClock,
     clockHalf,
     () => { const a = ri(1, 9); return { prompt: "10は □と", q: `10 = ${a} + □`, answer: `${10 - a}`, input: "number" }; },
+    seqNextG1,
+    () => moneyG1("normal"),
+    () => moreLessG1("normal"),
+    () => countBy("normal"),
   ];
 }
 
@@ -125,6 +154,49 @@ function triArea() {
   const base = pick([4, 6, 8, 10, 12]); const height = pick([3, 5, 6, 8, 10]);
   return { prompt: "三角形の面積（cm²）", q: `そこ辺 ${base}cm、高さ ${height}cm の 三角形の面積は？`, answer: `${base * height / 2}`, input: "number" };
 }
+// がい数（四捨五入）
+function roundG5() {
+  const [unit, name] = pick([[100, "百"], [1000, "千"]]);
+  const n = ri(unit * 2 + 1, unit * 40);
+  return { prompt: `がい数（${name}のくらいで 四捨五入）`, q: `${n} を ${name}のくらいで 四捨五入すると？`, answer: `${Math.round(n / unit) * unit}`, input: "number" };
+}
+// たんいの かんさん
+function unitG5() {
+  const o = pick([["1m = □cm", "100"], ["1km = □m", "1000"], ["1kg = □g", "1000"], ["1L = □dL", "10"], ["1時間 = □分", "60"], ["1分 = □秒", "60"], ["1cm = □mm", "10"], ["1000g = □kg", "1"]]);
+  return { prompt: "たんいの かんさん", q: o[0], answer: o[1], input: "number" };
+}
+// 直方体の体積
+function volumeG5(diff) {
+  const m = diff === "hard" ? 9 : 6;
+  const a = ri(2, m), b = ri(2, m), c = ri(2, m);
+  return { prompt: "直方体の体積（cm³）", q: `たて${a}cm よこ${b}cm 高さ${c}cm の 体積は？`, answer: `${a * b * c}`, input: "number" };
+}
+// 速さ（道のり）
+function speedG5() {
+  const v = pick([40, 50, 60, 70, 80]); const t = ri(2, 5);
+  return { prompt: "速さ（道のり）", q: `時速${v}kmで ${t}時間 すすむと なんkm？`, answer: `${v * t}`, input: "number" };
+}
+// 約数の個数
+function divisorsG5() {
+  const n = pick([6, 8, 12, 16, 18, 20, 24, 28]); let c = 0;
+  for (let i = 1; i <= n; i++) if (n % i === 0) c++;
+  return { prompt: "やくすうの 数", q: `${n} の やくすうは いくつ ある？`, answer: `${c}`, input: "number" };
+}
+// 比を かんたんに
+function ratioG5() {
+  const g = ri(2, 6), a = g * ri(1, 5), b = g * ri(1, 5); const gg = gcd(a, b);
+  const ans = `${a / gg}:${b / gg}`;
+  return { prompt: "比を かんたんに", q: `${a} : ${b} =`, answer: ans, input: "choice",
+    choices: uniqChoices([ans, `${a}:${b}`, `${a / gg}:${b}`, `${b / gg}:${a / gg}`]) };
+}
+// 分数 × 整数
+function fracTimesInt() {
+  const d = ri(3, 8), a = ri(1, d - 1), k = ri(2, 5);
+  const num = a * k; const g = gcd(num, d);
+  const ans = num % d === 0 ? `${num / d}` : `${num / g}/${d / g}`;
+  return { prompt: "分数 × 整数", q: `${a}/${d} × ${k} =`, answer: ans, input: "choice",
+    choices: uniqChoices([ans, `${num}/${d}`, `${a}/${d * k}`, `${a * k}/${d * k}`]) };
+}
 function avg3(vMax) {
   const vals = [ri(2, vMax), ri(2, vMax), ri(2, vMax)];
   let sum = vals.reduce((s, v) => s + v, 0); const rem = sum % 3;
@@ -139,6 +211,8 @@ function mathG5(diff) {
     () => { const base = pick([100, 200, 300]); const p = pick([10, 20, 50]); return { prompt: "割合", q: `${base}の ${p}% は？`, answer: `${base * p / 100}`, input: "number" }; },
     () => rectArea(8, 6),
     () => avg3(8),
+    unitG5,
+    () => volumeG5("easy"),
   ];
   if (diff === "hard") return [
     fracDiff,
@@ -148,6 +222,12 @@ function mathG5(diff) {
     () => { const a = ri(6, 12), b = ri(6, 12); return { prompt: "さいしょう公倍数（LCM）", q: `${a} と ${b} の 公倍数で いちばん小さいのは？`, answer: `${lcm(a, b)}`, input: "number" }; },
     () => { const g = ri(3, 8); const a = g * ri(2, 6), b = g * ri(2, 6); return { prompt: "さいだい公約数（GCD）", q: `${a} と ${b} の 公約数で いちばん大きいのは？`, answer: `${gcd(a, b)}`, input: "number" }; },
     () => { const base = pick([6, 8, 10, 12, 14]); const height = pick([5, 7, 8, 9, 12]); return { prompt: "三角形の面積（cm²）", q: `そこ辺 ${base}cm、高さ ${height}cm の 三角形の面積は？`, answer: `${base * height / 2}`, input: "number" }; },
+    roundG5,
+    speedG5,
+    ratioG5,
+    divisorsG5,
+    () => volumeG5("hard"),
+    fracTimesInt,
   ];
   // normal
   return [
@@ -161,6 +241,12 @@ function mathG5(diff) {
     () => { const g = ri(2, 6); const a = g * ri(2, 5), b = g * ri(2, 5); return { prompt: "さいだい公約数（GCD）", q: `${a} と ${b} の 公約数で いちばん大きいのは？`, answer: `${gcd(a, b)}`, input: "number" }; },
     () => rectArea(12, 9),
     triArea,
+    roundG5,
+    unitG5,
+    speedG5,
+    ratioG5,
+    divisorsG5,
+    () => volumeG5("normal"),
   ];
 }
 
