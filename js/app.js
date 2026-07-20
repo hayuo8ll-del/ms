@@ -92,19 +92,30 @@ function jaVoices() {
   if (!("speechSynthesis" in window)) return [];
   return speechSynthesis.getVoices().filter(v => /^ja(\b|-|_)/i.test(v.lang) || /japan|日本語/i.test(v.name));
 }
-// 端末に入っている高品質ボイスの名前（新しめ・自然なもの）を優先
+// 端末に入っている高品質ボイスの名前（Siriに近い自然なもの）を優先
 const PREFERRED_VOICES = [
-  "Google 日本語", "Kyoko (Enhanced)", "Kyoko (Premium)", "O-ren (Enhanced)", "O-ren",
-  "Kyoko", "Otoya", "Microsoft Nanami", "Nanami", "Microsoft Ayumi", "Ayumi", "Microsoft Keita", "Sayaka", "Hattori",
+  "Siri", "Google 日本語", "Kyoko (Enhanced)", "Kyoko (Premium)", "O-ren (Enhanced)", "O-ren (Premium)",
+  "O-ren", "Kyoko", "Otoya", "Microsoft Nanami", "Nanami", "Microsoft Ayumi", "Ayumi", "Microsoft Keita", "Sayaka", "Hattori",
 ];
+// Siri系・高品質（拡張/プレミアム/ニューラル）ボイスかどうか
+function isNaturalVoice(v) {
+  return /Siri|Enhanced|Premium|Neural|Google 日本語|Nanami|O-?ren|Kyoko/i.test(v.name);
+}
+// おすすめ順（自然な声を先頭）に並べた日本語ボイス
+function jaVoicesRanked() {
+  const rank = v => {
+    const i = PREFERRED_VOICES.findIndex(n => v.name.includes(n));
+    return i === -1 ? 999 : i;
+  };
+  return jaVoices().slice().sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+}
 function chooseVoice() {
   const list = jaVoices();
   if (!list.length) return null;
   const sel = prof().settings.voiceURI;
   if (sel) { const v = list.find(x => x.voiceURI === sel); if (v) return v; }
   for (const name of PREFERRED_VOICES) { const v = list.find(x => x.name.includes(name)); if (v) return v; }
-  // ローカル(端末内)音声を優先、なければ先頭
-  return list.find(v => v.localService) || list[0];
+  return list.find(v => v.localService) || list[0];  // 端末内→先頭
 }
 function speak(text, force) {
   if (!force && !prof().settings.speak) return;
@@ -1004,15 +1015,22 @@ function showParent() {
       <div class="setting-row">
         <span>こえの しゅるい</span>
         <select id="voice">
-          <option value="">おまかせ（自動で 自然な こえ）</option>
-          ${jaVoices().map(v => `<option value="${v.voiceURI}" ${p.settings.voiceURI === v.voiceURI ? "selected" : ""}>${v.name}</option>`).join("")}
+          <option value="">おまかせ（自動で いちばん 自然な こえ）</option>
+          ${jaVoicesRanked().map(v => `<option value="${v.voiceURI}" ${p.settings.voiceURI === v.voiceURI ? "selected" : ""}>${v.name}${isNaturalVoice(v) ? "（おすすめ・自然な声）" : ""}</option>`).join("")}
         </select>
       </div>
       <div class="setting-row">
         <span></span>
         <button class="shop-btn use" id="voiceTest" style="width:auto;padding:8px 16px">🔊 こえを ためす</button>
       </div>
-      <div class="hint">よみあげは 1年生に おすすめ。こえの しゅるいは たんまつに 入っている 日本語ボイスから えらべます（${jaVoices().length}こ）。より 自然な こえは、iPhoneなら「設定→アクセシビリティ→読み上げ→声→日本語」で 高品質ボイスを、AndroidやPCなら「Google 日本語」等を 追加すると えらべます。</div>
+      <div class="hint">
+        いま えらべる 日本語ボイス：<b>${jaVoices().length}こ</b>${jaVoicesRanked().some(isNaturalVoice) ? "（自然な声あり ✅）" : ""}<br>
+        <b>Siriのような 自然な声にするには（iPhone/iPad）：</b>
+        「設定」→「アクセシビリティ」→「読み上げコンテンツ」→「声」→「日本語」で
+        <b>Kyoko や O-ren の『拡張』版</b>をダウンロードすると、この一覧に出て えらべます。
+        （Siri そのものの声は、Appleの仕様で アプリからは使えないため、いちばん 近い 高品質ボイスです）<br>
+        Android・PC は「Google 日本語」などを 追加すると えらべます。
+      </div>
       <button class="big-btn ghost" id="resetBtn" style="margin-top:16px;color:#ff5a5a">この学年のデータを けす</button>
     </div>
 
