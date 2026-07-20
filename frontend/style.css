@@ -292,6 +292,116 @@ button#import-button:disabled {
   z-index: 5;
 }
 
+.matrix-panel {
+  padding: 16px 24px 4px;
+  border-top: 1px solid var(--line);
+}
+
+.matrix-panel[hidden] {
+  display: none;
+}
+
+.matrix-title {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.matrix-note {
+  margin: 0 0 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.matrix-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.matrix-table {
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.matrix-table th,
+.matrix-table td {
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 5px 8px;
+  text-align: center;
+}
+
+.matrix-table thead th {
+  background: var(--panel-2);
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.matrix-table thead .th-date {
+  border-bottom: 1px solid var(--line);
+}
+
+.matrix-table thead .th-shift {
+  font-size: 10px;
+  font-weight: 400;
+}
+
+/* 左端の注文列は横スクロール時も固定表示する */
+.matrix-table .col-order {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  text-align: left;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  min-width: 150px;
+}
+
+.matrix-table thead .col-order {
+  z-index: 3;
+  background: var(--panel-2);
+}
+
+.matrix-table .col-order .ord-id {
+  color: var(--text);
+}
+
+.matrix-table .col-order .ord-prod {
+  color: var(--text-dim);
+  margin-left: 6px;
+}
+
+.matrix-cell {
+  display: inline-flex;
+  gap: 4px;
+  justify-content: center;
+}
+
+.matrix-cell .cnt {
+  min-width: 15px;
+  padding: 1px 3px;
+  border-radius: 2px;
+  font-weight: 600;
+  color: #0f1115;
+}
+
+.matrix-cell .cnt.zero {
+  background: transparent !important;
+  color: var(--text-dim);
+  font-weight: 400;
+  opacity: 0.45;
+}
+
+.matrix-cell .cnt.STAGE1 { background: var(--accent-a); }
+.matrix-cell .cnt.STAGE2 { background: var(--accent-b); }
+.matrix-cell .cnt.STAGE3 { background: var(--accent-c); }
+
 .util-panel {
   padding: 16px 24px 30px;
   border-top: 1px solid var(--line);

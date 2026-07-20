@@ -108,11 +108,17 @@ directly by FastAPI's `StaticFiles` mount.
   file).
 - `frontend/` — static `index.html` + `app.js` + `style.css`. On load (and on button
   click, with an optional plan-start date) calls `POST /api/plan` and renders: KPI cards,
-  a warnings panel, and a per-stage/per-machine Gantt chart (each `ScheduledOp` drawn as
-  a bar positioned/sized by its start/end time) plus per-machine utilization cards. The
+  a warnings panel, a per-stage/per-machine Gantt chart (each `ScheduledOp` drawn as
+  a bar positioned/sized by its start/end time), a **date×shift machine-count matrix**
+  (see below), plus per-machine utilization cards. The
   header also has an Excel template download link and an upload button that posts to
   `/api/import`, shows a success summary or a detailed per-row error list, and
-  automatically re-runs the plan on success.
+  automatically re-runs the plan on success. The date×shift matrix (`renderShiftMatrix`)
+  fetches the active shift pattern from `GET /api/equipment`
+  (`shift_modes[default_shift_mode]`, cached), rebuilds the concrete shift windows
+  client-side (mirroring `shift_calendar.py`'s `_build_windows`, incl. overnight wrap),
+  keeps only windows that overlap some op, and shows one row per order with a per-stage
+  (工程A/B/C) count of distinct machines running that order in each shift window.
 
 ## Known limitations / next steps
 

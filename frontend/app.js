@@ -9,8 +9,13 @@ const errorBanner = document.getElementById("error-banner");
 const importButton = document.getElementById("import-button");
 const importFileInput = document.getElementById("import-file");
 const importResultEl = document.getElementById("import-result");
+const matrixPanelEl = document.getElementById("shift-matrix");
+const matrixTableEl = document.getElementById("matrix-table");
 
 const HOUR_PX = 26;
+
+// シフト定義(勤務帯)はstart_dateに依存しないため初回のみ取得してキャッシュする
+let shiftDefsCache = null;
 
 function fmt(dt) {
   const d = new Date(dt);
@@ -114,6 +119,140 @@ function renderGantt(schedule) {
   }
 }
 
+async function loadShiftDefs() {
+  if (shiftDefsCache) return shiftDefsCache;
+  const res = await fetch("/api/equipment");
+  if (!res.ok) throw new Error(`設備情報の取得に失敗: ${res.status}`);
+  const eq = await res.json();
+  const defs = eq.shift_modes[eq.default_shift_mode];
+  if (!Array.isArray(defs) || defs.length === 0) {
+    throw new Error("シフト定義が空です。");
+  }
+  shiftDefsCache = defs;
+  return defs;
+}
+
+// "HH:MM" を分に変換("24:00" は 1440 として日跨ぎ判定に乗せる)
+function parseTimeToMinutes(value) {
+  const [h, m] = value.split(":").map(Number);
+  return h * 60 + m;
+}
+
+// shift_calendar.py の _build_windows を踏襲: 稼働ウィンドウ配列を作る
+function buildShiftWindows(shiftDefs, minDate, maxDate) {
+  const windows = [];
+  const day = new Date(minDate);
+  day.setHours(0, 0, 0, 0);
+  day.setDate(day.getDate() - 1); // 夜勤の日跨ぎに備え1日前から
+  const last = new Date(maxDate);
+  last.setDate(last.getDate() + 1);
+  while (day <= last) {
+    for (const shift of shiftDefs) {
+      const startMin = parseTimeToMinutes(shift.start);
+      const endMin = parseTimeToMinutes(shift.end);
+      const wStart = new Date(day);
+      wStart.setMinutes(startMin);
+      const wEnd = new Date(day);
+      wEnd.setMinutes(endMin);
+      if (endMin <= startMin) wEnd.setDate(wEnd.getDate() + 1); // 折り返し(夜勤)
+      windows.push({ start: wStart, end: wEnd, name: shift.shiftName });
+    }
+    day.setDate(day.getDate() + 1);
+  }
+  windows.sort((a, b) => a.start - b.start);
+  return windows;
+}
+
+const MATRIX_STAGES = ["STAGE1", "STAGE2", "STAGE3"];
+
+function renderShiftMatrix(schedule, shiftDefs) {
+  if (!schedule.length || !shiftDefs) {
+    matrixPanelEl.hidden = true;
+    return;
+  }
+
+  const times = schedule.flatMap((op) => [new Date(op.start), new Date(op.end)]);
+  const minDate = new Date(Math.min(...times));
+  const maxDate = new Date(Math.max(...times));
+
+  // opがいずれか重なるウィンドウのみを列に採用
+  const allWindows = buildShiftWindows(shiftDefs, minDate, maxDate);
+  const activeWindows = allWindows.filter((w) =>
+    schedule.some((op) => new Date(op.start) < w.end && new Date(op.end) > w.start)
+  );
+  if (!activeWindows.length) {
+    matrixPanelEl.hidden = true;
+    return;
+  }
+
+  // (order, windowIndex, stage) -> 稼働号機の集合
+  const orders = [...new Set(schedule.map((op) => op.order_id))].sort();
+  const productOf = {};
+  for (const op of schedule) productOf[op.order_id] = op.product;
+
+  const counts = new Map(); // key: `${order}|${wi}|${stage}` -> Set(machine)
+  for (const op of schedule) {
+    const s = new Date(op.start);
+    const e = new Date(op.end);
+    activeWindows.forEach((w, wi) => {
+      if (s < w.end && e > w.start) {
+        const key = `${op.order_id}|${wi}|${op.stage_id}`;
+        if (!counts.has(key)) counts.set(key, new Set());
+        counts.get(key).add(op.machine_id);
+      }
+    });
+  }
+
+  const dayKey = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
+
+  // ヘッダー1段目(日付, colspan=その日の勤務帯数) と 2段目(シフト名)
+  const dateGroups = [];
+  for (const w of activeWindows) {
+    const key = dayKey(w.start);
+    const last = dateGroups[dateGroups.length - 1];
+    if (last && last.key === key) last.span += 1;
+    else dateGroups.push({ key, span: 1 });
+  }
+
+  const headRow1 =
+    `<th class="col-order" rowspan="2">受注</th>` +
+    dateGroups.map((g) => `<th class="th-date" colspan="${g.span}">${g.key}</th>`).join("");
+  const headRow2 = activeWindows.map((w) => `<th class="th-shift">${w.name}</th>`).join("");
+
+  const bodyRows = orders
+    .map((order) => {
+      const cells = activeWindows
+        .map((_w, wi) => {
+          const badges = MATRIX_STAGES.map((stage) => {
+            const set = counts.get(`${order}|${wi}|${stage}`);
+            const n = set ? set.size : 0;
+            const cls = n === 0 ? "cnt zero" : `cnt ${stage}`;
+            return `<span class="${cls}">${n}</span>`;
+          }).join("");
+          const total = MATRIX_STAGES.reduce((acc, stage) => {
+            const set = counts.get(`${order}|${wi}|${stage}`);
+            return acc + (set ? set.size : 0);
+          }, 0);
+          const titleAttr = total
+            ? ` title="工程A ${counts.get(`${order}|${wi}|STAGE1`)?.size || 0}台 / 工程B ${
+                counts.get(`${order}|${wi}|STAGE2`)?.size || 0
+              }台 / 工程C ${counts.get(`${order}|${wi}|STAGE3`)?.size || 0}台"`
+            : "";
+          return `<td${titleAttr}><span class="matrix-cell">${badges}</span></td>`;
+        })
+        .join("");
+      return (
+        `<tr><td class="col-order"><span class="ord-id">${order}</span>` +
+        `<span class="ord-prod">${productOf[order] || ""}</span></td>${cells}</tr>`
+      );
+    })
+    .join("");
+
+  matrixTableEl.innerHTML =
+    `<thead><tr>${headRow1}</tr><tr>${headRow2}</tr></thead><tbody>${bodyRows}</tbody>`;
+  matrixPanelEl.hidden = false;
+}
+
 function renderUtilization(utilization) {
   utilGridEl.innerHTML = utilization
     .map((u) => {
@@ -151,6 +290,14 @@ async function runPlan() {
     renderWarnings(result.warnings);
     renderGantt(result.schedule);
     renderUtilization(result.machine_utilization);
+    try {
+      const shiftDefs = await loadShiftDefs();
+      renderShiftMatrix(result.schedule, shiftDefs);
+    } catch (matrixErr) {
+      // マトリクスの描画失敗は既存ガントの表示を妨げない
+      matrixPanelEl.hidden = true;
+      console.error("シフトマトリクスの描画に失敗しました:", matrixErr);
+    }
   } catch (err) {
     errorBanner.hidden = false;
     errorBanner.textContent = `計画の立案に失敗しました: ${err.message}`;
