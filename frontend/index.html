@@ -22,10 +22,28 @@
       <button id="run-plan" type="button">計画を立案する</button>
       <button id="export-plan" type="button">計画をExcel出力</button>
       <span class="divider"></span>
+      <label for="bn-lines">ライン</label>
+      <input type="text" id="bn-lines" placeholder="任意 例:CTA1,CTA2" size="12" />
       <input type="file" id="ledger-file" accept=".xlsx" hidden />
-      <button id="bottleneck-button" type="button" title="THM生産台帳を取り込み、HALボトルネック基準の日次計画(機種×日／製番別MIL)をExcel出力します。台帳に「実績」シート(製番/実績数)を足しておくと、実績を控除した残数量で再立案します。機種切替(管理者作業)はA勤限定として翌朝へ繰り下げます。">台帳→ボトルネック計画(Excel)</button>
+      <button id="bottleneck-button" type="button" title="THM生産台帳を取り込み、HALボトルネック基準の日次計画(機種×日／製番別MIL)を画面表示します。ライン欄で対象ラインを絞れます(空欄=全ライン)。台帳に「実績」シート(製番/実績数)や「設備停止」シートを足しておくと反映します。">台帳→ボトルネック計画</button>
     </div>
   </header>
+
+  <section class="bn-panel" id="bn-panel" hidden>
+    <div class="bn-head">
+      <div class="bn-title">ボトルネック計画 <span class="bn-sub">HAL基準・日次フロー（機種×日／製番別MIL）</span></div>
+      <button id="bn-export" type="button">この計画をExcel出力</button>
+    </div>
+    <div class="bn-kpis" id="bn-kpis"></div>
+    <section class="warnings" id="bn-warnings" hidden>
+      <div class="w-title">警告</div>
+      <div id="bn-warning-list"></div>
+    </section>
+    <div class="bn-h">生産計画（機種 × 日）</div>
+    <div class="bn-matrix-wrap"><table class="bn-table" id="bn-matrix"></table></div>
+    <div class="bn-h">製番別 MIL 完成予定</div>
+    <div class="bn-mil-wrap"><table class="bn-table" id="bn-mil"></table></div>
+  </section>
 
   <section class="kpis" id="kpis" aria-live="polite"></section>
 

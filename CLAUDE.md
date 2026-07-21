@@ -53,10 +53,11 @@ directly by FastAPI's `StaticFiles` mount.
   (`load_bottleneck_planning` in `config_loader.py`, embedded defaults when absent):
   `lineDailyCapacities` (per shift mode), `bottleneckStage`, `stageFlows` (per-stage
   working-day offsets, plus optional `inputUnit` — **input granularity**: HAL feeds in
-  10,000-unit reels, TAL feeds in 40,000-unit batches; allocations are multiples of the
-  unit with each lot's remainder absorbed by its final feed (機種の台数による調整); TAL
-  batching is front-loaded per lot in `expand_to_stages` so cumulative TAL input never
-  starves HAL), `machineCounts` (per-machine share approximation for stop
+  10,000-unit reels, TAL in 40,000-unit batches, MIL in 1,920-unit inspection lots;
+  allocations are multiples of the unit with each lot's remainder absorbed by its final
+  feed (機種の台数による調整); TAL/MIL batching is front-loaded per lot in `expand_to_stages`
+  so cumulative upstream input never starves the next stage and the lot's completion day is
+  preserved), `machineCounts` (per-machine share approximation for stop
   deductions), `aShiftFraction`, `productAliases` (RC-code → 呼称) and
   `productDailyCapsByMode` (機種別キャパ). Swapping capacities/aliases needs only this file.
 - `config/changeover_matrix.json` — per-stage, per-product-pair changeover minutes, plus
@@ -196,7 +197,10 @@ directly by FastAPI's `StaticFiles` mount.
   機種別キャパ constraint, per-day stop-adjusted capacities) and streams
   the `bottleneck_export` `.xlsx` as
   `bottleneck_plan_YYYYMMDD.xlsx`; the サマリー gains 実績反映製番数/実績控除数量/
-  設備停止反映件数 rows when applicable), `POST /api/import` (multipart
+  設備停止反映件数 rows when applicable), `POST /api/bottleneck/plan` (same multipart inputs,
+  returns the plan as JSON — shift mode, per-stage×day allocation, per-製番 MIL lots,
+  warnings, summary — for on-screen rendering; shares `_build_bottleneck_plan` with the
+  export route), `POST /api/import` (multipart
   `.xlsx` upload; 422 with a list of `{sheet, row, message}` on validation failure,
   otherwise overwrites `config/*.json` and returns import counts), and
   `GET /api/import/template` (downloads the current config as a pre-filled `.xlsx`).
@@ -251,10 +255,14 @@ directly by FastAPI's `StaticFiles` mount.
   automatically re-runs the plan **and downloads the plan-result `.xlsx`** on success),
   and a **「計画をExcel出力」** button (`exportPlan`) that posts to `/api/plan/export`
   and downloads the returned workbook as a file (filename taken from
-  `Content-Disposition`), plus a **「台帳→ボトルネック計画(Excel)」** button
-  (`exportBottleneckPlan`) that uploads a THM 台帳 to `/api/bottleneck/export` and downloads
-  the resulting bottleneck-plan workbook. The on-screen rendering and the Excel exports
-  coexist. The
+  `Content-Disposition`), plus a **「台帳→ボトルネック計画」** flow: uploading a THM 台帳
+  (with an optional `ライン` filter) posts to `/api/bottleneck/plan` and renders the
+  bottleneck plan on-screen in a dedicated panel (`#bn-panel`) — a KPI row, warnings, the
+  **生産計画(機種×日)** matrix (rows = 機種 × 工程 ANT/TAL/HAL/MIL, stage-coloured, sticky
+  first two columns; columns = working days) and the **製番別MIL完成予定** table (late lots
+  highlighted), with a **「この計画をExcel出力」** button that re-posts the stored file to
+  `/api/bottleneck/export`. The discrete-scheduler view and this bottleneck view coexist on
+  the page. The
   date×shift matrix (`renderShiftMatrix`)
   fetches the active shift pattern from `GET /api/equipment`
   (`shift_modes[default_shift_mode]`, cached), rebuilds the concrete shift windows

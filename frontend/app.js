@@ -14,6 +14,19 @@ const bottleneckButton = document.getElementById("bottleneck-button");
 const ledgerFileInput = document.getElementById("ledger-file");
 const matrixPanelEl = document.getElementById("shift-matrix");
 const matrixTableEl = document.getElementById("matrix-table");
+const bnPanelEl = document.getElementById("bn-panel");
+const bnKpisEl = document.getElementById("bn-kpis");
+const bnWarningsEl = document.getElementById("bn-warnings");
+const bnWarningListEl = document.getElementById("bn-warning-list");
+const bnMatrixEl = document.getElementById("bn-matrix");
+const bnMilEl = document.getElementById("bn-mil");
+const bnExportButton = document.getElementById("bn-export");
+const bnLinesInput = document.getElementById("bn-lines");
+
+// 直近に取り込んだ台帳ファイル(画面表示 → Excel出力で再利用)
+let lastLedgerFile = null;
+
+const BN_STAGE_COLOR = { ANT: "var(--accent-a)", TAL: "var(--accent-b)", HAL: "var(--danger)", MIL: "var(--accent-c)" };
 
 const HOUR_PX = 26;
 
@@ -394,9 +407,10 @@ async function exportPlan() {
   }
 }
 
-async function exportBottleneckPlan() {
+async function loadBottleneckPlan() {
   const file = ledgerFileInput.files[0];
   if (!file) return;
+  lastLedgerFile = file;
 
   errorBanner.hidden = true;
   bottleneckButton.disabled = true;
@@ -406,6 +420,138 @@ async function exportBottleneckPlan() {
     const formData = new FormData();
     formData.append("file", file);
     if (startDateInput.value) formData.append("start_date", startDateInput.value);
+    if (bnLinesInput.value.trim()) formData.append("lines", bnLinesInput.value.trim());
+    const res = await fetch("/api/bottleneck/plan", { method: "POST", body: formData });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(typeof data.detail === "string" ? data.detail : `APIエラー: ${res.status}`);
+    }
+    renderBottleneckPlan(data);
+    bnPanelEl.hidden = false;
+    bnPanelEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (err) {
+    errorBanner.hidden = false;
+    errorBanner.textContent = `ボトルネック計画の作成に失敗しました:\n${err.message}`;
+  } finally {
+    bottleneckButton.disabled = false;
+    bottleneckButton.textContent = "台帳→ボトルネック計画";
+    ledgerFileInput.value = "";
+  }
+}
+
+function fmtNum(n) {
+  return Math.round(n).toLocaleString();
+}
+
+function fmtMd(iso) {
+  const [, m, d] = iso.split("-");
+  return `${Number(m)}/${Number(d)}`;
+}
+
+function renderBottleneckPlan(data) {
+  // KPIカード
+  const s = data.summary;
+  const cards = [
+    ["選択シフト", data.shift_mode],
+    ["日次能力(HAL)", fmtNum(data.daily_capacity)],
+    ["必要日次レート", fmtNum(data.required_daily_rate)],
+    ["対象ロット(製番)", `${s.lot_count} 件`],
+    ["需要総数(残)", fmtNum(s.total_qty)],
+    ["MIL納期超過", `${s.late_count} 件`],
+    ...s.extra.map(([label, value]) => [label, typeof value === "number" ? fmtNum(value) : value]),
+  ];
+  bnKpisEl.innerHTML = cards
+    .map(([label, value]) => `<div class="bn-kpi"><div class="label">${label}</div><div class="value">${value}</div></div>`)
+    .join("");
+
+  // 警告
+  if (data.warnings.length === 0) {
+    bnWarningsEl.hidden = true;
+  } else {
+    bnWarningsEl.hidden = false;
+    bnWarningListEl.innerHTML = data.warnings.map((w) => `<div class="w-item">${w}</div>`).join("");
+  }
+
+  renderBnMatrix(data);
+  renderBnMil(data.mil_lots);
+}
+
+function renderBnMatrix(data) {
+  const days = data.working_days;
+  const stages = data.stage_order;
+  // (product, stage, day) -> qty
+  const agg = new Map();
+  const halFirstDay = new Map();
+  for (const c of data.stage_allocation) {
+    const key = `${c.product} ${c.stage_id} ${c.day}`;
+    agg.set(key, (agg.get(key) || 0) + c.quantity);
+    if (c.stage_id === "HAL") {
+      const cur = halFirstDay.get(c.product);
+      if (cur === undefined || c.day < cur) halFirstDay.set(c.product, c.day);
+    }
+  }
+  const products = [...new Set(data.stage_allocation.map((c) => c.product))].sort((a, b) => {
+    const da = halFirstDay.get(a) || "9999";
+    const db = halFirstDay.get(b) || "9999";
+    return da < db ? -1 : da > db ? 1 : a < b ? -1 : 1;
+  });
+
+  const head =
+    `<thead><tr><th class="bn-c-prod">機種</th><th class="bn-c-stage">工程</th>` +
+    days.map((d) => `<th>${fmtMd(d)}</th>`).join("") +
+    `</tr></thead>`;
+
+  const body = products
+    .map((product) =>
+      stages
+        .map((stage, si) => {
+          const cells = days
+            .map((d) => {
+              const q = agg.get(`${product} ${stage} ${d}`);
+              return `<td>${q ? fmtNum(q) : ""}</td>`;
+            })
+            .join("");
+          const prodCell = si === 0 ? `<td class="bn-c-prod" rowspan="${stages.length}">${product}</td>` : "";
+          return `<tr>${prodCell}<td class="bn-c-stage" style="color:${BN_STAGE_COLOR[stage] || "var(--text)"}">${stage}</td>${cells}</tr>`;
+        })
+        .join("")
+    )
+    .join("");
+
+  bnMatrixEl.innerHTML = head + `<tbody>${body}</tbody>`;
+}
+
+function renderBnMil(lots) {
+  const head =
+    `<thead><tr><th>製番</th><th>機種</th><th class="bn-num">数量</th><th>MIL完成</th><th>納期</th><th>判定</th></tr></thead>`;
+  const body = lots
+    .map((lot) => {
+      const late = lot.on_time === false;
+      const judge = lot.on_time == null ? "—" : late ? "× 超過" : "○ 納期内";
+      return (
+        `<tr class="${late ? "bn-late" : ""}">` +
+        `<td class="bn-mono">${lot.order_id}</td><td>${lot.product}</td>` +
+        `<td class="bn-num">${fmtNum(lot.quantity)}</td>` +
+        `<td class="bn-mono">${fmtMd(lot.completion_day)}</td>` +
+        `<td class="bn-mono">${lot.due_date ? fmtMd(lot.due_date) : "—"}</td>` +
+        `<td class="${late ? "bn-judge-late" : "bn-judge-ok"}">${judge}</td></tr>`
+      );
+    })
+    .join("");
+  bnMilEl.innerHTML = head + `<tbody>${body}</tbody>`;
+}
+
+async function exportBottleneckPlan() {
+  if (!lastLedgerFile) return;
+  errorBanner.hidden = true;
+  bnExportButton.disabled = true;
+  bnExportButton.textContent = "出力中...";
+
+  try {
+    const formData = new FormData();
+    formData.append("file", lastLedgerFile);
+    if (startDateInput.value) formData.append("start_date", startDateInput.value);
+    if (bnLinesInput.value.trim()) formData.append("lines", bnLinesInput.value.trim());
     const res = await fetch("/api/bottleneck/export", { method: "POST", body: formData });
     if (!res.ok) {
       let detail = `APIエラー: ${res.status}`;
@@ -432,11 +578,10 @@ async function exportBottleneckPlan() {
     URL.revokeObjectURL(url);
   } catch (err) {
     errorBanner.hidden = false;
-    errorBanner.textContent = `ボトルネック計画の出力に失敗しました:\n${err.message}`;
+    errorBanner.textContent = `ボトルネック計画のExcel出力に失敗しました:\n${err.message}`;
   } finally {
-    bottleneckButton.disabled = false;
-    bottleneckButton.textContent = "台帳→ボトルネック計画(Excel)";
-    ledgerFileInput.value = "";
+    bnExportButton.disabled = false;
+    bnExportButton.textContent = "この計画をExcel出力";
   }
 }
 
@@ -445,5 +590,6 @@ exportButton.addEventListener("click", exportPlan);
 importButton.addEventListener("click", () => importFileInput.click());
 importFileInput.addEventListener("change", importExcel);
 bottleneckButton.addEventListener("click", () => ledgerFileInput.click());
-ledgerFileInput.addEventListener("change", exportBottleneckPlan);
+ledgerFileInput.addEventListener("change", loadBottleneckPlan);
+bnExportButton.addEventListener("click", exportBottleneckPlan);
 runPlan();
