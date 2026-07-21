@@ -10,6 +10,7 @@ from bottleneck_planner import (  # noqa: E402
     allocate_bottleneck,
     choose_shift_mode,
     expand_to_stages,
+    mil_completion_by_order,
     plan_bottleneck,
     working_days_in_range,
 )
@@ -130,3 +131,40 @@ def test_expand_to_stages_warns_when_stage_capacity_exceeded():
     flows = [StageFlowConfig("HAL", 0), StageFlowConfig("MIL", 0, daily_capacity=80000)]
     result = plan_bottleneck(demands, days, CAPS, stage_flows=flows)
     assert any("工程MIL" in w and "超過" in w for w in result.warnings)
+
+
+def test_mil_completion_is_reported_per_serial_lot():
+    # 製番(出荷ロット)別にMIL完成日が出る
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    demands = [
+        DemandItem("さそり金融", 90000, date(2026, 7, 10), order_id="THM-A"),
+        DemandItem("さそり金融", 90000, date(2026, 7, 10), order_id="THM-B"),
+        DemandItem("SuicaⅢ", 90000, date(2026, 7, 20), order_id="THM-C"),
+    ]
+    flows = [StageFlowConfig("HAL", 0), StageFlowConfig("MIL", 1)]
+    result = plan_bottleneck(demands, days, CAPS, stage_flows=flows)
+
+    lots = {lot.order_id: lot for lot in result.mil_lots}
+    assert set(lots) == {"THM-A", "THM-B", "THM-C"}
+    # 各ロットの数量が保存される
+    assert lots["THM-A"].quantity == 90000
+    # HAL 7/1(A),7/2(B),7/3(C) → MILは+1営業日 = 7/2,7/3,7/6
+    assert lots["THM-A"].completion_day == date(2026, 7, 2)
+    assert lots["THM-C"].completion_day == date(2026, 7, 6)
+    # 全ロット納期内
+    assert all(lot.on_time for lot in result.mil_lots)
+
+
+def test_mil_lot_due_date_overrun_is_flagged_and_warned():
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    # 2ロット目のMIL完成が納期(7/1)を過ぎる
+    demands = [
+        DemandItem("A", 90000, date(2026, 7, 10), order_id="L1"),
+        DemandItem("B", 90000, date(2026, 7, 1), order_id="L2"),
+    ]
+    flows = [StageFlowConfig("HAL", 0), StageFlowConfig("MIL", 1)]
+    result = plan_bottleneck(demands, days, CAPS, stage_flows=flows)
+
+    late = [lot for lot in result.mil_lots if lot.on_time is False]
+    assert any(lot.order_id == "L2" for lot in late)
+    assert any("製番L2" in w and "納期" in w for w in result.warnings)

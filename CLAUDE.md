@@ -81,8 +81,12 @@ directly by FastAPI's `StaticFiles` mount.
   the HAL daily allocation is expanded to every stage (ANT/TAL/HAL/MIL) by a per-stage
   working-day `lead_offset_days` (upstream negative = fed earlier, bottleneck 0, downstream
   positive = completed later), with out-of-horizon and per-stage-capacity warnings —
-  `plan_bottleneck(..., stage_flows=[...])` attaches `stage_allocation`. Remaining
-  increments: MIL per-製番 (出荷ロット) completion dates, A-shift-only changeover windows.
+  `plan_bottleneck(..., stage_flows=[...])` attaches `stage_allocation`. **Step 4**
+  (`mil_completion_by_order`): the MIL stage's daily flow is grouped by 製番 (出荷ロット =
+  `order_id`) into `MilLotCompletion`s (completion day = the lot's last MIL day, plus
+  due-date / on-time when demands carry due dates), attached as `mil_lots` and surfaced as
+  the per-製番 completion table (THM 短期投入予定表 form); late lots also raise warnings.
+  Remaining increment: A-shift-only changeover windows.
 - `backend/thm_ledger_import.py` — converts the real **THM 生産台帳** (`.xlsx`, orders with
   完成品名/完成予定数/完成予定日) into `DemandItem`s for the bottleneck planner.
   `resolve_product` maps a 完成品名/コード to a 機種呼称 by longest-prefix match against
@@ -154,9 +158,10 @@ directly by FastAPI's `StaticFiles` mount.
 - `backend/tests/test_bottleneck_planner.py` — covers working-day enumeration (weekends
   excluded), shift-mode selection (smallest sufficient / escalation to 22H), daily-capacity
   ceiling, campaign-style EDD allocation with per-product completion dates, over-capacity
-  warning, a July-like end-to-end plan (16H / 90k per day), and stage expansion
+  warning, a July-like end-to-end plan (16H / 90k per day), stage expansion
   (`expand_to_stages`: upstream/downstream offsets, out-of-horizon and per-stage-capacity
-  warnings).
+  warnings), and MIL per-製番 completion (`mil_completion_by_order`: per-lot completion
+  days, due-date on-time flag, and overrun warning).
 - `backend/tests/test_thm_ledger_import.py` — covers longest-prefix product resolution
   (incl. slash-less suffix codes), 台帳→demand extraction with an unmapped-row report, and
   future-due / production-line filtering.

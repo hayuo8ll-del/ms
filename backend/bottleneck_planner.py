@@ -47,6 +47,19 @@ class StageDailyCell:
     day: date
     product: str
     quantity: float
+    order_id: str = ""
+
+
+@dataclass
+class MilLotCompletion:
+    """MIL(最終工程)を製番(出荷ロット)単位で見た完成日と納期充足。"""
+
+    order_id: str
+    product: str
+    quantity: float
+    completion_day: date
+    due_date: date | None = None
+    on_time: bool | None = None
 
 
 @dataclass
@@ -56,6 +69,7 @@ class DailyCell:
     day: date
     product: str
     quantity: float
+    order_id: str = ""
 
 
 @dataclass
@@ -67,6 +81,7 @@ class BottleneckPlanResult:
     allocation: list[DailyCell] = field(default_factory=list)  # ボトルネック(HAL)の日次配分
     completion: dict[str, date] = field(default_factory=dict)  # 機種 -> 投入完了日
     stage_allocation: list[StageDailyCell] = field(default_factory=list)  # 全工程(ANT/TAL/HAL/MIL)の日次
+    mil_lots: list[MilLotCompletion] = field(default_factory=list)  # MILの製番別完成日
     warnings: list[str] = field(default_factory=list)
 
 
@@ -137,7 +152,9 @@ def allocate_bottleneck(
                 day_remaining = daily_capacity
                 continue
             take = min(remaining, day_remaining)
-            allocation.append(DailyCell(day=working_days[day_idx], product=item.product, quantity=take))
+            allocation.append(
+                DailyCell(day=working_days[day_idx], product=item.product, quantity=take, order_id=item.order_id)
+            )
             remaining -= take
             day_remaining -= take
             if remaining <= 0:
@@ -181,6 +198,7 @@ def expand_to_stages(
                     day=working_days[target_i],
                     product=cell.product,
                     quantity=cell.quantity,
+                    order_id=cell.order_id,
                 )
             )
 
@@ -206,15 +224,58 @@ def expand_to_stages(
     return cells, warnings
 
 
+def mil_completion_by_order(
+    stage_allocation: list[StageDailyCell],
+    demands: list[DemandItem] | None = None,
+    mil_stage_id: str = "MIL",
+) -> list[MilLotCompletion]:
+    """MIL工程の日次を製番(出荷ロット=注文)単位に集計し、完成日を出す(THM短期投入予定表の形)。
+
+    キャンペーン投入で1製番のMILは連続するため、完成日=その製番のMIL最終日。
+    demands を渡すと納期(due_date)と間に合うか(on_time)も付与する。
+    """
+    due_by_order: dict[str, date] = {}
+    if demands:
+        due_by_order = {d.order_id: d.due_date for d in demands if d.order_id}
+
+    grouped: dict[str, dict] = {}
+    for c in stage_allocation:
+        if c.stage_id != mil_stage_id or not c.order_id:
+            continue
+        g = grouped.setdefault(c.order_id, {"product": c.product, "quantity": 0.0, "completion": c.day})
+        g["quantity"] += c.quantity
+        if c.day > g["completion"]:
+            g["completion"] = c.day
+
+    lots: list[MilLotCompletion] = []
+    for order_id, g in grouped.items():
+        due = due_by_order.get(order_id)
+        on_time = (g["completion"] <= due) if due else None
+        lots.append(
+            MilLotCompletion(
+                order_id=order_id,
+                product=g["product"],
+                quantity=g["quantity"],
+                completion_day=g["completion"],
+                due_date=due,
+                on_time=on_time,
+            )
+        )
+    lots.sort(key=lambda lot: (lot.completion_day, lot.order_id))
+    return lots
+
+
 def plan_bottleneck(
     demands: list[DemandItem],
     working_days: list[date],
     shift_capacities: dict[str, float],
     stage_flows: list[StageFlowConfig] | None = None,
+    mil_stage_id: str = "MIL",
 ) -> BottleneckPlanResult:
     """Step 1(シフト/レート決定)＋Step 2(HAL日次配分)を実行する。
 
-    stage_flows を渡すと、HAL配分を各工程(ANT/TAL/HAL/MIL)へオフセット展開する(Step 3)。
+    stage_flows を渡すと、HAL配分を各工程(ANT/TAL/HAL/MIL)へオフセット展開し(Step 3)、
+    MIL工程を製番別に集計して完成日を出す(Step 4)。
     """
     total = sum(d.quantity for d in demands)
     shift_mode, daily_capacity, required = choose_shift_mode(total, len(working_days), shift_capacities)
@@ -240,5 +301,14 @@ def plan_bottleneck(
         stage_cells, stage_warnings = expand_to_stages(allocation, working_days, stage_flows)
         result.stage_allocation = stage_cells
         result.warnings.extend(stage_warnings)
+
+        if any(f.stage_id == mil_stage_id for f in stage_flows):
+            result.mil_lots = mil_completion_by_order(stage_cells, demands, mil_stage_id)
+            late = [lot for lot in result.mil_lots if lot.on_time is False]
+            for lot in late:
+                result.warnings.append(
+                    f"製番{lot.order_id}({lot.product}): MIL完成予定 {lot.completion_day.isoformat()} が "
+                    f"納期 {lot.due_date.isoformat()} を超過します。"
+                )
 
     return result
