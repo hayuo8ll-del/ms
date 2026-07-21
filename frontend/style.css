@@ -114,7 +114,8 @@ header h1 {
 }
 
 button#run-plan,
-button#import-button {
+button#import-button,
+button#export-plan {
   border: none;
   border-radius: 8px;
   padding: 0.55rem 1rem;
@@ -128,14 +129,21 @@ button#run-plan {
   color: #fff;
 }
 
-button#import-button {
+button#import-button,
+button#export-plan {
   background: transparent;
   border: 1px solid var(--accent-a);
   color: var(--accent-a);
 }
 
+button#export-plan {
+  border-color: var(--accent-b);
+  color: var(--accent-b);
+}
+
 button#run-plan:disabled,
-button#import-button:disabled {
+button#import-button:disabled,
+button#export-plan:disabled {
   opacity: 0.6;
   cursor: default;
 }

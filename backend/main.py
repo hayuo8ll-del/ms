@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from config_loader import load_changeover_config, load_equipment_config, load_orders_data
 from excel_import import ImportValidationError, WorkbookReadError, export_workbook, parse_workbook, save_config
+from plan_export import export_plan_workbook
 from scheduler import Scheduler
 
 app = FastAPI(title="生産計画自動立案API")
@@ -52,6 +53,32 @@ def create_plan(req: PlanRequest):
     start_override = datetime.combine(req.start_date or date.today(), time(8, 30))
     scheduler = Scheduler(equipment, changeover, orders_data, start_override=start_override)
     return scheduler.run()
+
+
+@app.post("/api/plan/export")
+def export_plan(req: PlanRequest):
+    """立案結果をExcelワークブック(.xlsx)としてダウンロードさせる。
+
+    シート: サマリー / スケジュール明細 / 日付×シフト台数 / 警告(稼働率は含めない)。
+    start_date を省略した場合は当日をプラン開始日とする。
+    """
+    equipment = load_equipment_config()
+    changeover = load_changeover_config()
+    orders_data = load_orders_data()
+
+    start_override = datetime.combine(req.start_date or date.today(), time(8, 30))
+    result = Scheduler(equipment, changeover, orders_data, start_override=start_override).run()
+
+    wb = export_plan_workbook(result, equipment)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    filename = f"production_plan_{start_override:%Y%m%d}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @app.post("/api/import")

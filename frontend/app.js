@@ -9,6 +9,7 @@ const errorBanner = document.getElementById("error-banner");
 const importButton = document.getElementById("import-button");
 const importFileInput = document.getElementById("import-file");
 const importResultEl = document.getElementById("import-result");
+const exportButton = document.getElementById("export-plan");
 const matrixPanelEl = document.getElementById("shift-matrix");
 const matrixTableEl = document.getElementById("matrix-table");
 
@@ -339,6 +340,8 @@ async function importExcel() {
 
     startDateInput.value = "";
     await runPlan();
+    // 取り込み成功後は、その計画結果のExcelを自動でダウンロードする
+    await exportPlan();
   } catch (err) {
     errorBanner.hidden = false;
     errorBanner.textContent = `Excel取り込みエラー:\n${err.message}`;
@@ -349,7 +352,48 @@ async function importExcel() {
   }
 }
 
+async function exportPlan() {
+  errorBanner.hidden = true;
+  exportButton.disabled = true;
+  exportButton.textContent = "出力中...";
+
+  try {
+    const body = startDateInput.value ? { start_date: startDateInput.value } : {};
+    const res = await fetch("/api/plan/export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      throw new Error(`APIエラー: ${res.status}`);
+    }
+
+    // Content-Disposition からファイル名を拾う(無ければ既定名)
+    let filename = "production_plan.xlsx";
+    const disp = res.headers.get("Content-Disposition") || "";
+    const m = disp.match(/filename=([^;]+)/);
+    if (m) filename = m[1].trim().replace(/["']/g, "");
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    errorBanner.hidden = false;
+    errorBanner.textContent = `Excel出力に失敗しました: ${err.message}`;
+  } finally {
+    exportButton.disabled = false;
+    exportButton.textContent = "計画をExcel出力";
+  }
+}
+
 runButton.addEventListener("click", runPlan);
+exportButton.addEventListener("click", exportPlan);
 importButton.addEventListener("click", () => importFileInput.click());
 importFileInput.addEventListener("change", importExcel);
 runPlan();

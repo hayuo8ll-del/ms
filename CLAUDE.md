@@ -88,9 +88,20 @@ directly by FastAPI's `StaticFiles` mount.
   and returns JSON-shaped dicts; on any validation failure it raises
   `ImportValidationError` and *nothing* is written. `save_config()` writes the parsed
   dicts to `config/*.json` (only called after validation succeeds).
+- `backend/plan_export.py` — converts a `PlanResult` into a single `.xlsx` **plan
+  output** workbook (distinct from `excel_import.py`, which handles master-data
+  *input*). `export_plan_workbook(result, equipment)` builds four sheets —
+  `サマリー` (KPIs: plan start, order count, op count, warning count),
+  `スケジュール明細` (one row per `ScheduledOp`, start/end as datetime cells),
+  `日付×シフト台数` (the same date×shift machine-count matrix as the frontend, computed
+  server-side by reusing `ShiftCalendar._build_windows`; date header merged across its
+  shift columns; cells show `工程A/工程B/工程C` counts tinted by the busiest stage), and
+  `警告`. Deliberately excludes machine utilization.
 - `backend/main.py` — FastAPI app. `GET /api/equipment`, `GET /api/orders`,
   `POST /api/plan` (optional `start_date`, defaults to today; reloads `config/*.json`
-  fresh on every call and returns the `PlanResult`), `POST /api/import` (multipart
+  fresh on every call and returns the `PlanResult`), `POST /api/plan/export` (same
+  inputs as `/api/plan` but streams the `plan_export` `.xlsx` as an attachment named
+  `production_plan_YYYYMMDD.xlsx`), `POST /api/import` (multipart
   `.xlsx` upload; 422 with a list of `{sheet, row, message}` on validation failure,
   otherwise overwrites `config/*.json` and returns import counts), and
   `GET /api/import/template` (downloads the current config as a pre-filled `.xlsx`).
@@ -106,14 +117,23 @@ directly by FastAPI's `StaticFiles` mount.
   validation-error cases (missing required sheet, non-numeric field with row number,
   unknown stage reference, duplicate order ID, a stage with no machines, a corrupted
   file).
+- `backend/tests/test_plan_export.py` — runs the scheduler against the real
+  `config/*.json` and asserts the exported workbook has exactly the four expected sheets
+  (no utilization sheet), the schedule sheet row count matches the schedule, the matrix
+  sheet lists every order and contains a split-lot cell (stage B/C count of 4), and the
+  warnings sheet is populated.
 - `frontend/` — static `index.html` + `app.js` + `style.css`. On load (and on button
   click, with an optional plan-start date) calls `POST /api/plan` and renders: KPI cards,
   a warnings panel, a per-stage/per-machine Gantt chart (each `ScheduledOp` drawn as
   a bar positioned/sized by its start/end time), a **date×shift machine-count matrix**
   (see below), plus per-machine utilization cards. The
-  header also has an Excel template download link and an upload button that posts to
-  `/api/import`, shows a success summary or a detailed per-row error list, and
-  automatically re-runs the plan on success. The date×shift matrix (`renderShiftMatrix`)
+  header also has an Excel template download link, an upload button that posts to
+  `/api/import` (shows a success summary or a detailed per-row error list, then
+  automatically re-runs the plan **and downloads the plan-result `.xlsx`** on success),
+  and a **「計画をExcel出力」** button (`exportPlan`) that posts to `/api/plan/export`
+  and downloads the returned workbook as a file (filename taken from
+  `Content-Disposition`). The on-screen rendering and the Excel export coexist. The
+  date×shift matrix (`renderShiftMatrix`)
   fetches the active shift pattern from `GET /api/equipment`
   (`shift_modes[default_shift_mode]`, cached), rebuilds the concrete shift windows
   client-side (mirroring `shift_calendar.py`'s `_build_windows`, incl. overnight wrap),
