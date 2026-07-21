@@ -34,11 +34,14 @@ class StageFlowConfig:
     lead_offset_days は稼働日数のオフセット。上流(ANT/TAL)は負(HALより早く投入)、
     ボトルネック自身は0、下流(MIL)は正(HALより後で完成)。
     daily_capacity を与えると、その工程の日次合計が超過した日に警告を出す。
+    input_unit はその工程の投入単位(例: TAL=40,000のまとめ投入, HAL=リール1本10,000)。
+    投入は単位の倍数を基本とし、ロットの端数(機種の台数による調整)は最終投入で吸収する。
     """
 
     stage_id: str
     lead_offset_days: int
     daily_capacity: float | None = None
+    input_unit: float | None = None
 
 
 @dataclass
@@ -256,6 +259,7 @@ def allocate_bottleneck(
     a_shift_fraction: float = 0.5,
     product_daily_caps: dict[str, float] | None = None,
     daily_capacity_by_day: dict[date, float] | None = None,
+    input_unit: float | None = None,
 ) -> tuple[list[DailyCell], dict[str, date], list[str]]:
     """ボトルネック工程の日次能力を上限に、機種別台数を稼働日へ割り付ける。
 
@@ -330,6 +334,12 @@ def allocate_bottleneck(
                 continue
 
             take = min(lot_remaining[i], available)
+            # 投入単位(例: HALはリール1本=10,000)の倍数に切り下げる。
+            # ロット残が1単位未満のときだけ端数投入を許す(機種の台数による調整)。
+            if input_unit and lot_remaining[i] >= input_unit:
+                take = int(take // input_unit) * input_unit
+            if take <= 0:
+                continue
             allocation.append(DailyCell(day=day, product=product, quantity=take, order_id=item.order_id))
             lot_remaining[i] -= take
             line_remaining -= take
@@ -384,21 +394,44 @@ def expand_to_stages(
     out_of_range: set[str] = set()
 
     for flow in stage_flows:
+        # まずオフセット適用済みの(日, 元セル)列を作る
+        shifted: list[tuple[date, DailyCell]] = []
         for cell in bottleneck_allocation:
-            base_i = day_to_index[cell.day]
-            target_i = base_i + flow.lead_offset_days
+            target_i = day_to_index[cell.day] + flow.lead_offset_days
             if target_i < 0 or target_i >= len(working_days):
                 out_of_range.add(flow.stage_id)
                 continue
-            cells.append(
-                StageDailyCell(
-                    stage_id=flow.stage_id,
-                    day=working_days[target_i],
-                    product=cell.product,
-                    quantity=cell.quantity,
-                    order_id=cell.order_id,
+            shifted.append((working_days[target_i], cell))
+
+        if not flow.input_unit:
+            for day, cell in shifted:
+                cells.append(
+                    StageDailyCell(flow.stage_id, day, cell.product, cell.quantity, cell.order_id)
                 )
-            )
+            continue
+
+        # 投入単位あり(例: TAL=40,000のまとめ投入): ロット(製番)ごとに単位の倍数へ
+        # 前倒しでまとめ直す。下流(HAL)が枯れないよう累計は常に元の累計以上とし、
+        # 端数(機種の台数による調整)はロット最終日に吸収する。
+        unit = flow.input_unit
+        by_lot: dict[str, list[tuple[date, DailyCell]]] = {}
+        for day, cell in shifted:
+            by_lot.setdefault(cell.order_id or cell.product, []).append((day, cell))
+        for entries in by_lot.values():
+            entries.sort(key=lambda e: e[0])
+            total = sum(c.quantity for _d, c in entries)
+            need = 0.0
+            emitted = 0.0
+            for idx, (day, cell) in enumerate(entries):
+                need += cell.quantity
+                if idx == len(entries) - 1:
+                    target = total  # 最終投入で端数を吸収
+                else:
+                    target = min(-(-need // unit) * unit, total)  # 単位へ切り上げ(前倒し)
+                qty = target - emitted
+                if qty > 0:
+                    cells.append(StageDailyCell(flow.stage_id, day, cell.product, qty, cell.order_id))
+                    emitted = target
 
     for stage_id in sorted(out_of_range):
         warnings.append(
@@ -550,6 +583,9 @@ def plan_bottleneck(
         a_shift_fraction=a_shift_fraction,
         product_daily_caps=(product_caps_by_mode or {}).get(shift_mode),
         daily_capacity_by_day=day_caps,
+        input_unit=next(
+            (f.input_unit for f in (stage_flows or []) if f.stage_id == bottleneck_stage), None
+        ),
     )
     result.allocation = allocation
     result.completion = completion

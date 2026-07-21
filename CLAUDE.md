@@ -52,7 +52,11 @@ directly by FastAPI's `StaticFiles` mount.
 - `config/bottleneck_planning.json` — parameters for the bottleneck daily-flow planner
   (`load_bottleneck_planning` in `config_loader.py`, embedded defaults when absent):
   `lineDailyCapacities` (per shift mode), `bottleneckStage`, `stageFlows` (per-stage
-  working-day offsets), `machineCounts` (per-machine share approximation for stop
+  working-day offsets, plus optional `inputUnit` — **input granularity**: HAL feeds in
+  10,000-unit reels, TAL feeds in 40,000-unit batches; allocations are multiples of the
+  unit with each lot's remainder absorbed by its final feed (機種の台数による調整); TAL
+  batching is front-loaded per lot in `expand_to_stages` so cumulative TAL input never
+  starves HAL), `machineCounts` (per-machine share approximation for stop
   deductions), `aShiftFraction`, `productAliases` (RC-code → 呼称) and
   `productDailyCapsByMode` (機種別キャパ). Swapping capacities/aliases needs only this file.
 - `config/changeover_matrix.json` — per-stage, per-product-pair changeover minutes, plus

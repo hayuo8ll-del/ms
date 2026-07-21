@@ -4,8 +4,8 @@
   "bottleneckStage": "HAL",
   "stageFlows": [
     { "stageId": "ANT", "leadOffsetDays": -2 },
-    { "stageId": "TAL", "leadOffsetDays": -1 },
-    { "stageId": "HAL", "leadOffsetDays": 0 },
+    { "stageId": "TAL", "leadOffsetDays": -1, "inputUnit": 40000 },
+    { "stageId": "HAL", "leadOffsetDays": 0, "inputUnit": 10000 },
     { "stageId": "MIL", "leadOffsetDays": 1 }
   ],
   "machineCounts": { "ANT": 1, "TAL": 2, "HAL": 5, "MIL": 4 },

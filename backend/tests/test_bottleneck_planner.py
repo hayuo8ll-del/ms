@@ -328,6 +328,60 @@ def test_plan_bottleneck_uses_reduced_capacity_on_stop_days():
     assert per_day[date(2026, 7, 2)] == 90000
 
 
+def test_hal_input_is_quantized_to_reel_units_with_final_remainder():
+    # HALはリール1本=10,000単位。35,000のロットは 30,000(3本) + 端数5,000 で投入される。
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 10))
+    demands = [DemandItem("A", 35000, date(2026, 7, 31), order_id="L1")]
+    # 日次能力32,000: 1日目はリール3本(30,000)のみ、端数5,000は2日目
+    alloc, completion, _w = allocate_bottleneck(demands, days, 32000, input_unit=10000)
+
+    assert [(c.day, c.quantity) for c in alloc] == [
+        (date(2026, 7, 1), 30000),
+        (date(2026, 7, 2), 5000),
+    ]
+    assert completion["A"] == date(2026, 7, 2)
+
+
+def test_reel_smaller_than_capacity_gap_waits_for_next_day():
+    # 残能力が1本(10,000)未満の日にはそのロットは投入しない(リールは分割不可)
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 10))
+    demands = [
+        DemandItem("A", 25000, date(2026, 7, 3), order_id="L1"),
+        DemandItem("B", 20000, date(2026, 7, 5), order_id="L2"),
+    ]
+    alloc, _c, _w = allocate_bottleneck(demands, days, 30000, input_unit=10000)
+    day1 = [(c.product, c.quantity) for c in alloc if c.day == date(2026, 7, 1)]
+    # A: 2本(20,000)。残10,000にAの3本目は入らず(残5,000は端数でない)、B 1本が並行投入
+    assert ("A", 20000) in day1
+    assert ("B", 10000) in day1
+
+
+def test_tal_batches_in_40k_units_front_loaded():
+    # 30,000/日×3日のHAL流れ(7/2,7/3,7/6)は、TAL(4万まとめ投入・1日前)では
+    # 7/1: 40,000 / 7/2: 40,000 / 7/3: 端数10,000 になる
+    from bottleneck_planner import DailyCell
+
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    allocation = [
+        DailyCell(date(2026, 7, 2), "A", 30000, "L1"),
+        DailyCell(date(2026, 7, 3), "A", 30000, "L1"),
+        DailyCell(date(2026, 7, 6), "A", 30000, "L1"),
+    ]
+    flows = [StageFlowConfig("TAL", -1, input_unit=40000), StageFlowConfig("HAL", 0)]
+    cells, warnings = expand_to_stages(allocation, days, flows)
+
+    tal = sorted((c.day, c.quantity) for c in cells if c.stage_id == "TAL")
+    assert tal == [
+        (date(2026, 7, 1), 40000),
+        (date(2026, 7, 2), 40000),
+        (date(2026, 7, 3), 10000),
+    ]
+    # HAL側は量子化せずそのまま、総量は一致
+    hal_total = sum(c.quantity for c in cells if c.stage_id == "HAL")
+    assert hal_total == sum(q for _d, q in tal) == 90000
+    assert not warnings
+
+
 def test_same_product_lots_do_not_trigger_switch_deferral():
     # 同一機種のロット切替は管理者切替ではないため、A勤制約の対象外
     days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
