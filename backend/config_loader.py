@@ -50,6 +50,7 @@ def load_equipment_config() -> EquipmentConfig:
         lot_split_into=lot_splitting.get("splitInto", 1),
         shift_modes=data["shiftModes"],
         default_shift_mode=data["defaultShiftMode"],
+        eligibility=data.get("eligibility", {}),
     )
 
 

@@ -34,12 +34,30 @@ class EquipmentConfig:
     lot_split_into: int
     shift_modes: dict[str, list[dict]]
     default_shift_mode: str
+    # 機種×設備の生産可否。{product: {stage_id: {machine_id: "○" | "△"}}}。
+    # ある製品×工程のエントリが無い場合は「その工程の全号機で生産可」とみなす(後方互換)。
+    eligibility: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict)
 
     def stages_in_order(self) -> list[StageConfig]:
         return sorted(self.stages, key=lambda s: s.order)
 
     def active_shift_defs(self) -> list[dict]:
         return self.shift_modes[self.default_shift_mode]
+
+    def eligible_machine_ids(self, product: str, stage_id: str) -> set[str] | None:
+        """その製品を当該工程で生産できる号機IDの集合を返す。
+
+        可否定義が無い(製品または工程のエントリが存在しない)場合は None を返し、
+        呼び出し側は「全号機が生産可」として扱う。
+        """
+        marks = self.eligibility.get(product, {}).get(stage_id)
+        if not marks:
+            return None
+        return set(marks.keys())
+
+    def is_conditional(self, product: str, stage_id: str, machine_id: str) -> bool:
+        """その割付が条件付き可(△)かどうか。"""
+        return self.eligibility.get(product, {}).get(stage_id, {}).get(machine_id) == "△"
 
 
 @dataclass

@@ -44,7 +44,11 @@ directly by FastAPI's `StaticFiles` mount.
   Also defines `lotSplitting` (which stage's output gets split, and into how many
   parallel sub-lots for the downstream stages) and `shiftModes`/`defaultShiftMode` (named
   shift patterns, e.g. `"16h"` = two 8.5h shifts/day with gaps; `"22h"` = near-continuous
-  two-shift coverage).
+  two-shift coverage). Optional `eligibility` (`{product: {stageId: {machineId: "○"|"△"}}}`)
+  encodes machine×product producibility: when a product+stage entry exists, only the listed
+  machines can run that product there (`△` = conditional, tagged with a note on the op);
+  when absent, every machine in the stage is allowed (backward-compatible default). Used by
+  real-data lines where not every machine can make every product.
 - `config/changeover_matrix.json` — per-stage, per-product-pair changeover minutes, plus
   `aShiftOnlyTransitions` (some product transitions on some stages may only start during
   the day shift).
@@ -67,12 +71,16 @@ directly by FastAPI's `StaticFiles` mount.
 - `backend/scheduler.py` — the `Scheduler` class: finite-capacity, multi-machine forward
   scheduling. Orders are sorted by **EDD** (earliest due date). For each order: raw
   material availability may push back the earliest start; each pre-split stage picks
-  whichever machine is ready soonest (accounting for that machine's changeover time from
-  its last product); after the configured split stage, the order is divided into
+  whichever machine is ready soonest **among the machines eligible to produce that
+  product** (per `equipment.eligibility`; a `△` pick is tagged "条件付き設備" on the op);
+  after the configured split stage, the order is divided into
   parallel sub-lots that flow independently through the remaining stages (each may land
   on a different machine); the uninterruptible stage must fit entirely in one shift
   window (pushing to the next valid window otherwise); the rounding stage rounds
-  quantity up before computing duration. Warns when a product's on-hand + incoming
+  quantity up before computing duration. Before scheduling an order it pre-checks every
+  stage for at least one eligible machine; if any stage has none (a product no machine
+  can make) the whole order is skipped with a warning rather than partially scheduled.
+  Warns when a product's on-hand + incoming
   material can't cover demand, when an order's completion misses its due date, and when
   current stock is below safety stock. Also has a `__main__` block used as a CI smoke
   test (`python3 scheduler.py`) that runs the algorithm against `config/` and prints a
@@ -80,7 +88,9 @@ directly by FastAPI's `StaticFiles` mount.
 - `backend/excel_import.py` — converts between `config/*.json` and a single `.xlsx`
   workbook with fixed sheet names/columns: `Stages`, `Machines`, `LotSplitting`,
   `ShiftModes`, `Settings` (key/value: `defaultShiftMode`, `planStart`), `Changeover`,
-  `AShiftOnlyTransitions`, `Orders`, `Inventory`, `RawMaterials`,
+  `AShiftOnlyTransitions`, `Eligibility` (optional: `product`/`stageId`/`machineId`/`mark`
+  where `mark` ∈ `○`/`△`/`×`; `×` rows are dropped, `○`/`△` populate
+  `equipment.eligibility`), `Orders`, `Inventory`, `RawMaterials`,
   `RawMaterialIncoming`. `export_workbook()` builds a workbook pre-filled with the
   current `config/*.json` contents (used as a downloadable template).
   `parse_workbook()` reads an uploaded workbook, validates every row (collecting all
@@ -111,12 +121,14 @@ directly by FastAPI's `StaticFiles` mount.
   machine selection, changeover time being consumed before a run starts, A-shift-only
   transitions, lot-splitting fan-out count, the uninterruptible-stage/shift-boundary
   push, batch rounding, material-availability delay (and shortage warning), safety-stock
-  warning, EDD ordering, and due-date delay warnings.
+  warning, EDD ordering, due-date delay warnings, and machine×product **eligibility**
+  (restriction to producible machines, order-skip-with-warning when no machine can make a
+  product, the `△` conditional note, and the all-allowed backward-compatible default).
 - `backend/tests/test_excel_import.py` — covers a minimal-workbook round trip through
   the scheduler, an export→import round trip against the real `config/*.json`, and
   validation-error cases (missing required sheet, non-numeric field with row number,
   unknown stage reference, duplicate order ID, a stage with no machines, a corrupted
-  file).
+  file), plus the optional `Eligibility` sheet (parsing, `×`-drop, unknown-machine error).
 - `backend/tests/test_plan_export.py` — runs the scheduler against the real
   `config/*.json` and asserts the exported workbook has exactly the four expected sheets
   (no utilization sheet), the schedule sheet row count matches the schedule, the matrix

@@ -71,20 +71,33 @@ class Scheduler:
 
     # -- 設備選択・段取り替え -------------------------------------------------
 
-    def _machines_for(self, stage: StageConfig) -> list[_MachineState]:
-        return [self._machines[m.machine_id] for m in stage.machines]
+    def _machines_for(self, stage: StageConfig, product: str) -> list[_MachineState]:
+        """当該工程の号機のうち、その製品を生産可能(○/△)な号機だけを返す。"""
+        allowed = self.equipment.eligible_machine_ids(product, stage.stage_id)
+        machines = [self._machines[m.machine_id] for m in stage.machines]
+        if allowed is None:
+            return machines
+        return [mach for mach in machines if mach.config.machine_id in allowed]
+
+    def _first_infeasible_stage(self, product: str) -> str | None:
+        """全工程を通して、その製品を生産できる号機が1台も無い工程があれば工程IDを返す。"""
+        for stage in self.stage_order:
+            if not self._machines_for(stage, product):
+                return stage.stage_id
+        return None
 
     def _pick_machine(self, stage: StageConfig, product: str, earliest_start: datetime) -> _MachineState:
-        """段取り替え込みで最も早く着手できる号機を選ぶ。"""
+        """段取り替え込みで最も早く着手できる号機を、生産可能な号機の中から選ぶ。"""
         best: _MachineState | None = None
         best_ready: datetime | None = None
-        for mach in self._machines_for(stage):
+        for mach in self._machines_for(stage, product):
             co_minutes = self.changeover.minutes(stage.stage_id, mach.last_product, product)
             candidate_earliest = max(mach.free_at, earliest_start)
             ready = candidate_earliest + timedelta(minutes=co_minutes)
             if best_ready is None or ready < best_ready:
                 best, best_ready = mach, ready
-        assert best is not None  # 各工程は最低1台の号機を持つ前提
+        # 呼び出し前に _first_infeasible_stage で生産可否を確認済み(必ず1台以上ある)。
+        assert best is not None
         return best
 
     # -- 原材料制約 -----------------------------------------------------------
@@ -135,6 +148,8 @@ class Scheduler:
                 note_parts.append(f"数量を{stage.batch_rounding}単位に丸め({qty:.0f}→{eff_qty:.0f})")
 
         machine = self._pick_machine(stage, product, earliest_start)
+        if self.equipment.is_conditional(product, stage.stage_id, machine.config.machine_id):
+            note_parts.append("条件付き設備(△・要確認)")
         co_minutes = self.changeover.minutes(stage.stage_id, machine.last_product, product)
         requires_a_shift = self.changeover.requires_a_shift(stage.stage_id, machine.last_product, product)
         co_duration = timedelta(minutes=co_minutes)
@@ -180,6 +195,21 @@ class Scheduler:
     # -- 受注単位のスケジューリング ---------------------------------------------
 
     def _schedule_order(self, order: Order) -> None:
+        # 生産可否チェック: どこかの工程で生産可能な号機が1台も無ければ、この受注は割付できない。
+        # 途中まで割り付けた状態のロールバックを避けるため、着手前に全工程を確認する。
+        infeasible_stage = self._first_infeasible_stage(order.product)
+        if infeasible_stage is not None:
+            self.warnings.append(
+                PlanWarning(
+                    order_id=order.order_id,
+                    message=(
+                        f"{order.product} は工程{infeasible_stage}で生産可能な号機が無いため、"
+                        f"計画から除外しました(設備条件マスタを確認してください)。"
+                    ),
+                )
+            )
+            return
+
         due = datetime.combine(order.due_date, time(20, 30))
 
         material_ready = self._material_available_at(order.product, order.quantity)

@@ -35,7 +35,7 @@ REQUIRED_SHEETS = [
     "Inventory",
     "RawMaterials",
 ]
-OPTIONAL_SHEETS = ["AShiftOnlyTransitions", "RawMaterialIncoming"]
+OPTIONAL_SHEETS = ["AShiftOnlyTransitions", "RawMaterialIncoming", "Eligibility"]
 
 
 @dataclass
@@ -151,6 +151,7 @@ def parse_workbook(file_obj: BinaryIO) -> tuple[dict, dict, dict, ImportSummary]
     settings_rows = sheet_rows("Settings", True)
     changeover_rows = sheet_rows("Changeover", True)
     a_shift_rows = sheet_rows("AShiftOnlyTransitions", False)
+    eligibility_rows = sheet_rows("Eligibility", False)
     order_rows = sheet_rows("Orders", True)
     inventory_rows = sheet_rows("Inventory", True)
     raw_material_rows = sheet_rows("RawMaterials", True)
@@ -308,6 +309,30 @@ def parse_workbook(file_obj: BinaryIO) -> tuple[dict, dict, dict, ImportSummary]
             continue
         a_shift_only.setdefault(stage_id, []).append({"from": from_p, "to": to_p})
 
+    # --- Eligibility (機種×設備 生産可否) ---
+    # {product: {stageId: {machineId: mark}}}。○/△ のみ採用(× は「不可」なので登録しない)。
+    eligibility: dict[str, dict[str, dict[str, str]]] = {}
+    for row_no, row in eligibility_rows:
+        product = _cell_str(row.get("product"))
+        stage_id = _cell_str(row.get("stageId"))
+        machine_id = _cell_str(row.get("machineId"))
+        mark = _cell_str(row.get("mark"))
+        if not product or not stage_id or not machine_id:
+            issues.append(ImportIssue("Eligibility", row_no, "product/stageId/machineId は必須です。"))
+            continue
+        if stage_id not in stages_by_id:
+            issues.append(ImportIssue("Eligibility", row_no, f"未定義の stageId「{stage_id}」です。"))
+            continue
+        if machine_id not in machine_ids_seen:
+            issues.append(ImportIssue("Eligibility", row_no, f"未定義の machineId「{machine_id}」です。"))
+            continue
+        if mark not in ("○", "△", "×"):
+            issues.append(ImportIssue("Eligibility", row_no, "mark は ○ / △ / × のいずれかで指定してください。"))
+            continue
+        if mark == "×":
+            continue  # 不可は登録しない(可否定義がある工程では未登録=不可として扱われる)
+        eligibility.setdefault(product, {}).setdefault(stage_id, {})[machine_id] = mark
+
     # --- Orders ---
     orders: list[dict] = []
     order_ids_seen: set[str] = set()
@@ -395,6 +420,7 @@ def parse_workbook(file_obj: BinaryIO) -> tuple[dict, dict, dict, ImportSummary]
         "lotSplitting": {"stageAfter": lot_split_after, "splitInto": lot_split_into},
         "shiftModes": shift_modes,
         "defaultShiftMode": default_shift_mode,
+        "eligibility": eligibility,
     }
     changeover_doc = {
         "products": sorted(products_seen),
@@ -515,6 +541,14 @@ def export_workbook() -> Workbook:
         for t in transitions
     ]
     _write_sheet(wb, "AShiftOnlyTransitions", ["stageId", "fromProduct", "toProduct"], a_shift_rows)
+
+    eligibility_rows = [
+        [product, stage_id, machine_id, mark]
+        for product, stages in equipment_raw.get("eligibility", {}).items()
+        for stage_id, machines in stages.items()
+        for machine_id, mark in machines.items()
+    ]
+    _write_sheet(wb, "Eligibility", ["product", "stageId", "machineId", "mark"], eligibility_rows)
 
     _write_sheet(
         wb,

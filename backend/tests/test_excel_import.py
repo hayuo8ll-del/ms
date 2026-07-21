@@ -210,3 +210,31 @@ def test_corrupted_file_raises_workbook_read_error():
         assert False, "WorkbookReadError が発生するはず"
     except WorkbookReadError:
         pass
+
+
+def test_eligibility_sheet_is_parsed_and_excludes_x_marks():
+    wb = _minimal_workbook(
+        Eligibility=(
+            ["product", "stageId", "machineId", "mark"],
+            [
+                ["X", "S1", "M1", "○"],
+                ["X", "S1", "M1", "△"],  # 上書きされ最後の△が残る想定ではなく、行ごとに独立(同一キーは後勝ち)
+                ["Y", "S1", "M1", "×"],  # × は登録されない
+            ],
+        )
+    )
+    equipment, _changeover, _orders_doc, _summary = parse_workbook(_wb_to_stream(wb))
+    elig = equipment["eligibility"]
+    assert elig["X"]["S1"]["M1"] in ("○", "△")
+    assert "Y" not in elig  # × のみだったので登録されない
+
+
+def test_eligibility_unknown_machine_is_reported():
+    wb = _minimal_workbook(
+        Eligibility=(["product", "stageId", "machineId", "mark"], [["X", "S1", "M999", "○"]])
+    )
+    try:
+        parse_workbook(_wb_to_stream(wb))
+        assert False, "ImportValidationError が発生するはず"
+    except ImportValidationError as e:
+        assert any(i.sheet == "Eligibility" and "M999" in i.message for i in e.issues)

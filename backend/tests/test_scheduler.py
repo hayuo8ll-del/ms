@@ -36,13 +36,14 @@ def make_stage(stage_id, machines, order=1, uninterruptible=False, batch_roundin
     )
 
 
-def make_equipment(stages, lot_split_after=None, lot_split_into=1, shift_modes=None) -> EquipmentConfig:
+def make_equipment(stages, lot_split_after=None, lot_split_into=1, shift_modes=None, eligibility=None) -> EquipmentConfig:
     return EquipmentConfig(
         stages=stages,
         lot_split_after=lot_split_after,
         lot_split_into=lot_split_into,
         shift_modes=shift_modes or ONE_SHIFT,
         default_shift_mode="TEST",
+        eligibility=eligibility or {},
     )
 
 
@@ -231,3 +232,62 @@ def test_delay_warning_is_reported_when_due_date_is_missed():
     result = Scheduler(equipment, changeover, make_orders_data(orders)).run()
 
     assert any(w.order_id == "O1" and "遅延見込み" in w.message for w in result.warnings)
+
+
+def test_eligibility_restricts_assignment_to_producible_machines():
+    # S1: M1(生産可) / M2(生産不可)。Xの割付は必ずM1になる。
+    stage = make_stage("S1", [make_machine("M1", 10), make_machine("M2", 10)])
+    eligibility = {"X": {"S1": {"M1": "○"}}}  # M2は未登録=不可
+    equipment = make_equipment([stage], eligibility=eligibility)
+    changeover = make_changeover()
+    # 2件流しても、可否がM1のみのため両方M1に載る(M2には決して載らない)。
+    orders = [
+        Order("O1", "X", 50, date(2026, 7, 25)),
+        Order("O2", "X", 30, date(2026, 7, 26)),
+    ]
+    result = Scheduler(equipment, changeover, make_orders_data(orders)).run()
+
+    assert {op.machine_id for op in result.schedule} == {"M1"}
+    assert len(result.schedule) == 2
+
+
+def test_order_is_skipped_with_warning_when_no_machine_can_produce_it():
+    # 工程S2でXを作れる号機が1台も無い → 受注全体を計画から除外し警告する。
+    stage1 = make_stage("S1", [make_machine("A1", 100)], order=1)
+    stage2 = make_stage("S2", [make_machine("B1", 100)], order=2)
+    eligibility = {"X": {"S2": {"B-OTHER": "○"}}}  # S2にXの可否はあるが、実在の号機B1は含まれない
+    equipment = make_equipment([stage1, stage2], eligibility=eligibility)
+    changeover = make_changeover()
+    orders = [Order("O1", "X", 100, date(2026, 7, 30))]
+    result = Scheduler(equipment, changeover, make_orders_data(orders)).run()
+
+    assert result.schedule == []  # 途中まで割り付けた op も残さない
+    assert any(w.order_id == "O1" and "S2" in w.message and "生産可能な号機が無い" in w.message for w in result.warnings)
+
+
+def test_conditional_machine_adds_note():
+    # △(条件付き可)の号機に載った場合、備考に注意書きが付く。
+    stage = make_stage("S1", [make_machine("M1", 10)])
+    eligibility = {"X": {"S1": {"M1": "△"}}}
+    equipment = make_equipment([stage], eligibility=eligibility)
+    changeover = make_changeover()
+    orders = [Order("O1", "X", 50, date(2026, 7, 25))]
+    result = Scheduler(equipment, changeover, make_orders_data(orders)).run()
+
+    assert result.schedule[0].machine_id == "M1"
+    assert "条件付き設備" in result.schedule[0].note
+
+
+def test_no_eligibility_definition_allows_all_machines():
+    # 可否定義が無い製品は従来どおり全号機が対象(後方互換)。
+    stage = make_stage("S1", [make_machine("M1", 10), make_machine("M2", 10)])
+    equipment = make_equipment([stage])  # eligibility 無し
+    changeover = make_changeover()
+    orders = [
+        Order("O1", "X", 50, date(2026, 7, 25)),
+        Order("O2", "X", 50, date(2026, 7, 25)),
+    ]
+    result = Scheduler(equipment, changeover, make_orders_data(orders)).run()
+
+    # 2台に分散して同時着手できる
+    assert {op.machine_id for op in result.schedule} == {"M1", "M2"}
