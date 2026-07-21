@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
@@ -59,6 +60,59 @@ def load_changeover_config() -> ChangeoverConfig:
     return ChangeoverConfig(
         matrix=data,
         a_shift_only_transitions=data.get("aShiftOnlyTransitions", {}),
+    )
+
+
+@dataclass
+class BottleneckPlanningConfig:
+    """ボトルネック日次フロー計画のパラメータ(config/bottleneck_planning.json)。"""
+
+    line_daily_capacities: dict[str, float]
+    bottleneck_stage: str
+    stage_flows: list  # list[StageFlowConfig]
+    machine_counts: dict[str, int]
+    a_shift_fraction: float
+    product_aliases: dict[str, str]
+    product_daily_caps_by_mode: dict[str, dict[str, float]]
+
+    @property
+    def stage_order(self) -> list[str]:
+        return [f.stage_id for f in self.stage_flows]
+
+
+def load_bottleneck_planning() -> BottleneckPlanningConfig:
+    """ボトルネック計画パラメータを読み込む。ファイルが無ければ組み込み既定値を使う。"""
+    from bottleneck_planner import StageFlowConfig
+    from thm_ledger_import import PRODUCT_ALIASES, PRODUCT_DAILY_CAPS_BY_MODE
+
+    path = CONFIG_DIR / "bottleneck_planning.json"
+    data: dict = {}
+    if path.exists():
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+
+    flows = [
+        StageFlowConfig(f["stageId"], int(f["leadOffsetDays"]), f.get("dailyCapacity"))
+        for f in data.get(
+            "stageFlows",
+            [
+                {"stageId": "ANT", "leadOffsetDays": -2},
+                {"stageId": "TAL", "leadOffsetDays": -1},
+                {"stageId": "HAL", "leadOffsetDays": 0},
+                {"stageId": "MIL", "leadOffsetDays": 1},
+            ],
+        )
+    ]
+    return BottleneckPlanningConfig(
+        line_daily_capacities={k: float(v) for k, v in data.get("lineDailyCapacities", {"16h": 90000, "22h": 120000}).items()},
+        bottleneck_stage=data.get("bottleneckStage", "HAL"),
+        stage_flows=flows,
+        machine_counts={k: int(v) for k, v in data.get("machineCounts", {"ANT": 1, "TAL": 2, "HAL": 5, "MIL": 4}).items()},
+        a_shift_fraction=float(data.get("aShiftFraction", 0.5)),
+        product_aliases=data.get("productAliases") or dict(PRODUCT_ALIASES),
+        product_daily_caps_by_mode=data.get("productDailyCapsByMode") or {
+            mode: dict(caps) for mode, caps in PRODUCT_DAILY_CAPS_BY_MODE.items()
+        },
     )
 
 

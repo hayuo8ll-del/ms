@@ -7,7 +7,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from openpyxl import Workbook  # noqa: E402
 
-from thm_ledger_import import parse_actuals, parse_thm_ledger, resolve_product  # noqa: E402
+from config_loader import load_bottleneck_planning  # noqa: E402
+from thm_ledger_import import (  # noqa: E402
+    parse_actuals,
+    parse_equipment_stops,
+    parse_thm_ledger,
+    resolve_product,
+)
 
 
 def test_resolve_product_uses_longest_prefix_match():
@@ -102,3 +108,42 @@ def test_parse_actuals_reads_seiban_quantities_and_sums_duplicates():
 
 def test_parse_actuals_returns_empty_when_sheet_missing():
     assert parse_actuals(_ledger_workbook([])) == {}
+
+
+def test_parse_equipment_stops_reads_enabled_rows_only():
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "設備停止"
+    headers = ["停止ID", "有効", "停止区分", "工程", "設備", "開始日", "開始勤務", "終了日", "終了勤務",
+               "停止率_%", "停止時間_h", "補正後Cap_台", "停止Cap控除方法"]
+    ws.append(headers)
+    ws.append(["S0001", "Y", "オーバーホール", "HAL", "HAL#9", date(2026, 7, 22), "A勤", date(2026, 7, 24), "B勤",
+               100, 0, None, "全停止"])
+    ws.append(["S0002", "N", "試作", "HAL", "HAL#8", date(2026, 7, 20), "A勤", date(2026, 7, 20), "B勤",
+               100, 0, None, "全停止"])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    stops = parse_equipment_stops(buf)
+    assert len(stops) == 1
+    s = stops[0]
+    assert (s.stop_id, s.stage_id, s.machine_id, s.method) == ("S0001", "HAL", "HAL#9", "全停止")
+    assert (s.start_day, s.end_day, s.start_shift, s.end_shift) == (date(2026, 7, 22), date(2026, 7, 24), "A勤", "B勤")
+
+
+def test_parse_equipment_stops_empty_when_sheet_missing():
+    assert parse_equipment_stops(_ledger_workbook([])) == []
+
+
+def test_load_bottleneck_planning_reads_config_file():
+    cfg = load_bottleneck_planning()
+    # config/bottleneck_planning.json の内容(≒組み込み既定値)が読める
+    assert cfg.line_daily_capacities["16h"] == 90000
+    assert cfg.bottleneck_stage == "HAL"
+    assert cfg.stage_order == ["ANT", "TAL", "HAL", "MIL"]
+    assert cfg.product_daily_caps_by_mode["16h"]["Lite-S(Mies)"] == 30720
+    assert cfg.product_aliases["RC-SA02F"] == "さそり金融"
+    assert cfg.machine_counts["HAL"] == 5

@@ -49,6 +49,12 @@ directly by FastAPI's `StaticFiles` mount.
   machines can run that product there (`△` = conditional, tagged with a note on the op);
   when absent, every machine in the stage is allowed (backward-compatible default). Used by
   real-data lines where not every machine can make every product.
+- `config/bottleneck_planning.json` — parameters for the bottleneck daily-flow planner
+  (`load_bottleneck_planning` in `config_loader.py`, embedded defaults when absent):
+  `lineDailyCapacities` (per shift mode), `bottleneckStage`, `stageFlows` (per-stage
+  working-day offsets), `machineCounts` (per-machine share approximation for stop
+  deductions), `aShiftFraction`, `productAliases` (RC-code → 呼称) and
+  `productDailyCapsByMode` (機種別キャパ). Swapping capacities/aliases needs only this file.
 - `config/changeover_matrix.json` — per-stage, per-product-pair changeover minutes, plus
   `aShiftOnlyTransitions` (some product transitions on some stages may only start during
   the day shift).
@@ -103,6 +109,14 @@ directly by FastAPI's `StaticFiles` mount.
   **Actuals** (`apply_actuals(demands, actuals)`): subtracts per-製番 production actuals
   from demand so the plan is re-drawn on remaining quantities; fully-covered lots are
   dropped (reported), and actuals whose 製番 matches no demand raise a warning.
+  **Equipment stops** (`EquipmentStop` / `apply_equipment_stops`): enabled (有効=Y) stop
+  rows (期間×勤務×設備, methods 全停止/時間控除/停止率控除, plus 補正後Cap as a per-day
+  ceiling) are converted into per-day bottleneck capacity overrides — one machine's share
+  is approximated as line capacity ÷ the stage's machine count, half-days honoured via
+  開始/終了勤務; stops on non-bottleneck stages emit an advisory warning only.
+  `plan_bottleneck(..., equipment_stops=[...], machine_counts=...)` applies them via
+  `allocate_bottleneck(daily_capacity_by_day=...)` (a zero-capacity day produces nothing
+  and the next day's restart counts as a changeover).
 - `backend/thm_ledger_import.py` — converts the real **THM 生産台帳** (`.xlsx`, orders with
   完成品名/完成予定数/完成予定日) into `DemandItem`s for the bottleneck planner. The lot
   identifier (`order_id`) is the **製番 column** (same key as the shop-floor MIL tables;
@@ -117,7 +131,9 @@ directly by FastAPI's `StaticFiles` mount.
   reads the 台帳 sheet (header row 2), optionally filters to future-due orders and specific
   production lines, and returns `(demands, unmapped_rows)`. `parse_actuals` reads an
   optional 「実績」 sheet (columns 製番/実績数, duplicates summed) from the same workbook,
-  feeding `apply_actuals` for plan revision against actuals.
+  feeding `apply_actuals` for plan revision against actuals. `parse_equipment_stops` reads
+  a 設備停止マスタ sheet (`01_設備停止マスタ` or `設備停止`, 有効=Y rows only) from either
+  the ledger workbook or the real stop-master workbook into `EquipmentStop`s.
 - `backend/bottleneck_export.py` — renders a `BottleneckPlanResult` into a `.xlsx` matching
   the two shop-floor tables: `生産計画(機種×日)` (per-機種 rows split by stage ANT/TAL/HAL/MIL,
   columns = working days — the TA1_生産計画 form) and `製番別MIL` (one row per 製番/出荷ロット
@@ -170,12 +186,13 @@ directly by FastAPI's `StaticFiles` mount.
   `production_plan_YYYYMMDD.xlsx`), `POST /api/bottleneck/export` (multipart THM 台帳
   `.xlsx` upload + optional `start_date`/`end_date`/`lines`/`future_only` form fields;
   parses the ledger — applying the optional 「実績」 sheet so the plan is re-drawn on
-  remaining quantities — runs the HAL-bottleneck daily flow planner with the fixed THM
-  stage flows/shift capacities, `a_shift_only_switch=True` and
-  `product_caps_by_mode=PRODUCT_DAILY_CAPS_BY_MODE` (機種別キャパ constraint), and streams
+  remaining quantities, and equipment stops from an optional `stops_file` upload or a
+  停止マスタ sheet inside the ledger — then runs the HAL-bottleneck daily flow planner
+  with all parameters from `config/bottleneck_planning.json` (`a_shift_only_switch=True`,
+  機種別キャパ constraint, per-day stop-adjusted capacities) and streams
   the `bottleneck_export` `.xlsx` as
-  `bottleneck_plan_YYYYMMDD.xlsx`; when actuals were applied the サマリー gains
-  実績反映製番数/実績控除数量 rows), `POST /api/import` (multipart
+  `bottleneck_plan_YYYYMMDD.xlsx`; the サマリー gains 実績反映製番数/実績控除数量/
+  設備停止反映件数 rows when applicable), `POST /api/import` (multipart
   `.xlsx` upload; 422 with a list of `{sheet, row, message}` on validation failure,
   otherwise overwrites `config/*.json` and returns import counts), and
   `GET /api/import/template` (downloads the current config as a pre-filled `.xlsx`).
@@ -202,13 +219,16 @@ directly by FastAPI's `StaticFiles` mount.
   days, due-date on-time flag, and overrun warning), actuals application (`apply_actuals`:
   remaining-quantity reduction, completed-lot drop, unknown-製番 warning), the
   A-shift-only changeover (deferral past `a_shift_fraction`, same-day switch within the
-  A shift, same-product exemption), and per-product capacity (daily-cap ceiling with
+  A shift, same-product exemption), per-product capacity (daily-cap ceiling with
   same-day parallel fill by other products, exclusion of cap-less products, and shift-mode
-  escalation when a single product can't finish at the smaller mode).
+  escalation when a single product can't finish at the smaller mode), and equipment stops
+  (machine-share deduction with 勤務 half-day bounds, 補正後Cap ceiling, non-bottleneck
+  advisory, and end-to-end reduced-capacity days in `plan_bottleneck`).
 - `backend/tests/test_thm_ledger_import.py` — covers longest-prefix product resolution
   (incl. slash-less suffix codes), 台帳→demand extraction with an unmapped-row report
-  (order_id = 製番, № fallback), future-due / production-line filtering, and 「実績」-sheet
-  parsing (duplicate summing, missing-sheet default).
+  (order_id = 製番, № fallback), future-due / production-line filtering, 「実績」-sheet
+  parsing (duplicate summing, missing-sheet default), 設備停止マスタ parsing (有効=Y
+  filter, missing-sheet default), and `load_bottleneck_planning` config reading.
 - `backend/tests/test_bottleneck_export.py` — asserts the exported workbook has the four
   expected sheets, the 機種×日 matrix lists every product with all stage rows, and the
   製番別MIL sheet has one row per lot with the overrun verdict.

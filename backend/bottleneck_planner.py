@@ -51,6 +51,88 @@ class StageDailyCell:
 
 
 @dataclass
+class EquipmentStop:
+    """設備停止マスタの1行(試作/OH/保全/故障/能力制限など)。
+
+    期間は「開始日+開始勤務 〜 終了日+終了勤務」(A勤=日の前半, B勤=後半)。
+    method は 全停止 / 時間控除 / 停止率控除。corrected_cap(補正後Cap_台)が
+    入っている日はその値をその日の上限として優先する。
+    """
+
+    stop_id: str
+    stage_id: str
+    machine_id: str
+    start_day: date
+    end_day: date
+    start_shift: str = "A勤"
+    end_shift: str = "B勤"
+    method: str = "全停止"
+    stop_rate_pct: float | None = None
+    stop_hours: float | None = None
+    corrected_cap: float | None = None
+    enabled: bool = True
+    reason: str = ""
+
+
+def apply_equipment_stops(
+    working_days: list[date],
+    daily_capacity: float,
+    stops: list[EquipmentStop],
+    bottleneck_stage: str = "HAL",
+    machine_counts: dict[str, int] | None = None,
+    daily_hours: float = 16.0,
+) -> tuple[dict[date, float], list[str]]:
+    """設備停止マスタをボトルネック工程の日次能力へ反映する。
+
+    1台あたりの寄与はライン日次能力÷その工程の号機台数で近似する。
+    ボトルネック以外の工程の停止は日次能力に反映せず、確認用の警告のみ出す。
+    戻り値: ({停止影響日: 補正後のライン日次能力}, 警告一覧)。
+    """
+    day_caps: dict[date, float] = {}
+    warnings: list[str] = []
+    wd = set(working_days)
+
+    for stop in stops:
+        if not stop.enabled:
+            continue
+        if stop.stage_id != bottleneck_stage:
+            warnings.append(
+                f"設備停止{stop.stop_id}({stop.stage_id} {stop.machine_id} {stop.method}): "
+                f"ボトルネック({bottleneck_stage})以外の工程のため日次能力には反映していません。"
+                f"当該工程側の遅れ影響は現場で確認してください。"
+            )
+            continue
+
+        n_machines = max((machine_counts or {}).get(stop.stage_id, 1), 1)
+        share = daily_capacity / n_machines
+        d = stop.start_day
+        while d <= stop.end_day:
+            if d in wd:
+                start_frac = 0.5 if (d == stop.start_day and stop.start_shift == "B勤") else 0.0
+                end_frac = 0.5 if (d == stop.end_day and stop.end_shift == "A勤") else 1.0
+                fraction = max(end_frac - start_frac, 0.0)
+                cap = day_caps.get(d, daily_capacity)
+                if stop.method == "全停止":
+                    cap -= share * fraction
+                elif stop.method == "時間控除":
+                    cap -= share * min((stop.stop_hours or 0.0) / max(daily_hours, 1.0), 1.0)
+                elif stop.method == "停止率控除":
+                    cap -= share * ((stop.stop_rate_pct or 0.0) / 100.0) * fraction
+                if stop.corrected_cap is not None:
+                    cap = min(cap, stop.corrected_cap)
+                day_caps[d] = max(cap, 0.0)
+            d += timedelta(days=1)
+
+        warnings.append(
+            f"設備停止{stop.stop_id}: {stop.stage_id} {stop.machine_id} "
+            f"{stop.start_day.isoformat()}{stop.start_shift}〜{stop.end_day.isoformat()}{stop.end_shift} "
+            f"を{stop.method}で日次能力に反映しました。"
+        )
+
+    return day_caps, warnings
+
+
+@dataclass
 class MilLotCompletion:
     """MIL(最終工程)を製番(出荷ロット)単位で見た完成日と納期充足。"""
 
@@ -173,8 +255,12 @@ def allocate_bottleneck(
     a_shift_only_switch: bool = False,
     a_shift_fraction: float = 0.5,
     product_daily_caps: dict[str, float] | None = None,
+    daily_capacity_by_day: dict[date, float] | None = None,
 ) -> tuple[list[DailyCell], dict[str, date], list[str]]:
     """ボトルネック工程の日次能力を上限に、機種別台数を稼働日へ割り付ける。
+
+    `daily_capacity_by_day` を渡すと、該当日はその値をライン日次能力として使う
+    (設備停止マスタによる能力補正)。
 
     - 稼働日を1日ずつ埋めていく。各日はEDD(納期の早いロット)順に投入するため、
       機種ごとにまとまったキャンペーンが自然に形成される。
@@ -203,7 +289,11 @@ def allocate_bottleneck(
     for day in working_days:
         if total_left <= 0:
             break
-        line_remaining = daily_capacity
+        cap_today = (daily_capacity_by_day or {}).get(day, daily_capacity)
+        if cap_today <= 0:
+            prev_day_products = set()  # 全停止日: 生産なし(翌日は切替扱いで再開)
+            continue
+        line_remaining = cap_today
         today_products: set[str] = set()
         product_used_today: dict[str, float] = {}
         blocked_today: set[str] = set()
@@ -222,7 +312,7 @@ def allocate_bottleneck(
                 and product not in today_products
                 and product not in prev_day_products
             ):
-                used_fraction = 1.0 - line_remaining / daily_capacity
+                used_fraction = 1.0 - line_remaining / cap_today
                 if used_fraction > a_shift_fraction:
                     blocked_today.add(product)
                     warnings.append(
@@ -382,6 +472,9 @@ def plan_bottleneck(
     a_shift_only_switch: bool = False,
     a_shift_fraction: float = 0.5,
     product_caps_by_mode: dict[str, dict[str, float]] | None = None,
+    equipment_stops: list[EquipmentStop] | None = None,
+    bottleneck_stage: str = "HAL",
+    machine_counts: dict[str, int] | None = None,
 ) -> BottleneckPlanResult:
     """Step 1(シフト/レート決定)＋Step 2(HAL日次配分)を実行する。
 
@@ -434,6 +527,21 @@ def plan_bottleneck(
             f"稼働日追加・設備増強を検討してください。"
         )
 
+    # 設備停止マスタをボトルネック日次能力へ反映(選択したシフトモードの時間長で控除)
+    day_caps: dict[date, float] | None = None
+    if equipment_stops:
+        digits = "".join(ch for ch in shift_mode if ch.isdigit())
+        daily_hours = float(digits) if digits else 16.0
+        day_caps, stop_warnings = apply_equipment_stops(
+            working_days,
+            daily_capacity,
+            equipment_stops,
+            bottleneck_stage=bottleneck_stage,
+            machine_counts=machine_counts,
+            daily_hours=daily_hours,
+        )
+        result.warnings.extend(stop_warnings)
+
     allocation, completion, warnings = allocate_bottleneck(
         demands,
         working_days,
@@ -441,6 +549,7 @@ def plan_bottleneck(
         a_shift_only_switch=a_shift_only_switch,
         a_shift_fraction=a_shift_fraction,
         product_daily_caps=(product_caps_by_mode or {}).get(shift_mode),
+        daily_capacity_by_day=day_caps,
     )
     result.allocation = allocation
     result.completion = completion

@@ -17,24 +17,19 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from bottleneck_export import export_bottleneck_workbook
-from bottleneck_planner import StageFlowConfig, apply_actuals, plan_bottleneck, working_days_in_range
-from config_loader import load_changeover_config, load_equipment_config, load_orders_data
+from bottleneck_planner import apply_actuals, plan_bottleneck, working_days_in_range
+from config_loader import (
+    load_bottleneck_planning,
+    load_changeover_config,
+    load_equipment_config,
+    load_orders_data,
+)
 from excel_import import ImportValidationError, WorkbookReadError, export_workbook, parse_workbook, save_config
 from plan_export import export_plan_workbook
 from scheduler import Scheduler
-from thm_ledger_import import PRODUCT_DAILY_CAPS_BY_MODE, parse_actuals, parse_thm_ledger
+from thm_ledger_import import parse_actuals, parse_equipment_stops, parse_thm_ledger
 
 app = FastAPI(title="生産計画自動立案API")
-
-# THM ラインの既定パラメータ(ボトルネック=HAL、工程オフセットは稼働日)。
-_BOTTLENECK_STAGE_ORDER = ["ANT", "TAL", "HAL", "MIL"]
-_BOTTLENECK_STAGE_FLOWS = [
-    StageFlowConfig("ANT", -2),
-    StageFlowConfig("TAL", -1),
-    StageFlowConfig("HAL", 0),
-    StageFlowConfig("MIL", 1),
-]
-_BOTTLENECK_SHIFT_CAPS = {"16h": 90000.0, "22h": 120000.0}
 
 
 class PlanRequest(BaseModel):
@@ -97,6 +92,7 @@ def export_plan(req: PlanRequest):
 @app.post("/api/bottleneck/export")
 async def export_bottleneck_plan(
     file: UploadFile = File(...),
+    stops_file: UploadFile | None = File(None),
     start_date: date | None = Form(None),
     end_date: date | None = Form(None),
     lines: str | None = Form(None),
@@ -113,7 +109,12 @@ async def export_bottleneck_plan(
     - 機種切替(管理者作業)はA勤限定として扱い、A勤内に収まらない切替は翌朝へ繰り下げる。
     - 機種別キャパ(CAP表由来・設備可否の帰結)で機種ごとの日次投入を制限し、
       キャパ未定義の機種(例: Suica4=全設備×)は警告して計画から除外する。
+    - 設備停止マスタ(別ファイル stops_file、または台帳内の「設備停止/01_設備停止マスタ」
+      シート)の有効=Y行をHAL日次能力へ反映する(全停止/時間控除/停止率控除/補正後Cap)。
+    - 計画パラメータ(ライン能力・機種別キャパ・工程オフセット等)は
+      config/bottleneck_planning.json で差し替えられる。
     """
+    cfg = load_bottleneck_planning()
     plan_start = start_date or date.today()
     plan_end = end_date or (plan_start + timedelta(days=45))
     line_set = {s.strip() for s in lines.split(",")} if lines else None
@@ -122,10 +123,15 @@ async def export_bottleneck_plan(
     try:
         demands, unmapped = parse_thm_ledger(
             io.BytesIO(content),
+            aliases=cfg.product_aliases,
             only_due_on_or_after=plan_start if future_only else None,
             lines=line_set,
         )
         actuals = parse_actuals(io.BytesIO(content))
+        if stops_file is not None:
+            stops = parse_equipment_stops(io.BytesIO(await stops_file.read()))
+        else:
+            stops = parse_equipment_stops(io.BytesIO(content))
     except Exception as exc:  # noqa: BLE001 - 壊れたファイル/非対応形式を一律400にする
         raise HTTPException(status_code=400, detail=f"台帳ファイルを読み込めませんでした: {exc}") from exc
 
@@ -144,10 +150,14 @@ async def export_bottleneck_plan(
     result = plan_bottleneck(
         demands,
         working_days,
-        _BOTTLENECK_SHIFT_CAPS,
-        stage_flows=_BOTTLENECK_STAGE_FLOWS,
+        cfg.line_daily_capacities,
+        stage_flows=cfg.stage_flows,
         a_shift_only_switch=True,
-        product_caps_by_mode=PRODUCT_DAILY_CAPS_BY_MODE,
+        a_shift_fraction=cfg.a_shift_fraction,
+        product_caps_by_mode=cfg.product_daily_caps_by_mode,
+        equipment_stops=stops or None,
+        bottleneck_stage=cfg.bottleneck_stage,
+        machine_counts=cfg.machine_counts,
     )
     result.warnings.extend(actual_warnings)
     if unmapped:
@@ -155,10 +165,12 @@ async def export_bottleneck_plan(
             f"機種を解決できなかった台帳行が {len(unmapped)} 件あり、計画から除外しました。"
         )
 
-    extra_summary = None
+    extra_summary = []
     if actuals:
-        extra_summary = [("実績反映製番数", len(actuals)), ("実績控除数量", actuals_total)]
-    wb = export_bottleneck_workbook(result, demands, _BOTTLENECK_STAGE_ORDER, extra_summary=extra_summary)
+        extra_summary += [("実績反映製番数", len(actuals)), ("実績控除数量", actuals_total)]
+    if stops:
+        extra_summary.append(("設備停止反映件数", len(stops)))
+    wb = export_bottleneck_workbook(result, demands, cfg.stage_order, extra_summary=extra_summary or None)
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)

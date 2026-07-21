@@ -6,9 +6,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from bottleneck_planner import (  # noqa: E402
     DemandItem,
+    EquipmentStop,
     StageFlowConfig,
     allocate_bottleneck,
     apply_actuals,
+    apply_equipment_stops,
     choose_shift_mode,
     expand_to_stages,
     mil_completion_by_order,
@@ -280,6 +282,50 @@ def test_shift_mode_escalates_when_single_product_cannot_finish():
     for c in result.allocation:
         per_day[c.day] = per_day.get(c.day, 0) + c.quantity
     assert max(per_day.values()) == 42000
+
+
+def test_equipment_stop_full_stop_deducts_machine_share_with_shift_bounds():
+    # HAL5台構成でライン9万/日 → 1台の寄与は18,000/日。
+    # 7/2 B勤〜7/3 A勤 の全停止: 7/2は半日(9,000)・7/3も半日(9,000)控除。
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 10))
+    stop = EquipmentStop(
+        stop_id="S1", stage_id="HAL", machine_id="HAL#9",
+        start_day=date(2026, 7, 2), end_day=date(2026, 7, 3),
+        start_shift="B勤", end_shift="A勤", method="全停止",
+    )
+    day_caps, warnings = apply_equipment_stops(days, 90000, [stop], machine_counts={"HAL": 5})
+    assert day_caps[date(2026, 7, 2)] == 81000
+    assert day_caps[date(2026, 7, 3)] == 81000
+    assert date(2026, 7, 1) not in day_caps
+    assert any("S1" in w and "反映しました" in w for w in warnings)
+
+
+def test_equipment_stop_corrected_cap_and_rate_and_non_bottleneck():
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 10))
+    stops = [
+        # 停止率控除50% × 1台分(18,000) = 9,000控除 → ただし補正後Cap=70,000が上限で勝つ
+        EquipmentStop("S2", "HAL", "HAL#5", date(2026, 7, 6), date(2026, 7, 6),
+                      method="停止率控除", stop_rate_pct=50, corrected_cap=70000),
+        # ボトルネック外(MIL)は能力反映せず警告のみ
+        EquipmentStop("S3", "MIL", "MIL#7", date(2026, 7, 7), date(2026, 7, 8), method="全停止"),
+    ]
+    day_caps, warnings = apply_equipment_stops(days, 90000, stops, machine_counts={"HAL": 5, "MIL": 4})
+    assert day_caps[date(2026, 7, 6)] == 70000
+    assert date(2026, 7, 7) not in day_caps
+    assert any("S3" in w and "反映していません" in w for w in warnings)
+
+
+def test_plan_bottleneck_uses_reduced_capacity_on_stop_days():
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    demands = [DemandItem("A", 270000, date(2026, 7, 31), order_id="L1")]
+    stop = EquipmentStop("S1", "HAL", "HAL#9", date(2026, 7, 1), date(2026, 7, 1), method="全停止")
+    result = plan_bottleneck(demands, days, CAPS, equipment_stops=[stop], machine_counts={"HAL": 5})
+
+    per_day = {}
+    for c in result.allocation:
+        per_day[c.day] = per_day.get(c.day, 0) + c.quantity
+    assert per_day[date(2026, 7, 1)] == 72000  # 90,000 - 18,000
+    assert per_day[date(2026, 7, 2)] == 90000
 
 
 def test_same_product_lots_do_not_trigger_switch_deferral():

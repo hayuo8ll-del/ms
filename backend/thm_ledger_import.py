@@ -201,6 +201,68 @@ def parse_thm_ledger(
     return demands, unmapped
 
 
+STOPS_SHEET_NAMES = ("01_設備停止マスタ", "設備停止")
+
+
+def parse_equipment_stops(file_obj: BinaryIO, header_row: int = 1) -> list["EquipmentStop"]:
+    """設備停止マスタ(01_設備停止マスタ / 設備停止 シート)を読み取る。
+
+    有効=Y の行だけを対象にする(現場テンプレートの判定ロジックどおり)。
+    シートが無ければ空リストを返す。
+    """
+    from bottleneck_planner import EquipmentStop
+
+    wb = load_workbook(file_obj, data_only=True)
+    ws = None
+    for name in STOPS_SHEET_NAMES:
+        if name in wb.sheetnames:
+            ws = wb[name]
+            break
+    if ws is None:
+        return []
+
+    idx = _header_index(ws, header_row)
+
+    def val(row: int, *names: str):
+        for n in names:
+            if n in idx:
+                return ws.cell(row=row, column=idx[n]).value
+        return None
+
+    def num(v) -> float | None:
+        return float(v) if isinstance(v, (int, float)) else None
+
+    stops: list[EquipmentStop] = []
+    for r in range(header_row + 1, ws.max_row + 1):
+        stop_id = val(r, "停止ID")
+        if not stop_id:
+            continue
+        if str(val(r, "有効") or "").strip().upper() != "Y":
+            continue
+        start_day = _as_date(val(r, "開始日"))
+        end_day = _as_date(val(r, "終了日"))
+        stage_id = str(val(r, "工程") or "").strip()
+        if start_day is None or end_day is None or not stage_id:
+            continue
+        stops.append(
+            EquipmentStop(
+                stop_id=str(stop_id).strip(),
+                stage_id=stage_id,
+                machine_id=str(val(r, "設備") or "").strip(),
+                start_day=start_day,
+                end_day=end_day,
+                start_shift=str(val(r, "開始勤務") or "A勤").strip(),
+                end_shift=str(val(r, "終了勤務") or "B勤").strip(),
+                method=str(val(r, "停止Cap控除方法") or "全停止").strip(),
+                stop_rate_pct=num(val(r, "停止率_%", "停止率")),
+                stop_hours=num(val(r, "停止時間_h", "停止時間")),
+                corrected_cap=num(val(r, "補正後Cap_台", "補正後Cap")),
+                reason=str(val(r, "停止区分") or "").strip(),
+            )
+        )
+    return stops
+
+
 ACTUALS_SHEET_NAMES = ("実績", "実績反映")
 _ACTUALS_QTY_HEADERS = ("実績数", "実績数量", "実績")
 
