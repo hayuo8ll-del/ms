@@ -8,20 +8,33 @@ config/ 配下のJSON(equipment_master.json / changeover_matrix.json / orders_sa
 from __future__ import annotations
 
 import io
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from bottleneck_export import export_bottleneck_workbook
+from bottleneck_planner import StageFlowConfig, plan_bottleneck, working_days_in_range
 from config_loader import load_changeover_config, load_equipment_config, load_orders_data
 from excel_import import ImportValidationError, WorkbookReadError, export_workbook, parse_workbook, save_config
 from plan_export import export_plan_workbook
 from scheduler import Scheduler
+from thm_ledger_import import parse_thm_ledger
 
 app = FastAPI(title="生産計画自動立案API")
+
+# THM ラインの既定パラメータ(ボトルネック=HAL、工程オフセットは稼働日)。
+_BOTTLENECK_STAGE_ORDER = ["ANT", "TAL", "HAL", "MIL"]
+_BOTTLENECK_STAGE_FLOWS = [
+    StageFlowConfig("ANT", -2),
+    StageFlowConfig("TAL", -1),
+    StageFlowConfig("HAL", 0),
+    StageFlowConfig("MIL", 1),
+]
+_BOTTLENECK_SHIFT_CAPS = {"16h": 90000.0, "22h": 120000.0}
 
 
 class PlanRequest(BaseModel):
@@ -74,6 +87,60 @@ def export_plan(req: PlanRequest):
     wb.save(buf)
     buf.seek(0)
     filename = f"production_plan_{start_override:%Y%m%d}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@app.post("/api/bottleneck/export")
+async def export_bottleneck_plan(
+    file: UploadFile = File(...),
+    start_date: date | None = Form(None),
+    end_date: date | None = Form(None),
+    lines: str | None = Form(None),
+    future_only: bool = Form(True),
+):
+    """THM生産台帳(.xlsx)をアップロードし、HALボトルネック基準の日次フロー計画を
+    立ててExcel(.xlsx)を返す。
+
+    シート: サマリー / 生産計画(機種×日) / 製番別MIL / 警告。
+    - start_date/end_date: 計画期間(省略時は当日〜+45日)。
+    - lines: 対象ラインをカンマ区切りで指定(例 "CTA1,CTA2")。省略時は全ライン。
+    - future_only: True なら完成予定日が start_date 以降の受注のみを対象にする。
+    """
+    plan_start = start_date or date.today()
+    plan_end = end_date or (plan_start + timedelta(days=45))
+    line_set = {s.strip() for s in lines.split(",")} if lines else None
+
+    content = await file.read()
+    try:
+        demands, unmapped = parse_thm_ledger(
+            io.BytesIO(content),
+            only_due_on_or_after=plan_start if future_only else None,
+            lines=line_set,
+        )
+    except Exception as exc:  # noqa: BLE001 - 壊れたファイル/非対応形式を一律400にする
+        raise HTTPException(status_code=400, detail=f"台帳ファイルを読み込めませんでした: {exc}") from exc
+
+    if not demands:
+        raise HTTPException(status_code=422, detail="対象となる受注が台帳から見つかりませんでした(期間・ライン条件を確認してください)。")
+
+    working_days = working_days_in_range(plan_start, plan_end)
+    result = plan_bottleneck(
+        demands, working_days, _BOTTLENECK_SHIFT_CAPS, stage_flows=_BOTTLENECK_STAGE_FLOWS
+    )
+    if unmapped:
+        result.warnings.append(
+            f"機種を解決できなかった台帳行が {len(unmapped)} 件あり、計画から除外しました。"
+        )
+
+    wb = export_bottleneck_workbook(result, demands, _BOTTLENECK_STAGE_ORDER)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    filename = f"bottleneck_plan_{plan_start:%Y%m%d}.xlsx"
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

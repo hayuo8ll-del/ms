@@ -10,6 +10,8 @@ const importButton = document.getElementById("import-button");
 const importFileInput = document.getElementById("import-file");
 const importResultEl = document.getElementById("import-result");
 const exportButton = document.getElementById("export-plan");
+const bottleneckButton = document.getElementById("bottleneck-button");
+const ledgerFileInput = document.getElementById("ledger-file");
 const matrixPanelEl = document.getElementById("shift-matrix");
 const matrixTableEl = document.getElementById("matrix-table");
 
@@ -392,8 +394,56 @@ async function exportPlan() {
   }
 }
 
+async function exportBottleneckPlan() {
+  const file = ledgerFileInput.files[0];
+  if (!file) return;
+
+  errorBanner.hidden = true;
+  bottleneckButton.disabled = true;
+  bottleneckButton.textContent = "計画中...";
+
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    if (startDateInput.value) formData.append("start_date", startDateInput.value);
+    const res = await fetch("/api/bottleneck/export", { method: "POST", body: formData });
+    if (!res.ok) {
+      let detail = `APIエラー: ${res.status}`;
+      try {
+        const data = await res.json();
+        if (data.detail) detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
+      } catch (_) {}
+      throw new Error(detail);
+    }
+
+    let filename = "bottleneck_plan.xlsx";
+    const disp = res.headers.get("Content-Disposition") || "";
+    const m = disp.match(/filename=([^;]+)/);
+    if (m) filename = m[1].trim().replace(/["']/g, "");
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    errorBanner.hidden = false;
+    errorBanner.textContent = `ボトルネック計画の出力に失敗しました:\n${err.message}`;
+  } finally {
+    bottleneckButton.disabled = false;
+    bottleneckButton.textContent = "台帳→ボトルネック計画(Excel)";
+    ledgerFileInput.value = "";
+  }
+}
+
 runButton.addEventListener("click", runPlan);
 exportButton.addEventListener("click", exportPlan);
 importButton.addEventListener("click", () => importFileInput.click());
 importFileInput.addEventListener("change", importExcel);
+bottleneckButton.addEventListener("click", () => ledgerFileInput.click());
+ledgerFileInput.addEventListener("change", exportBottleneckPlan);
 runPlan();

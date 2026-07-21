@@ -94,6 +94,12 @@ directly by FastAPI's `StaticFiles` mount.
   deliberately not used since it can't distinguish さそり金融/交通). `parse_thm_ledger`
   reads the 台帳 sheet (header row 2), optionally filters to future-due orders and specific
   production lines, and returns `(demands, unmapped_rows)`.
+- `backend/bottleneck_export.py` — renders a `BottleneckPlanResult` into a `.xlsx` matching
+  the two shop-floor tables: `生産計画(機種×日)` (per-機種 rows split by stage ANT/TAL/HAL/MIL,
+  columns = working days — the TA1_生産計画 form) and `製番別MIL` (one row per 製番/出荷ロット
+  with MIL completion day, due date, on-time verdict — the THM 短期投入予定表 form; MIL cells
+  tinted orange, late lots red), plus サマリー and 警告. `export_bottleneck_workbook(result,
+  demands, stage_order)`.
 - `backend/scheduler.py` — the `Scheduler` class: finite-capacity, multi-machine forward
   scheduling. Orders are sorted by **EDD** (earliest due date). For each order: raw
   material availability may push back the earliest start; each pre-split stage picks
@@ -137,7 +143,11 @@ directly by FastAPI's `StaticFiles` mount.
   `POST /api/plan` (optional `start_date`, defaults to today; reloads `config/*.json`
   fresh on every call and returns the `PlanResult`), `POST /api/plan/export` (same
   inputs as `/api/plan` but streams the `plan_export` `.xlsx` as an attachment named
-  `production_plan_YYYYMMDD.xlsx`), `POST /api/import` (multipart
+  `production_plan_YYYYMMDD.xlsx`), `POST /api/bottleneck/export` (multipart THM 台帳
+  `.xlsx` upload + optional `start_date`/`end_date`/`lines`/`future_only` form fields;
+  parses the ledger, runs the HAL-bottleneck daily flow planner with the fixed THM stage
+  flows/shift capacities, and streams the `bottleneck_export` `.xlsx` as
+  `bottleneck_plan_YYYYMMDD.xlsx`), `POST /api/import` (multipart
   `.xlsx` upload; 422 with a list of `{sheet, row, message}` on validation failure,
   otherwise overwrites `config/*.json` and returns import counts), and
   `GET /api/import/template` (downloads the current config as a pre-filled `.xlsx`).
@@ -165,6 +175,9 @@ directly by FastAPI's `StaticFiles` mount.
 - `backend/tests/test_thm_ledger_import.py` — covers longest-prefix product resolution
   (incl. slash-less suffix codes), 台帳→demand extraction with an unmapped-row report, and
   future-due / production-line filtering.
+- `backend/tests/test_bottleneck_export.py` — asserts the exported workbook has the four
+  expected sheets, the 機種×日 matrix lists every product with all stage rows, and the
+  製番別MIL sheet has one row per lot with the overrun verdict.
 - `backend/tests/test_plan_export.py` — runs the scheduler against the real
   `config/*.json` and asserts the exported workbook has exactly the four expected sheets
   (no utilization sheet), the schedule sheet row count matches the schedule, the matrix
@@ -180,7 +193,10 @@ directly by FastAPI's `StaticFiles` mount.
   automatically re-runs the plan **and downloads the plan-result `.xlsx`** on success),
   and a **「計画をExcel出力」** button (`exportPlan`) that posts to `/api/plan/export`
   and downloads the returned workbook as a file (filename taken from
-  `Content-Disposition`). The on-screen rendering and the Excel export coexist. The
+  `Content-Disposition`), plus a **「台帳→ボトルネック計画(Excel)」** button
+  (`exportBottleneckPlan`) that uploads a THM 台帳 to `/api/bottleneck/export` and downloads
+  the resulting bottleneck-plan workbook. The on-screen rendering and the Excel exports
+  coexist. The
   date×shift matrix (`renderShiftMatrix`)
   fetches the active shift pattern from `GET /api/equipment`
   (`shift_modes[default_shift_mode]`, cached), rebuilds the concrete shift windows

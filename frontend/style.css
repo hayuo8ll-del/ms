@@ -115,13 +115,25 @@ header h1 {
 
 button#run-plan,
 button#import-button,
-button#export-plan {
+button#export-plan,
+button#bottleneck-button {
   border: none;
   border-radius: 8px;
   padding: 0.55rem 1rem;
   font-size: 0.9rem;
   cursor: pointer;
   white-space: nowrap;
+}
+
+button#bottleneck-button {
+  background: var(--accent-c);
+  color: #17130a;
+  font-weight: 600;
+}
+
+button#bottleneck-button:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 button#run-plan {

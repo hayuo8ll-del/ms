@@ -21,6 +21,9 @@
       <input type="date" id="start-date" />
       <button id="run-plan" type="button">計画を立案する</button>
       <button id="export-plan" type="button">計画をExcel出力</button>
+      <span class="divider"></span>
+      <input type="file" id="ledger-file" accept=".xlsx" hidden />
+      <button id="bottleneck-button" type="button" title="THM生産台帳を取り込み、HALボトルネック基準の日次計画(機種×日／製番別MIL)をExcel出力します">台帳→ボトルネック計画(Excel)</button>
     </div>
   </header>
 
