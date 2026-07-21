@@ -68,6 +68,18 @@ directly by FastAPI's `StaticFiles` mount.
   and answers "when can a task next start", "does a duration fit in one window"
   (for the stage-2 uninterruptible constraint), and "how much working time exists between
   two timestamps" (used for utilization %).
+- `backend/bottleneck_planner.py` — an **alternative planning paradigm** matching how the
+  real line is actually planned: rate-based, bottleneck-anchored daily flow (distinct from
+  `scheduler.py`'s discrete forward-EDD job scheduling). `plan_bottleneck(demands,
+  working_days, shift_capacities)` runs Step 1 (`choose_shift_mode`: period demand ÷
+  working days → required daily rate → smallest shift mode that covers it, e.g. 16H=90k/day
+  vs 22H=120k/day) and Step 2 (`allocate_bottleneck`: fill each working day up to the
+  bottleneck/HAL daily capacity, EDD across products, campaign-style — one product per
+  contiguous run to minimise changeovers), returning a per-day×product allocation, per-
+  product completion dates, and over-capacity/due-date warnings. `working_days_in_range`
+  enumerates weekday working days. Steps 3–4 (back-calculating TAL/ANT input and forward
+  MIL per-製番 completion, A-shift-only changeover windows, wiring the real THM 台帳 as
+  demand) are the planned next increments.
 - `backend/scheduler.py` — the `Scheduler` class: finite-capacity, multi-machine forward
   scheduling. Orders are sorted by **EDD** (earliest due date). For each order: raw
   material availability may push back the earliest start; each pre-split stage picks
@@ -129,6 +141,10 @@ directly by FastAPI's `StaticFiles` mount.
   validation-error cases (missing required sheet, non-numeric field with row number,
   unknown stage reference, duplicate order ID, a stage with no machines, a corrupted
   file), plus the optional `Eligibility` sheet (parsing, `×`-drop, unknown-machine error).
+- `backend/tests/test_bottleneck_planner.py` — covers working-day enumeration (weekends
+  excluded), shift-mode selection (smallest sufficient / escalation to 22H), daily-capacity
+  ceiling, campaign-style EDD allocation with per-product completion dates, over-capacity
+  warning, and a July-like end-to-end plan (16H / 90k per day).
 - `backend/tests/test_plan_export.py` — runs the scheduler against the real
   `config/*.json` and asserts the exported workbook has exactly the four expected sheets
   (no utilization sheet), the schedule sheet row count matches the schedule, the matrix
