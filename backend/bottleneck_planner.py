@@ -101,10 +101,15 @@ def choose_shift_mode(
     total_demand: float,
     num_working_days: int,
     capacities: dict[str, float],
+    product_demands: dict[str, float] | None = None,
+    product_caps_by_mode: dict[str, dict[str, float]] | None = None,
 ) -> tuple[str, float, float]:
     """必要日次レートを賄える最小のシフトモードを選ぶ。
 
     capacities は {シフトモード名: 日次能力}(例 {"16h": 90000, "22h": 120000})。
+    product_demands と product_caps_by_mode({モード: {機種: 日産キャパ}})を渡すと、
+    ライン合計だけでなく **機種別にも期間内に作り切れるか** を確認する
+    (例: Lite-Sだけ需要が大きい月は、合計では16Hで足りても22Hへ上げる)。
     どのモードでも足りない場合は最大能力のモードを返す(呼び出し側で警告)。
     戻り値: (シフトモード, 日次能力, 必要日次レート)。
     """
@@ -112,8 +117,16 @@ def choose_shift_mode(
         raise ValueError("稼働日が0日です。期間・カレンダーを確認してください。")
     required = total_demand / num_working_days
     for mode, cap in sorted(capacities.items(), key=lambda kv: kv[1]):
-        if cap >= required:
-            return mode, cap, required
+        if cap < required:
+            continue
+        if product_demands and product_caps_by_mode:
+            mode_caps = product_caps_by_mode.get(mode, {})
+            if any(
+                qty > mode_caps.get(product, float("inf")) * num_working_days
+                for product, qty in product_demands.items()
+            ):
+                continue  # この機種はこのモードでは期間内に作り切れない
+        return mode, cap, required
     mode, cap = max(capacities.items(), key=lambda kv: kv[1])
     return mode, cap, required
 
@@ -159,16 +172,22 @@ def allocate_bottleneck(
     daily_capacity: float,
     a_shift_only_switch: bool = False,
     a_shift_fraction: float = 0.5,
+    product_daily_caps: dict[str, float] | None = None,
 ) -> tuple[list[DailyCell], dict[str, date], list[str]]:
     """ボトルネック工程の日次能力を上限に、機種別台数を稼働日へ割り付ける。
 
-    - 納期の早い機種から順(EDD)に処理する。
-    - 切替を減らすため、1機種を投入し切ってから次の機種に移る(キャンペーン投入)。
-    - 各稼働日の投入合計は daily_capacity を超えない。
-    - `a_shift_only_switch=True` のとき、機種切替(管理者が実施)はA勤中しかできない制約を
-      反映する: 前の機種がその日の `a_shift_fraction`(既定=日能力の半分=A勤相当)より後に
-      終わる場合、次の機種の開始を翌稼働日の朝(A勤)へ繰り下げる。工程展開は稼働日単位の
-      オフセットなので、この境界はTAL/MILにも同じ位置で伝播する。
+    - 稼働日を1日ずつ埋めていく。各日はEDD(納期の早いロット)順に投入するため、
+      機種ごとにまとまったキャンペーンが自然に形成される。
+    - 各稼働日の投入合計は daily_capacity(ライン日次能力)を超えない。
+    - `product_daily_caps`({機種: 日産キャパ})を渡すと、機種ごとの日次投入もその
+      キャパを超えない。キャパの小さい機種(例: Lite-S)が残したライン能力は、同日に
+      別機種が別号機グループで並行して使う(現場のTA1_生産計画と同じ形)。
+    - `a_shift_only_switch=True` のとき、機種切替(管理者が実施)はA勤中しかできない
+      制約を反映する: **前稼働日から継続していない機種** がその日に新規に立ち上がる
+      場合、その時点までのライン消化率が `a_shift_fraction`(既定=日能力の半分=A勤相当)
+      を超えていたら開始を翌稼働日の朝(A勤)へ繰り下げる。前日から続く機種は号機の
+      段取りが済んでいるため対象外。工程展開は稼働日単位のオフセットなので、この
+      境界はTAL/MILにも同じ位置で伝播する。
     戻り値: (割付セル一覧, 機種->投入完了日, 警告一覧)。
     """
     allocation: list[DailyCell] = []
@@ -176,51 +195,82 @@ def allocate_bottleneck(
     warnings: list[str] = []
 
     queue = sorted(demands, key=lambda d: (d.due_date, d.product))
-    day_idx = 0
-    day_remaining = daily_capacity
-    last_product: str | None = None
+    lot_remaining = [item.quantity for item in queue]
+    lot_completion: list[date | None] = [None] * len(queue)
+    total_left = sum(lot_remaining)
+    prev_day_products: set[str] = set()
 
-    for item in queue:
-        remaining = item.quantity
-        while remaining > 0:
-            if day_idx >= len(working_days):
-                warnings.append(
-                    f"{item.product}: 稼働日({len(working_days)}日)の能力では投入しきれない台数が "
-                    f"{remaining:.0f} 残りました。期間延長かシフト増強が必要です。"
-                )
+    for day in working_days:
+        if total_left <= 0:
+            break
+        line_remaining = daily_capacity
+        today_products: set[str] = set()
+        product_used_today: dict[str, float] = {}
+        blocked_today: set[str] = set()
+
+        for i, item in enumerate(queue):
+            if line_remaining <= 0:
                 break
-            if day_remaining <= 0:
-                day_idx += 1
-                day_remaining = daily_capacity
+            if lot_remaining[i] <= 0:
                 continue
+            product = item.product
+            if product in blocked_today:
+                continue
+
             if (
                 a_shift_only_switch
-                and last_product is not None
-                and item.product != last_product
-                and day_remaining < daily_capacity
+                and product not in today_products
+                and product not in prev_day_products
             ):
-                used_fraction = 1.0 - day_remaining / daily_capacity
+                used_fraction = 1.0 - line_remaining / daily_capacity
                 if used_fraction > a_shift_fraction:
+                    blocked_today.add(product)
                     warnings.append(
-                        f"{item.product}: 機種切替(管理者作業)はA勤のみのため、"
-                        f"{working_days[day_idx].isoformat()}中の切替を避け翌稼働日の朝に開始します。"
+                        f"{product}: 機種切替(管理者作業)はA勤のみのため、"
+                        f"{day.isoformat()}中の切替を避け翌稼働日の朝に開始します。"
                     )
-                    day_idx += 1
-                    day_remaining = daily_capacity
                     continue
-            take = min(remaining, day_remaining)
-            allocation.append(
-                DailyCell(day=working_days[day_idx], product=item.product, quantity=take, order_id=item.order_id)
-            )
-            remaining -= take
-            day_remaining -= take
-            last_product = item.product
-            if remaining <= 0:
-                completion[item.product] = working_days[day_idx]
 
-        if item.product in completion and completion[item.product] > item.due_date:
+            available = line_remaining
+            if product_daily_caps is not None:
+                cap = product_daily_caps.get(product)
+                if cap is not None:
+                    available = min(available, cap - product_used_today.get(product, 0.0))
+            if available <= 0:
+                continue
+
+            take = min(lot_remaining[i], available)
+            allocation.append(DailyCell(day=day, product=product, quantity=take, order_id=item.order_id))
+            lot_remaining[i] -= take
+            line_remaining -= take
+            total_left -= take
+            product_used_today[product] = product_used_today.get(product, 0.0) + take
+            today_products.add(product)
+            if lot_remaining[i] <= 0:
+                lot_completion[i] = day
+                completion[product] = day
+
+        prev_day_products = today_products
+
+    # 期間内に投入しきれなかった機種
+    leftover: dict[str, float] = {}
+    for i, item in enumerate(queue):
+        if lot_remaining[i] > 0:
+            leftover[item.product] = leftover.get(item.product, 0.0) + lot_remaining[i]
+    for product, qty in leftover.items():
+        warnings.append(
+            f"{product}: 稼働日({len(working_days)}日)の能力では投入しきれない台数が "
+            f"{qty:.0f} 残りました。期間延長かシフト増強が必要です。"
+        )
+
+    # ボトルネック投入完了ベースの納期チェック(MILの製番別チェックは plan_bottleneck 側)
+    warned_products: set[str] = set()
+    for i, item in enumerate(queue):
+        done = lot_completion[i]
+        if done is not None and done > item.due_date and item.product not in warned_products:
+            warned_products.add(item.product)
             warnings.append(
-                f"{item.product}: ボトルネック投入完了({completion[item.product].isoformat()})が "
+                f"{item.product}: ボトルネック投入完了({done.isoformat()})が "
                 f"納期({item.due_date.isoformat()})を超過する見込みです。"
             )
 
@@ -331,15 +381,45 @@ def plan_bottleneck(
     mil_stage_id: str = "MIL",
     a_shift_only_switch: bool = False,
     a_shift_fraction: float = 0.5,
+    product_caps_by_mode: dict[str, dict[str, float]] | None = None,
 ) -> BottleneckPlanResult:
     """Step 1(シフト/レート決定)＋Step 2(HAL日次配分)を実行する。
 
     stage_flows を渡すと、HAL配分を各工程(ANT/TAL/HAL/MIL)へオフセット展開し(Step 3)、
     MIL工程を製番別に集計して完成日を出す(Step 4)。
     a_shift_only_switch はTAL/MILの機種切替がA勤限定である制約(allocate_bottleneck参照)。
+    product_caps_by_mode({モード: {機種: 日産キャパ}})を渡すと、機種×設備の生産可否を
+    織り込んだ機種別キャパで配分を制限し、キャパ定義の無い機種(=生産可能な設備が無い)は
+    警告して計画から除外する。シフトモード選択も機種別の実現性を確認する。
     """
+    pre_warnings: list[str] = []
+    if product_caps_by_mode:
+        producible = {
+            product
+            for mode_caps in product_caps_by_mode.values()
+            for product, cap in mode_caps.items()
+            if cap
+        }
+        infeasible = sorted({d.product for d in demands} - producible)
+        for product in infeasible:
+            qty = sum(d.quantity for d in demands if d.product == product)
+            pre_warnings.append(
+                f"{product}: 生産可能な設備(機種別キャパ)が定義されていないため、"
+                f"{qty:.0f}台を計画から除外しました。設備条件マスタを確認してください。"
+            )
+        demands = [d for d in demands if d.product in producible]
+
     total = sum(d.quantity for d in demands)
-    shift_mode, daily_capacity, required = choose_shift_mode(total, len(working_days), shift_capacities)
+    product_demands: dict[str, float] = {}
+    for d in demands:
+        product_demands[d.product] = product_demands.get(d.product, 0.0) + d.quantity
+    shift_mode, daily_capacity, required = choose_shift_mode(
+        total,
+        len(working_days),
+        shift_capacities,
+        product_demands=product_demands or None,
+        product_caps_by_mode=product_caps_by_mode,
+    )
 
     result = BottleneckPlanResult(
         shift_mode=shift_mode,
@@ -347,6 +427,7 @@ def plan_bottleneck(
         required_daily_rate=required,
         working_days=working_days,
     )
+    result.warnings.extend(pre_warnings)
     if required > daily_capacity:
         result.warnings.append(
             f"必要日次レート({required:.0f}/日)が最大シフト能力({daily_capacity:.0f}/日)を超えています。"
@@ -359,6 +440,7 @@ def plan_bottleneck(
         daily_capacity,
         a_shift_only_switch=a_shift_only_switch,
         a_shift_fraction=a_shift_fraction,
+        product_daily_caps=(product_caps_by_mode or {}).get(shift_mode),
     )
     result.allocation = allocation
     result.completion = completion

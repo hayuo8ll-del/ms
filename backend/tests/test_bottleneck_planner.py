@@ -223,6 +223,65 @@ def test_a_shift_switch_allowed_when_previous_ends_within_a_shift():
     assert not any("切替" in w for w in warnings)
 
 
+def test_product_daily_cap_limits_and_allows_parallel_fill():
+    # Lite-Sは30,720/日が上限。残ったライン能力(90k-30,720)は同日に金融が並行して使う。
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    demands = [
+        DemandItem("Lite-S(Mies)", 61440, date(2026, 7, 3), order_id="L1"),
+        DemandItem("さそり金融", 100000, date(2026, 7, 10), order_id="L2"),
+    ]
+    caps = {"Lite-S(Mies)": 30720, "さそり金融": 80000}
+    alloc, completion, _warn = allocate_bottleneck(demands, days, 90000, product_daily_caps=caps)
+
+    per_day_product: dict[tuple, float] = {}
+    per_day_total: dict = {}
+    for c in alloc:
+        per_day_product[(c.day, c.product)] = per_day_product.get((c.day, c.product), 0) + c.quantity
+        per_day_total[c.day] = per_day_total.get(c.day, 0) + c.quantity
+    # 機種別キャパを1日も超えない
+    assert all(q <= caps[p] + 1e-6 for (_d, p), q in per_day_product.items())
+    # ライン日次能力も超えない
+    assert all(q <= 90000 + 1e-6 for q in per_day_total.values())
+    # 7/1: Lite-S 30,720 + 金融 59,280 の並行生産
+    assert per_day_product[(date(2026, 7, 1), "Lite-S(Mies)")] == 30720
+    assert per_day_product[(date(2026, 7, 1), "さそり金融")] == 59280
+    # Lite-Sは2日(30,720×2=61,440)で完了
+    assert completion["Lite-S(Mies)"] == date(2026, 7, 2)
+    # 総量保存
+    assert round(sum(c.quantity for c in alloc)) == 161440
+
+
+def test_plan_excludes_products_without_capacity_definition():
+    # キャパ未定義(=生産可能な設備が無い; Suica4相当)の機種は警告して除外する
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    demands = [
+        DemandItem("さそり金融", 90000, date(2026, 7, 10), order_id="L1"),
+        DemandItem("Suica4", 50000, date(2026, 7, 15), order_id="L2"),
+    ]
+    caps_by_mode = {"16h": {"さそり金融": 80000}, "22h": {"さそり金融": 120000}}
+    result = plan_bottleneck(demands, days, CAPS, product_caps_by_mode=caps_by_mode)
+
+    assert not any(c.product == "Suica4" for c in result.allocation)
+    assert any("Suica4" in w and "除外" in w for w in result.warnings)
+    # 除外後の機種は普通に配分される
+    assert "さそり金融" in result.completion
+
+
+def test_shift_mode_escalates_when_single_product_cannot_finish():
+    # 合計は16Hのライン能力で足りるが、X単独では16Hキャパ×稼働日で作り切れない → 22Hへ
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 14))  # 10稼働日
+    demands = [DemandItem("X", 350000, date(2026, 7, 31), order_id="L1")]
+    caps_by_mode = {"16h": {"X": 30000}, "22h": {"X": 42000}}
+    result = plan_bottleneck(demands, days, CAPS, product_caps_by_mode=caps_by_mode)
+
+    assert result.shift_mode == "22h"
+    # 22Hのキャパ42,000/日で配分される
+    per_day = {}
+    for c in result.allocation:
+        per_day[c.day] = per_day.get(c.day, 0) + c.quantity
+    assert max(per_day.values()) == 42000
+
+
 def test_same_product_lots_do_not_trigger_switch_deferral():
     # 同一機種のロット切替は管理者切替ではないため、A勤制約の対象外
     days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))

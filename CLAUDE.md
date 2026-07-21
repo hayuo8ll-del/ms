@@ -73,10 +73,18 @@ directly by FastAPI's `StaticFiles` mount.
   `scheduler.py`'s discrete forward-EDD job scheduling). `plan_bottleneck(demands,
   working_days, shift_capacities)` runs Step 1 (`choose_shift_mode`: period demand ÷
   working days → required daily rate → smallest shift mode that covers it, e.g. 16H=90k/day
-  vs 22H=120k/day) and Step 2 (`allocate_bottleneck`: fill each working day up to the
-  bottleneck/HAL daily capacity, EDD across products, campaign-style — one product per
-  contiguous run to minimise changeovers), returning a per-day×product allocation, per-
-  product completion dates, and over-capacity/due-date warnings. `working_days_in_range`
+  vs 22H=120k/day; when per-product caps are supplied it also checks each product can
+  finish within the horizon at that mode's per-product rate, escalating otherwise) and
+  Step 2 (`allocate_bottleneck`: fill each working day up to the
+  bottleneck/HAL daily capacity, EDD across lots — campaigns form naturally; with
+  `product_daily_caps` each product's daily fill is additionally capped by its 機種別キャパ
+  (the machine-eligibility consequence), and line capacity a slow product leaves unused is
+  filled the same day by other products running in parallel on other machine groups, as on
+  the real TA1 plan), returning a per-day×product allocation, per-
+  product completion dates, and over-capacity/due-date warnings.
+  `plan_bottleneck(..., product_caps_by_mode={mode: {product: daily_cap}})` applies both,
+  and **excludes** (with a warning) demands for products with no capacity entry — i.e. no
+  eligible machine, like Suica4 (all ×). `working_days_in_range`
   enumerates weekday working days. **Step 3** (`expand_to_stages` / `StageFlowConfig`):
   the HAL daily allocation is expanded to every stage (ANT/TAL/HAL/MIL) by a per-stage
   working-day `lead_offset_days` (upstream negative = fed earlier, bottleneck 0, downstream
@@ -98,7 +106,11 @@ directly by FastAPI's `StaticFiles` mount.
 - `backend/thm_ledger_import.py` — converts the real **THM 生産台帳** (`.xlsx`, orders with
   完成品名/完成予定数/完成予定日) into `DemandItem`s for the bottleneck planner. The lot
   identifier (`order_id`) is the **製番 column** (same key as the shop-floor MIL tables;
-  falls back to № only when 製番 is empty/"-"). `resolve_product` maps a 完成品名/コード to
+  falls back to № only when 製番 is empty/"-"). Also holds
+  `PRODUCT_DAILY_CAPS_BY_MODE` (`{shift mode: {機種呼称: daily cap}}` for 22h/16h/11h/8h,
+  from the CAP 表's 機種別キャパ column — the per-product line rate that already embodies
+  the machine×product eligibility, e.g. Lite-S 30,720/day at 16H; Suica4 absent = not
+  producible), fed to `plan_bottleneck(product_caps_by_mode=...)`. `resolve_product` maps a 完成品名/コード to
   a 機種呼称 by longest-prefix match against
   `PRODUCT_ALIASES` (RC-code → 呼称, derived from the CAP 機種一覧; the ICチップ column is
   deliberately not used since it can't distinguish さそり金融/交通). `parse_thm_ledger`
@@ -159,8 +171,9 @@ directly by FastAPI's `StaticFiles` mount.
   `.xlsx` upload + optional `start_date`/`end_date`/`lines`/`future_only` form fields;
   parses the ledger — applying the optional 「実績」 sheet so the plan is re-drawn on
   remaining quantities — runs the HAL-bottleneck daily flow planner with the fixed THM
-  stage flows/shift capacities and `a_shift_only_switch=True`, and streams the
-  `bottleneck_export` `.xlsx` as
+  stage flows/shift capacities, `a_shift_only_switch=True` and
+  `product_caps_by_mode=PRODUCT_DAILY_CAPS_BY_MODE` (機種別キャパ constraint), and streams
+  the `bottleneck_export` `.xlsx` as
   `bottleneck_plan_YYYYMMDD.xlsx`; when actuals were applied the サマリー gains
   実績反映製番数/実績控除数量 rows), `POST /api/import` (multipart
   `.xlsx` upload; 422 with a list of `{sheet, row, message}` on validation failure,
@@ -187,9 +200,11 @@ directly by FastAPI's `StaticFiles` mount.
   (`expand_to_stages`: upstream/downstream offsets, out-of-horizon and per-stage-capacity
   warnings), MIL per-製番 completion (`mil_completion_by_order`: per-lot completion
   days, due-date on-time flag, and overrun warning), actuals application (`apply_actuals`:
-  remaining-quantity reduction, completed-lot drop, unknown-製番 warning), and the
+  remaining-quantity reduction, completed-lot drop, unknown-製番 warning), the
   A-shift-only changeover (deferral past `a_shift_fraction`, same-day switch within the
-  A shift, same-product exemption).
+  A shift, same-product exemption), and per-product capacity (daily-cap ceiling with
+  same-day parallel fill by other products, exclusion of cap-less products, and shift-mode
+  escalation when a single product can't finish at the smaller mode).
 - `backend/tests/test_thm_ledger_import.py` — covers longest-prefix product resolution
   (incl. slash-less suffix codes), 台帳→demand extraction with an unmapped-row report
   (order_id = 製番, № fallback), future-due / production-line filtering, and 「実績」-sheet

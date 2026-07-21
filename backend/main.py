@@ -22,7 +22,7 @@ from config_loader import load_changeover_config, load_equipment_config, load_or
 from excel_import import ImportValidationError, WorkbookReadError, export_workbook, parse_workbook, save_config
 from plan_export import export_plan_workbook
 from scheduler import Scheduler
-from thm_ledger_import import parse_actuals, parse_thm_ledger
+from thm_ledger_import import PRODUCT_DAILY_CAPS_BY_MODE, parse_actuals, parse_thm_ledger
 
 app = FastAPI(title="生産計画自動立案API")
 
@@ -111,6 +111,8 @@ async def export_bottleneck_plan(
     - future_only: True なら完成予定日が start_date 以降の受注のみを対象にする。
     - 台帳ワークブックに「実績」シート(製番/実績数)があれば残数量に控除して再立案する。
     - 機種切替(管理者作業)はA勤限定として扱い、A勤内に収まらない切替は翌朝へ繰り下げる。
+    - 機種別キャパ(CAP表由来・設備可否の帰結)で機種ごとの日次投入を制限し、
+      キャパ未定義の機種(例: Suica4=全設備×)は警告して計画から除外する。
     """
     plan_start = start_date or date.today()
     plan_end = end_date or (plan_start + timedelta(days=45))
@@ -145,6 +147,7 @@ async def export_bottleneck_plan(
         _BOTTLENECK_SHIFT_CAPS,
         stage_flows=_BOTTLENECK_STAGE_FLOWS,
         a_shift_only_switch=True,
+        product_caps_by_mode=PRODUCT_DAILY_CAPS_BY_MODE,
     )
     result.warnings.extend(actual_warnings)
     if unmapped:
