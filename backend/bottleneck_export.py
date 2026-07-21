@@ -41,7 +41,12 @@ def _set_widths(ws, widths: list[float]) -> None:
         ws.column_dimensions[get_column_letter(i)].width = w
 
 
-def _add_summary(wb: Workbook, result: BottleneckPlanResult, demands: list[DemandItem]) -> None:
+def _add_summary(
+    wb: Workbook,
+    result: BottleneckPlanResult,
+    demands: list[DemandItem],
+    extra_summary: list[tuple[str, object]] | None = None,
+) -> None:
     ws = wb.create_sheet("サマリー")
     total_qty = sum(d.quantity for d in demands)
     days = result.working_days
@@ -52,10 +57,12 @@ def _add_summary(wb: Workbook, result: BottleneckPlanResult, demands: list[Deman
         ("日次能力(ボトルネック)", result.daily_capacity),
         ("必要日次レート", round(result.required_daily_rate)),
         ("対象ロット数(製番)", len(demands)),
-        ("需要総数", total_qty),
+        ("需要総数(残数量)", total_qty),
         ("MIL納期超過ロット数", sum(1 for lot in result.mil_lots if lot.on_time is False)),
         ("警告件数", len(result.warnings)),
     ]
+    if extra_summary:
+        rows.extend(extra_summary)
     ws.append(["項目", "値"])
     _style_header(ws, 1, 2)
     for label, value in rows:
@@ -154,11 +161,12 @@ def export_bottleneck_workbook(
     result: BottleneckPlanResult,
     demands: list[DemandItem],
     stage_order: list[str],
+    extra_summary: list[tuple[str, object]] | None = None,
 ) -> Workbook:
     """ボトルネック計画結果を4シートのワークブックにする。"""
     wb = Workbook()
     wb.remove(wb.active)
-    _add_summary(wb, result, demands)
+    _add_summary(wb, result, demands, extra_summary=extra_summary)
     _add_stage_matrix(wb, result, stage_order)
     _add_mil_lots(wb, result)
     _add_warnings(wb, result)

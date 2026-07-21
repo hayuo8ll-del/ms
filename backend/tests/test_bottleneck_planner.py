@@ -8,6 +8,7 @@ from bottleneck_planner import (  # noqa: E402
     DemandItem,
     StageFlowConfig,
     allocate_bottleneck,
+    apply_actuals,
     choose_shift_mode,
     expand_to_stages,
     mil_completion_by_order,
@@ -168,3 +169,71 @@ def test_mil_lot_due_date_overrun_is_flagged_and_warned():
     late = [lot for lot in result.mil_lots if lot.on_time is False]
     assert any(lot.order_id == "L2" for lot in late)
     assert any("製番L2" in w and "納期" in w for w in result.warnings)
+
+
+def test_apply_actuals_reduces_remaining_and_drops_completed():
+    demands = [
+        DemandItem("A", 90000, date(2026, 7, 10), order_id="L1"),
+        DemandItem("B", 50000, date(2026, 7, 12), order_id="L2"),
+        DemandItem("C", 30000, date(2026, 7, 15), order_id="L3"),
+    ]
+    adjusted, warnings = apply_actuals(demands, {"L1": 30000, "L2": 50000, "L9": 100})
+
+    by_id = {d.order_id: d for d in adjusted}
+    assert by_id["L1"].quantity == 60000  # 残数量に控除
+    assert "L2" not in by_id  # 完了済みは除外
+    assert by_id["L3"].quantity == 30000  # 実績なしはそのまま
+    assert any("L2" in w and "除外" in w for w in warnings)
+    assert any("L9" in w and "見つかりません" in w for w in warnings)
+
+
+def test_a_shift_only_switch_defers_changeover_past_a_shift():
+    # 1日9万。L1(A)が5万でA勤相当(50%)を超えて終わる → L2(B)への切替は翌朝に繰り下げ
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    demands = [
+        DemandItem("A", 50000, date(2026, 7, 3), order_id="L1"),
+        DemandItem("B", 90000, date(2026, 7, 10), order_id="L2"),
+    ]
+    alloc, completion, warnings = allocate_bottleneck(
+        demands, days, 90000, a_shift_only_switch=True, a_shift_fraction=0.5
+    )
+    b_days = sorted(c.day for c in alloc if c.product == "B")
+    assert b_days[0] == date(2026, 7, 2)  # 7/1中には切り替えない
+    assert completion["B"] == date(2026, 7, 2)
+    assert any("A勤" in w and "切替" in w for w in warnings)
+
+    # 制約オフなら同日中に切り替わる
+    alloc2, _c2, _w2 = allocate_bottleneck(demands, days, 90000)
+    b_days2 = sorted(c.day for c in alloc2 if c.product == "B")
+    assert b_days2[0] == date(2026, 7, 1)
+
+
+def test_a_shift_switch_allowed_when_previous_ends_within_a_shift():
+    # L1(A)が3.6万(=40%)で終わる → A勤内なので同日中にBへ切替できる
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    demands = [
+        DemandItem("A", 36000, date(2026, 7, 3), order_id="L1"),
+        DemandItem("B", 90000, date(2026, 7, 10), order_id="L2"),
+    ]
+    alloc, _completion, warnings = allocate_bottleneck(
+        demands, days, 90000, a_shift_only_switch=True, a_shift_fraction=0.5
+    )
+    b_first = min(c.day for c in alloc if c.product == "B")
+    assert b_first == date(2026, 7, 1)
+    assert not any("切替" in w for w in warnings)
+
+
+def test_same_product_lots_do_not_trigger_switch_deferral():
+    # 同一機種のロット切替は管理者切替ではないため、A勤制約の対象外
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    demands = [
+        DemandItem("A", 60000, date(2026, 7, 3), order_id="L1"),
+        DemandItem("A", 60000, date(2026, 7, 5), order_id="L2"),
+    ]
+    alloc, _completion, warnings = allocate_bottleneck(
+        demands, days, 90000, a_shift_only_switch=True, a_shift_fraction=0.5
+    )
+    # L2は7/1の残り3万から始まる(繰り下げ無し)
+    l2_first = min(c.day for c in alloc if c.order_id == "L2")
+    assert l2_first == date(2026, 7, 1)
+    assert not any("切替" in w for w in warnings)

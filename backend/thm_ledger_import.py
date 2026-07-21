@@ -4,9 +4,15 @@
   № / ライン / 完成品名 / 完成品コード / 製番 / ICチップ / … /
   着手予定日 / 完成予定日 / 完成予定数 / …
 
+出荷ロットの識別子(order_id)には **製番列** を使う(現場のMIL表・投入予定表と同じキー。
+製番が空の行のみ№で代用)。
+
 機種(呼称)は、ICチップ列(「東芝さそり」等は金融/交通を区別できない)ではなく、
 **完成品コード/完成品名(RC-コード)→呼称** の対応で解決する(最長一致)。既定の対応表
 `PRODUCT_ALIASES` は機種一覧(CAP)から生成したもの。会社データでずれる場合は差し替え可。
+
+同じワークブックに「実績」シート(列: 製番 / 実績数)を足しておくと、`parse_actuals` で
+製番別の生産実績を読み取れる(計画側で残数量に控除して再立案するのに使う)。
 """
 from __future__ import annotations
 
@@ -109,6 +115,7 @@ def parse_thm_ledger(
     c_line = col("ライン")
     c_name = col("完成品名")
     c_code = col("完成品コード")
+    c_seiban = col("製番")
     c_qty = col("完成予定数")
     c_due = col("完成予定日")
 
@@ -116,10 +123,13 @@ def parse_thm_ledger(
     unmapped: list[UnmappedRow] = []
 
     for r in range(header_row + 1, ws.max_row + 1):
-        order_id = ws.cell(row=r, column=c_no).value if c_no else None
-        if not order_id:
+        row_no = ws.cell(row=r, column=c_no).value if c_no else None
+        if not row_no:
             continue
-        order_id = str(order_id).strip()
+        row_no = str(row_no).strip()
+        # 出荷ロットの識別子は製番列(現場のMIL表と同じキー)。製番が空の行のみ№で代用。
+        seiban = ws.cell(row=r, column=c_seiban).value if c_seiban else None
+        order_id = str(seiban).strip() if seiban not in (None, "", "-") else row_no
 
         if lines and c_line:
             line = ws.cell(row=r, column=c_line).value
@@ -143,3 +153,38 @@ def parse_thm_ledger(
         demands.append(DemandItem(product=product, quantity=float(qty), due_date=due, order_id=order_id))
 
     return demands, unmapped
+
+
+ACTUALS_SHEET_NAMES = ("実績", "実績反映")
+_ACTUALS_QTY_HEADERS = ("実績数", "実績数量", "実績")
+
+
+def parse_actuals(file_obj: BinaryIO, header_row: int = 1) -> dict[str, float]:
+    """「実績」シート(列: 製番 / 実績数)から、製番別の生産実績数量を読み取る。
+
+    シートが無ければ空dictを返す(実績なし=そのまま立案)。同じ製番が複数行ある場合は合算。
+    """
+    wb = load_workbook(file_obj, data_only=True)
+    ws = None
+    for name in ACTUALS_SHEET_NAMES:
+        if name in wb.sheetnames:
+            ws = wb[name]
+            break
+    if ws is None:
+        return {}
+
+    idx = _header_index(ws, header_row)
+    c_seiban = idx.get("製番")
+    c_qty = next((idx[h] for h in _ACTUALS_QTY_HEADERS if h in idx), None)
+    if c_seiban is None or c_qty is None:
+        return {}
+
+    actuals: dict[str, float] = {}
+    for r in range(header_row + 1, ws.max_row + 1):
+        seiban = ws.cell(row=r, column=c_seiban).value
+        qty = ws.cell(row=r, column=c_qty).value
+        if seiban in (None, "") or not isinstance(qty, (int, float)) or qty <= 0:
+            continue
+        key = str(seiban).strip()
+        actuals[key] = actuals.get(key, 0.0) + float(qty)
+    return actuals

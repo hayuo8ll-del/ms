@@ -86,14 +86,26 @@ directly by FastAPI's `StaticFiles` mount.
   `order_id`) into `MilLotCompletion`s (completion day = the lot's last MIL day, plus
   due-date / on-time when demands carry due dates), attached as `mil_lots` and surfaced as
   the per-製番 completion table (THM 短期投入予定表 form); late lots also raise warnings.
-  Remaining increment: A-shift-only changeover windows.
+  **A-shift-only changeover** (`allocate_bottleneck(..., a_shift_only_switch=True,
+  a_shift_fraction=0.5)`): product changeovers (performed by supervisors on TAL/MIL) can
+  only happen during the day shift — if the previous campaign ends past `a_shift_fraction`
+  of a day's capacity, the next product's start is deferred to the next working morning
+  (with a warning); since stage expansion shifts whole days, the boundary lands at the
+  same in-day position on TAL/MIL too. Same-product lot changes are exempt.
+  **Actuals** (`apply_actuals(demands, actuals)`): subtracts per-製番 production actuals
+  from demand so the plan is re-drawn on remaining quantities; fully-covered lots are
+  dropped (reported), and actuals whose 製番 matches no demand raise a warning.
 - `backend/thm_ledger_import.py` — converts the real **THM 生産台帳** (`.xlsx`, orders with
-  完成品名/完成予定数/完成予定日) into `DemandItem`s for the bottleneck planner.
-  `resolve_product` maps a 完成品名/コード to a 機種呼称 by longest-prefix match against
+  完成品名/完成予定数/完成予定日) into `DemandItem`s for the bottleneck planner. The lot
+  identifier (`order_id`) is the **製番 column** (same key as the shop-floor MIL tables;
+  falls back to № only when 製番 is empty/"-"). `resolve_product` maps a 完成品名/コード to
+  a 機種呼称 by longest-prefix match against
   `PRODUCT_ALIASES` (RC-code → 呼称, derived from the CAP 機種一覧; the ICチップ column is
   deliberately not used since it can't distinguish さそり金融/交通). `parse_thm_ledger`
   reads the 台帳 sheet (header row 2), optionally filters to future-due orders and specific
-  production lines, and returns `(demands, unmapped_rows)`.
+  production lines, and returns `(demands, unmapped_rows)`. `parse_actuals` reads an
+  optional 「実績」 sheet (columns 製番/実績数, duplicates summed) from the same workbook,
+  feeding `apply_actuals` for plan revision against actuals.
 - `backend/bottleneck_export.py` — renders a `BottleneckPlanResult` into a `.xlsx` matching
   the two shop-floor tables: `生産計画(機種×日)` (per-機種 rows split by stage ANT/TAL/HAL/MIL,
   columns = working days — the TA1_生産計画 form) and `製番別MIL` (one row per 製番/出荷ロット
@@ -145,9 +157,12 @@ directly by FastAPI's `StaticFiles` mount.
   inputs as `/api/plan` but streams the `plan_export` `.xlsx` as an attachment named
   `production_plan_YYYYMMDD.xlsx`), `POST /api/bottleneck/export` (multipart THM 台帳
   `.xlsx` upload + optional `start_date`/`end_date`/`lines`/`future_only` form fields;
-  parses the ledger, runs the HAL-bottleneck daily flow planner with the fixed THM stage
-  flows/shift capacities, and streams the `bottleneck_export` `.xlsx` as
-  `bottleneck_plan_YYYYMMDD.xlsx`), `POST /api/import` (multipart
+  parses the ledger — applying the optional 「実績」 sheet so the plan is re-drawn on
+  remaining quantities — runs the HAL-bottleneck daily flow planner with the fixed THM
+  stage flows/shift capacities and `a_shift_only_switch=True`, and streams the
+  `bottleneck_export` `.xlsx` as
+  `bottleneck_plan_YYYYMMDD.xlsx`; when actuals were applied the サマリー gains
+  実績反映製番数/実績控除数量 rows), `POST /api/import` (multipart
   `.xlsx` upload; 422 with a list of `{sheet, row, message}` on validation failure,
   otherwise overwrites `config/*.json` and returns import counts), and
   `GET /api/import/template` (downloads the current config as a pre-filled `.xlsx`).
@@ -170,11 +185,15 @@ directly by FastAPI's `StaticFiles` mount.
   ceiling, campaign-style EDD allocation with per-product completion dates, over-capacity
   warning, a July-like end-to-end plan (16H / 90k per day), stage expansion
   (`expand_to_stages`: upstream/downstream offsets, out-of-horizon and per-stage-capacity
-  warnings), and MIL per-製番 completion (`mil_completion_by_order`: per-lot completion
-  days, due-date on-time flag, and overrun warning).
+  warnings), MIL per-製番 completion (`mil_completion_by_order`: per-lot completion
+  days, due-date on-time flag, and overrun warning), actuals application (`apply_actuals`:
+  remaining-quantity reduction, completed-lot drop, unknown-製番 warning), and the
+  A-shift-only changeover (deferral past `a_shift_fraction`, same-day switch within the
+  A shift, same-product exemption).
 - `backend/tests/test_thm_ledger_import.py` — covers longest-prefix product resolution
-  (incl. slash-less suffix codes), 台帳→demand extraction with an unmapped-row report, and
-  future-due / production-line filtering.
+  (incl. slash-less suffix codes), 台帳→demand extraction with an unmapped-row report
+  (order_id = 製番, № fallback), future-due / production-line filtering, and 「実績」-sheet
+  parsing (duplicate summing, missing-sheet default).
 - `backend/tests/test_bottleneck_export.py` — asserts the exported workbook has the four
   expected sheets, the 機種×日 matrix lists every product with all stage rows, and the
   製番別MIL sheet has one row per lot with the overrun verdict.

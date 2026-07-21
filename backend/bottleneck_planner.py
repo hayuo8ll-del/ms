@@ -118,16 +118,57 @@ def choose_shift_mode(
     return mode, cap, required
 
 
+def apply_actuals(
+    demands: list[DemandItem],
+    actuals: dict[str, float],
+) -> tuple[list[DemandItem], list[str]]:
+    """製番別の生産実績を需要から控除し、残数量で再立案できるようにする。
+
+    - 実績が数量以上のロットは「完了済み」として計画から外す(情報として警告に載せる)。
+    - 需要に無い製番の実績は無視せず警告する(製番の打ち間違い検知)。
+    戻り値: (残数量に調整した需要, 警告一覧)。
+    """
+    adjusted: list[DemandItem] = []
+    warnings: list[str] = []
+    matched: set[str] = set()
+
+    for d in demands:
+        done = actuals.get(d.order_id, 0.0)
+        if d.order_id in actuals:
+            matched.add(d.order_id)
+        if done <= 0:
+            adjusted.append(d)
+            continue
+        rest = d.quantity - done
+        if rest <= 0:
+            warnings.append(
+                f"製番{d.order_id}({d.product}): 実績{done:.0f}で計画数{d.quantity:.0f}を満たしたため計画から除外しました。"
+            )
+            continue
+        adjusted.append(DemandItem(product=d.product, quantity=rest, due_date=d.due_date, order_id=d.order_id))
+
+    for seiban in sorted(set(actuals) - matched):
+        warnings.append(f"実績の製番{seiban}が台帳の対象受注に見つかりません(製番・対象期間を確認してください)。")
+
+    return adjusted, warnings
+
+
 def allocate_bottleneck(
     demands: list[DemandItem],
     working_days: list[date],
     daily_capacity: float,
+    a_shift_only_switch: bool = False,
+    a_shift_fraction: float = 0.5,
 ) -> tuple[list[DailyCell], dict[str, date], list[str]]:
     """ボトルネック工程の日次能力を上限に、機種別台数を稼働日へ割り付ける。
 
     - 納期の早い機種から順(EDD)に処理する。
     - 切替を減らすため、1機種を投入し切ってから次の機種に移る(キャンペーン投入)。
     - 各稼働日の投入合計は daily_capacity を超えない。
+    - `a_shift_only_switch=True` のとき、機種切替(管理者が実施)はA勤中しかできない制約を
+      反映する: 前の機種がその日の `a_shift_fraction`(既定=日能力の半分=A勤相当)より後に
+      終わる場合、次の機種の開始を翌稼働日の朝(A勤)へ繰り下げる。工程展開は稼働日単位の
+      オフセットなので、この境界はTAL/MILにも同じ位置で伝播する。
     戻り値: (割付セル一覧, 機種->投入完了日, 警告一覧)。
     """
     allocation: list[DailyCell] = []
@@ -137,6 +178,7 @@ def allocate_bottleneck(
     queue = sorted(demands, key=lambda d: (d.due_date, d.product))
     day_idx = 0
     day_remaining = daily_capacity
+    last_product: str | None = None
 
     for item in queue:
         remaining = item.quantity
@@ -151,12 +193,28 @@ def allocate_bottleneck(
                 day_idx += 1
                 day_remaining = daily_capacity
                 continue
+            if (
+                a_shift_only_switch
+                and last_product is not None
+                and item.product != last_product
+                and day_remaining < daily_capacity
+            ):
+                used_fraction = 1.0 - day_remaining / daily_capacity
+                if used_fraction > a_shift_fraction:
+                    warnings.append(
+                        f"{item.product}: 機種切替(管理者作業)はA勤のみのため、"
+                        f"{working_days[day_idx].isoformat()}中の切替を避け翌稼働日の朝に開始します。"
+                    )
+                    day_idx += 1
+                    day_remaining = daily_capacity
+                    continue
             take = min(remaining, day_remaining)
             allocation.append(
                 DailyCell(day=working_days[day_idx], product=item.product, quantity=take, order_id=item.order_id)
             )
             remaining -= take
             day_remaining -= take
+            last_product = item.product
             if remaining <= 0:
                 completion[item.product] = working_days[day_idx]
 
@@ -271,11 +329,14 @@ def plan_bottleneck(
     shift_capacities: dict[str, float],
     stage_flows: list[StageFlowConfig] | None = None,
     mil_stage_id: str = "MIL",
+    a_shift_only_switch: bool = False,
+    a_shift_fraction: float = 0.5,
 ) -> BottleneckPlanResult:
     """Step 1(シフト/レート決定)＋Step 2(HAL日次配分)を実行する。
 
     stage_flows を渡すと、HAL配分を各工程(ANT/TAL/HAL/MIL)へオフセット展開し(Step 3)、
     MIL工程を製番別に集計して完成日を出す(Step 4)。
+    a_shift_only_switch はTAL/MILの機種切替がA勤限定である制約(allocate_bottleneck参照)。
     """
     total = sum(d.quantity for d in demands)
     shift_mode, daily_capacity, required = choose_shift_mode(total, len(working_days), shift_capacities)
@@ -292,7 +353,13 @@ def plan_bottleneck(
             f"稼働日追加・設備増強を検討してください。"
         )
 
-    allocation, completion, warnings = allocate_bottleneck(demands, working_days, daily_capacity)
+    allocation, completion, warnings = allocate_bottleneck(
+        demands,
+        working_days,
+        daily_capacity,
+        a_shift_only_switch=a_shift_only_switch,
+        a_shift_fraction=a_shift_fraction,
+    )
     result.allocation = allocation
     result.completion = completion
     result.warnings.extend(warnings)

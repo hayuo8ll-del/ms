@@ -17,12 +17,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from bottleneck_export import export_bottleneck_workbook
-from bottleneck_planner import StageFlowConfig, plan_bottleneck, working_days_in_range
+from bottleneck_planner import StageFlowConfig, apply_actuals, plan_bottleneck, working_days_in_range
 from config_loader import load_changeover_config, load_equipment_config, load_orders_data
 from excel_import import ImportValidationError, WorkbookReadError, export_workbook, parse_workbook, save_config
 from plan_export import export_plan_workbook
 from scheduler import Scheduler
-from thm_ledger_import import parse_thm_ledger
+from thm_ledger_import import parse_actuals, parse_thm_ledger
 
 app = FastAPI(title="生産計画自動立案API")
 
@@ -109,6 +109,8 @@ async def export_bottleneck_plan(
     - start_date/end_date: 計画期間(省略時は当日〜+45日)。
     - lines: 対象ラインをカンマ区切りで指定(例 "CTA1,CTA2")。省略時は全ライン。
     - future_only: True なら完成予定日が start_date 以降の受注のみを対象にする。
+    - 台帳ワークブックに「実績」シート(製番/実績数)があれば残数量に控除して再立案する。
+    - 機種切替(管理者作業)はA勤限定として扱い、A勤内に収まらない切替は翌朝へ繰り下げる。
     """
     plan_start = start_date or date.today()
     plan_end = end_date or (plan_start + timedelta(days=45))
@@ -121,22 +123,39 @@ async def export_bottleneck_plan(
             only_due_on_or_after=plan_start if future_only else None,
             lines=line_set,
         )
+        actuals = parse_actuals(io.BytesIO(content))
     except Exception as exc:  # noqa: BLE001 - 壊れたファイル/非対応形式を一律400にする
         raise HTTPException(status_code=400, detail=f"台帳ファイルを読み込めませんでした: {exc}") from exc
 
+    actual_warnings: list[str] = []
+    actuals_total = 0.0
+    if actuals:
+        before = {d.order_id: d.quantity for d in demands}
+        demands, actual_warnings = apply_actuals(demands, actuals)
+        after = {d.order_id: d.quantity for d in demands}
+        actuals_total = sum(before.values()) - sum(after.values())
+
     if not demands:
-        raise HTTPException(status_code=422, detail="対象となる受注が台帳から見つかりませんでした(期間・ライン条件を確認してください)。")
+        raise HTTPException(status_code=422, detail="対象となる受注が台帳から見つかりませんでした(期間・ライン・実績反映の条件を確認してください)。")
 
     working_days = working_days_in_range(plan_start, plan_end)
     result = plan_bottleneck(
-        demands, working_days, _BOTTLENECK_SHIFT_CAPS, stage_flows=_BOTTLENECK_STAGE_FLOWS
+        demands,
+        working_days,
+        _BOTTLENECK_SHIFT_CAPS,
+        stage_flows=_BOTTLENECK_STAGE_FLOWS,
+        a_shift_only_switch=True,
     )
+    result.warnings.extend(actual_warnings)
     if unmapped:
         result.warnings.append(
             f"機種を解決できなかった台帳行が {len(unmapped)} 件あり、計画から除外しました。"
         )
 
-    wb = export_bottleneck_workbook(result, demands, _BOTTLENECK_STAGE_ORDER)
+    extra_summary = None
+    if actuals:
+        extra_summary = [("実績反映製番数", len(actuals)), ("実績控除数量", actuals_total)]
+    wb = export_bottleneck_workbook(result, demands, _BOTTLENECK_STAGE_ORDER, extra_summary=extra_summary)
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
