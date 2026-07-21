@@ -77,9 +77,19 @@ directly by FastAPI's `StaticFiles` mount.
   bottleneck/HAL daily capacity, EDD across products, campaign-style — one product per
   contiguous run to minimise changeovers), returning a per-day×product allocation, per-
   product completion dates, and over-capacity/due-date warnings. `working_days_in_range`
-  enumerates weekday working days. Steps 3–4 (back-calculating TAL/ANT input and forward
-  MIL per-製番 completion, A-shift-only changeover windows, wiring the real THM 台帳 as
-  demand) are the planned next increments.
+  enumerates weekday working days. **Step 3** (`expand_to_stages` / `StageFlowConfig`):
+  the HAL daily allocation is expanded to every stage (ANT/TAL/HAL/MIL) by a per-stage
+  working-day `lead_offset_days` (upstream negative = fed earlier, bottleneck 0, downstream
+  positive = completed later), with out-of-horizon and per-stage-capacity warnings —
+  `plan_bottleneck(..., stage_flows=[...])` attaches `stage_allocation`. Remaining
+  increments: MIL per-製番 (出荷ロット) completion dates, A-shift-only changeover windows.
+- `backend/thm_ledger_import.py` — converts the real **THM 生産台帳** (`.xlsx`, orders with
+  完成品名/完成予定数/完成予定日) into `DemandItem`s for the bottleneck planner.
+  `resolve_product` maps a 完成品名/コード to a 機種呼称 by longest-prefix match against
+  `PRODUCT_ALIASES` (RC-code → 呼称, derived from the CAP 機種一覧; the ICチップ column is
+  deliberately not used since it can't distinguish さそり金融/交通). `parse_thm_ledger`
+  reads the 台帳 sheet (header row 2), optionally filters to future-due orders and specific
+  production lines, and returns `(demands, unmapped_rows)`.
 - `backend/scheduler.py` — the `Scheduler` class: finite-capacity, multi-machine forward
   scheduling. Orders are sorted by **EDD** (earliest due date). For each order: raw
   material availability may push back the earliest start; each pre-split stage picks
@@ -144,7 +154,12 @@ directly by FastAPI's `StaticFiles` mount.
 - `backend/tests/test_bottleneck_planner.py` — covers working-day enumeration (weekends
   excluded), shift-mode selection (smallest sufficient / escalation to 22H), daily-capacity
   ceiling, campaign-style EDD allocation with per-product completion dates, over-capacity
-  warning, and a July-like end-to-end plan (16H / 90k per day).
+  warning, a July-like end-to-end plan (16H / 90k per day), and stage expansion
+  (`expand_to_stages`: upstream/downstream offsets, out-of-horizon and per-stage-capacity
+  warnings).
+- `backend/tests/test_thm_ledger_import.py` — covers longest-prefix product resolution
+  (incl. slash-less suffix codes), 台帳→demand extraction with an unmapped-row report, and
+  future-due / production-line filtering.
 - `backend/tests/test_plan_export.py` — runs the scheduler against the real
   `config/*.json` and asserts the exported workbook has exactly the four expected sheets
   (no utilization sheet), the schedule sheet row count matches the schedule, the matrix

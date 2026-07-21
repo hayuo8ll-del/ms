@@ -6,8 +6,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from bottleneck_planner import (  # noqa: E402
     DemandItem,
+    StageFlowConfig,
     allocate_bottleneck,
     choose_shift_mode,
+    expand_to_stages,
     plan_bottleneck,
     working_days_in_range,
 )
@@ -95,3 +97,36 @@ def test_plan_bottleneck_end_to_end_july_like():
     for cell in result.allocation:
         per_day[cell.day] = per_day.get(cell.day, 0) + cell.quantity
     assert all(v <= 90000 + 1e-6 for v in per_day.values())
+
+
+def test_expand_to_stages_offsets_upstream_and_downstream():
+    # HAL基準: ANTは2日早く、TALは1日早く、MILは1日遅く流す
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    demands = [DemandItem("A", 270000, date(2026, 7, 31))]  # 90k×3日
+    flows = [
+        StageFlowConfig("ANT", -2),
+        StageFlowConfig("TAL", -1),
+        StageFlowConfig("HAL", 0),
+        StageFlowConfig("MIL", +1),
+    ]
+    result = plan_bottleneck(demands, days, CAPS, stage_flows=flows)
+
+    # HALは 7/1,7/2,7/3 に9万ずつ
+    hal = {c.day: c.quantity for c in result.stage_allocation if c.stage_id == "HAL"}
+    assert hal[date(2026, 7, 1)] == 90000
+    # TALは1日前倒し → HALの7/2ぶんがTALでは7/1になる。オフセットで期間外に出た分は警告。
+    tal_days = sorted(c.day for c in result.stage_allocation if c.stage_id == "TAL")
+    hal_days = sorted(c.day for c in result.stage_allocation if c.stage_id == "HAL")
+    assert tal_days[0] < hal_days[0] or any("ANT" in w or "TAL" in w for w in result.warnings)
+    # MILは1日後ろ倒し → 最終MIL日はHAL最終日より後
+    mil_days = sorted(c.day for c in result.stage_allocation if c.stage_id == "MIL")
+    assert mil_days[-1] > hal_days[-1]
+
+
+def test_expand_to_stages_warns_when_stage_capacity_exceeded():
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    # HALは9万/日で流すが、MILの日次能力を8万に設定 → 超過警告
+    demands = [DemandItem("A", 180000, date(2026, 7, 31))]
+    flows = [StageFlowConfig("HAL", 0), StageFlowConfig("MIL", 0, daily_capacity=80000)]
+    result = plan_bottleneck(demands, days, CAPS, stage_flows=flows)
+    assert any("工程MIL" in w and "超過" in w for w in result.warnings)

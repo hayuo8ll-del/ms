@@ -24,6 +24,29 @@ class DemandItem:
     product: str
     quantity: float
     due_date: date
+    order_id: str = ""
+
+
+@dataclass
+class StageFlowConfig:
+    """ボトルネック(HAL)基準で各工程をどれだけずらして流すかの設定。
+
+    lead_offset_days は稼働日数のオフセット。上流(ANT/TAL)は負(HALより早く投入)、
+    ボトルネック自身は0、下流(MIL)は正(HALより後で完成)。
+    daily_capacity を与えると、その工程の日次合計が超過した日に警告を出す。
+    """
+
+    stage_id: str
+    lead_offset_days: int
+    daily_capacity: float | None = None
+
+
+@dataclass
+class StageDailyCell:
+    stage_id: str
+    day: date
+    product: str
+    quantity: float
 
 
 @dataclass
@@ -41,8 +64,9 @@ class BottleneckPlanResult:
     daily_capacity: float
     required_daily_rate: float
     working_days: list[date]
-    allocation: list[DailyCell] = field(default_factory=list)
+    allocation: list[DailyCell] = field(default_factory=list)  # ボトルネック(HAL)の日次配分
     completion: dict[str, date] = field(default_factory=dict)  # 機種 -> 投入完了日
+    stage_allocation: list[StageDailyCell] = field(default_factory=list)  # 全工程(ANT/TAL/HAL/MIL)の日次
     warnings: list[str] = field(default_factory=list)
 
 
@@ -128,12 +152,70 @@ def allocate_bottleneck(
     return allocation, completion, warnings
 
 
+def expand_to_stages(
+    bottleneck_allocation: list[DailyCell],
+    working_days: list[date],
+    stage_flows: list[StageFlowConfig],
+) -> tuple[list[StageDailyCell], list[str]]:
+    """ボトルネック(HAL)の日次配分を、各工程へ稼働日オフセットでずらして展開する。
+
+    HALが成り立つように上流(ANT/TAL)を早め・下流(MIL)を後ろへ配置する。各工程の
+    日次台数はHALの台数と同じで、投入/完成のタイミングだけがオフセット分だけずれる。
+    オフセットが計画期間の外へ出る場合や、工程の日次上限を超える場合は警告する。
+    """
+    day_to_index = {d: i for i, d in enumerate(working_days)}
+    cells: list[StageDailyCell] = []
+    warnings: list[str] = []
+    out_of_range: set[str] = set()
+
+    for flow in stage_flows:
+        for cell in bottleneck_allocation:
+            base_i = day_to_index[cell.day]
+            target_i = base_i + flow.lead_offset_days
+            if target_i < 0 or target_i >= len(working_days):
+                out_of_range.add(flow.stage_id)
+                continue
+            cells.append(
+                StageDailyCell(
+                    stage_id=flow.stage_id,
+                    day=working_days[target_i],
+                    product=cell.product,
+                    quantity=cell.quantity,
+                )
+            )
+
+    for stage_id in sorted(out_of_range):
+        warnings.append(
+            f"工程{stage_id}: オフセット後の投入/完成が計画期間の外に出る台数があります。"
+            f"期間を広げるか前段WIPで吸収してください。"
+        )
+
+    # 工程別の日次上限チェック
+    cap_by_stage = {f.stage_id: f.daily_capacity for f in stage_flows if f.daily_capacity}
+    if cap_by_stage:
+        totals: dict[tuple[str, date], float] = {}
+        for c in cells:
+            totals[(c.stage_id, c.day)] = totals.get((c.stage_id, c.day), 0.0) + c.quantity
+        for (stage_id, day), total in sorted(totals.items()):
+            cap = cap_by_stage.get(stage_id)
+            if cap and total > cap + 1e-6:
+                warnings.append(
+                    f"工程{stage_id} {day.isoformat()}: 日次投入 {total:.0f} が能力 {cap:.0f} を超過しています。"
+                )
+
+    return cells, warnings
+
+
 def plan_bottleneck(
     demands: list[DemandItem],
     working_days: list[date],
     shift_capacities: dict[str, float],
+    stage_flows: list[StageFlowConfig] | None = None,
 ) -> BottleneckPlanResult:
-    """Step 1(シフト/レート決定)＋Step 2(HAL日次配分)を実行する。"""
+    """Step 1(シフト/レート決定)＋Step 2(HAL日次配分)を実行する。
+
+    stage_flows を渡すと、HAL配分を各工程(ANT/TAL/HAL/MIL)へオフセット展開する(Step 3)。
+    """
     total = sum(d.quantity for d in demands)
     shift_mode, daily_capacity, required = choose_shift_mode(total, len(working_days), shift_capacities)
 
@@ -153,4 +235,10 @@ def plan_bottleneck(
     result.allocation = allocation
     result.completion = completion
     result.warnings.extend(warnings)
+
+    if stage_flows:
+        stage_cells, stage_warnings = expand_to_stages(allocation, working_days, stage_flows)
+        result.stage_allocation = stage_cells
+        result.warnings.extend(stage_warnings)
+
     return result
