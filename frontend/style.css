@@ -399,11 +399,27 @@ button#bn-export:disabled {
 }
 
 .bn-matrix-wrap,
-.bn-mil-wrap {
+.bn-mil-wrap,
+.bn-progress-wrap {
   overflow-x: auto;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--panel);
+}
+
+.bn-table .bn-c-metric {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--panel);
+  text-align: left;
+  font-weight: 600;
+  min-width: 96px;
+}
+
+.bn-table thead .bn-c-metric {
+  z-index: 3;
+  background: var(--panel-2);
 }
 
 .bn-table {

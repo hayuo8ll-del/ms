@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from bottleneck_export import export_bottleneck_workbook
-from bottleneck_planner import apply_actuals, plan_bottleneck, working_days_in_range
+from bottleneck_planner import apply_actuals, compute_progress, plan_bottleneck, working_days_in_range
 from config_loader import (
     load_bottleneck_planning,
     load_changeover_config,
@@ -27,7 +27,12 @@ from config_loader import (
 from excel_import import ImportValidationError, WorkbookReadError, export_workbook, parse_workbook, save_config
 from plan_export import export_plan_workbook
 from scheduler import Scheduler
-from thm_ledger_import import parse_actuals, parse_equipment_stops, parse_thm_ledger
+from thm_ledger_import import (
+    parse_actuals,
+    parse_daily_actuals,
+    parse_equipment_stops,
+    parse_thm_ledger,
+)
 
 app = FastAPI(title="生産計画自動立案API")
 
@@ -115,6 +120,7 @@ async def _build_bottleneck_plan(
             lines=line_set,
         )
         actuals = parse_actuals(io.BytesIO(content))
+        daily_actuals = parse_daily_actuals(io.BytesIO(content))
         if stops_file is not None:
             stops = parse_equipment_stops(io.BytesIO(await stops_file.read()))
         else:
@@ -152,9 +158,13 @@ async def _build_bottleneck_plan(
             f"機種を解決できなかった台帳行が {len(unmapped)} 件あり、計画から除外しました。"
         )
 
+    result.progress = compute_progress(result, daily_actuals or None)
+
     extra_summary: list[tuple[str, object]] = []
     if actuals:
         extra_summary += [("実績反映製番数", len(actuals)), ("実績控除数量", actuals_total)]
+    if daily_actuals:
+        extra_summary.append(("日次実績反映日数", len(daily_actuals)))
     if stops:
         extra_summary.append(("設備停止反映件数", len(stops)))
     return result, demands, extra_summary, cfg, plan_start
@@ -195,6 +205,13 @@ async def bottleneck_plan(
              "on_time": lot.on_time}
             for lot in result.mil_lots
         ],
+        "progress": [
+            {"day": p.day.isoformat(), "plan": p.plan, "plan_cum": p.plan_cum,
+             "actual": p.actual, "actual_cum": p.actual_cum,
+             "diff": p.diff, "progress_cum": p.progress_cum}
+            for p in result.progress
+        ],
+        "has_actuals": any(p.actual is not None for p in result.progress),
         "warnings": result.warnings,
         "summary": {
             "lot_count": len(demands),

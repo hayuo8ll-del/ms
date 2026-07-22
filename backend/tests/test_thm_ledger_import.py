@@ -10,6 +10,7 @@ from openpyxl import Workbook  # noqa: E402
 from config_loader import load_bottleneck_planning  # noqa: E402
 from thm_ledger_import import (  # noqa: E402
     parse_actuals,
+    parse_daily_actuals,
     parse_equipment_stops,
     parse_thm_ledger,
     resolve_product,
@@ -108,6 +109,28 @@ def test_parse_actuals_reads_seiban_quantities_and_sums_duplicates():
 
 def test_parse_actuals_returns_empty_when_sheet_missing():
     assert parse_actuals(_ledger_workbook([])) == {}
+
+
+def test_parse_daily_actuals_sums_per_day_across_stages():
+    base = _ledger_workbook([])
+    from openpyxl import load_workbook
+
+    wb = load_workbook(base)
+    ws = wb.create_sheet("日次実績")
+    ws.append(["日付", "工程", "実績数"])
+    ws.append([date(2026, 7, 21), "HAL", 50000])
+    ws.append([date(2026, 7, 21), "HAL", 30000])  # 同日は合算
+    ws.append([date(2026, 7, 22), "HAL", 90000])
+    out = io.BytesIO()
+    wb.save(out)
+    out.seek(0)
+
+    daily = parse_daily_actuals(out)
+    assert daily == {date(2026, 7, 21): 80000.0, date(2026, 7, 22): 90000.0}
+
+
+def test_parse_daily_actuals_empty_when_sheet_missing():
+    assert parse_daily_actuals(_ledger_workbook([])) == {}
 
 
 def test_parse_equipment_stops_reads_enabled_rows_only():

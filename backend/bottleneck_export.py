@@ -144,6 +144,39 @@ def _add_mil_lots(wb: Workbook, result: BottleneckPlanResult) -> None:
     ws.freeze_panes = "A2"
 
 
+def _add_progress(wb: Workbook, result: BottleneckPlanResult) -> None:
+    """計画/実績/差/累計の進捗(現場のSheet1の形)。列=稼働日、行=各指標。"""
+    if not result.progress:
+        return
+    ws = wb.create_sheet("進捗")
+    days = [p.day for p in result.progress]
+    has_actual = any(p.actual is not None for p in result.progress)
+
+    header = ["指標"] + [d.strftime("%-m/%-d") for d in days]
+    ws.append(header)
+    _style_header(ws, 1, len(header))
+
+    def add_row(label: str, values: list[object]) -> None:
+        ws.append([label] + values)
+        ws.cell(row=ws.max_row, column=1).font = _BOLD
+
+    add_row("計画", [p.plan or None for p in result.progress])
+    add_row("計画累計", [p.plan_cum for p in result.progress])
+    if has_actual:
+        add_row("実績", [p.actual for p in result.progress])
+        add_row("実績累計", [p.actual_cum for p in result.progress])
+        add_row("差(実績-計画)", [p.diff for p in result.progress])
+        add_row("進捗(累計)", [p.progress_cum for p in result.progress])
+        # 進捗が負(遅れ)のセルを赤く
+        prog_row = ws.max_row
+        for i, p in enumerate(result.progress):
+            if p.progress_cum is not None and p.progress_cum < 0:
+                ws.cell(row=prog_row, column=2 + i).fill = _LATE_FILL
+
+    _set_widths(ws, [14] + [7] * len(days))
+    ws.freeze_panes = "B2"
+
+
 def _add_warnings(wb: Workbook, result: BottleneckPlanResult) -> None:
     ws = wb.create_sheet("警告")
     ws.append(["メッセージ"])
@@ -169,5 +202,6 @@ def export_bottleneck_workbook(
     _add_summary(wb, result, demands, extra_summary=extra_summary)
     _add_stage_matrix(wb, result, stage_order)
     _add_mil_lots(wb, result)
+    _add_progress(wb, result)
     _add_warnings(wb, result)
     return wb

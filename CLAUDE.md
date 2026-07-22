@@ -114,6 +114,10 @@ directly by FastAPI's `StaticFiles` mount.
   **Actuals** (`apply_actuals(demands, actuals)`): subtracts per-製番 production actuals
   from demand so the plan is re-drawn on remaining quantities; fully-covered lots are
   dropped (reported), and actuals whose 製番 matches no demand raise a warning.
+  **Progress** (`compute_progress(result, daily_actuals)` → `ProgressRow`s on
+  `result.progress`): per-working-day 計画(bottleneck daily total)/計画累計, and — when
+  daily actuals are given — 実績/実績累計/差(実績−計画)/進捗(Σ差), matching the 現場 THM 短期
+  投入予定表 Sheet1 (計画/実績/差/進捗). Days with no actual leave the actual columns blank.
   **Equipment stops** (`EquipmentStop` / `apply_equipment_stops`): enabled (有効=Y) stop
   rows (期間×勤務×設備, methods 全停止/時間控除/停止率控除, plus 補正後Cap as a per-day
   ceiling) are converted into per-day bottleneck capacity overrides — one machine's share
@@ -136,15 +140,18 @@ directly by FastAPI's `StaticFiles` mount.
   reads the 台帳 sheet (header row 2), optionally filters to future-due orders and specific
   production lines, and returns `(demands, unmapped_rows)`. `parse_actuals` reads an
   optional 「実績」 sheet (columns 製番/実績数, duplicates summed) from the same workbook,
-  feeding `apply_actuals` for plan revision against actuals. `parse_equipment_stops` reads
+  feeding `apply_actuals` for plan revision against actuals. `parse_daily_actuals` reads an
+  optional 「日次実績」 sheet (日付/[工程]/実績数, summed per day across stages) for the
+  progress view (distinct from the per-製番 `parse_actuals`). `parse_equipment_stops` reads
   a 設備停止マスタ sheet (`01_設備停止マスタ` or `設備停止`, 有効=Y rows only) from either
   the ledger workbook or the real stop-master workbook into `EquipmentStop`s.
 - `backend/bottleneck_export.py` — renders a `BottleneckPlanResult` into a `.xlsx` matching
   the two shop-floor tables: `生産計画(機種×日)` (per-機種 rows split by stage ANT/TAL/HAL/MIL,
   columns = working days — the TA1_生産計画 form) and `製番別MIL` (one row per 製番/出荷ロット
   with MIL completion day, due date, on-time verdict — the THM 短期投入予定表 form; MIL cells
-  tinted orange, late lots red), plus サマリー and 警告. `export_bottleneck_workbook(result,
-  demands, stage_order)`.
+  tinted orange, late lots red), `進捗` (計画/計画累計/実績/実績累計/差/進捗 per working day,
+  negative-progress cells red — the Sheet1 form), plus サマリー and 警告.
+  `export_bottleneck_workbook(result, demands, stage_order)`.
 - `backend/scheduler.py` — the `Scheduler` class: finite-capacity, multi-machine forward
   scheduling. Orders are sorted by **EDD** (earliest due date). For each order: raw
   material availability may push back the earliest start; each pre-split stage picks
@@ -197,10 +204,11 @@ directly by FastAPI's `StaticFiles` mount.
   機種別キャパ constraint, per-day stop-adjusted capacities) and streams
   the `bottleneck_export` `.xlsx` as
   `bottleneck_plan_YYYYMMDD.xlsx`; the サマリー gains 実績反映製番数/実績控除数量/
-  設備停止反映件数 rows when applicable), `POST /api/bottleneck/plan` (same multipart inputs,
+  設備停止反映件数 rows when applicable; an optional 「日次実績」 sheet drives the 進捗 sheet),
+  `POST /api/bottleneck/plan` (same multipart inputs,
   returns the plan as JSON — shift mode, per-stage×day allocation, per-製番 MIL lots,
-  warnings, summary — for on-screen rendering; shares `_build_bottleneck_plan` with the
-  export route), `POST /api/import` (multipart
+  per-day 進捗 (`progress` + `has_actuals`), warnings, summary — for on-screen rendering;
+  shares `_build_bottleneck_plan` with the export route), `POST /api/import` (multipart
   `.xlsx` upload; 422 with a list of `{sheet, row, message}` on validation failure,
   otherwise overwrites `config/*.json` and returns import counts), and
   `GET /api/import/template` (downloads the current config as a pre-filled `.xlsx`).
@@ -229,13 +237,15 @@ directly by FastAPI's `StaticFiles` mount.
   A-shift-only changeover (deferral past `a_shift_fraction`, same-day switch within the
   A shift, same-product exemption), per-product capacity (daily-cap ceiling with
   same-day parallel fill by other products, exclusion of cap-less products, and shift-mode
-  escalation when a single product can't finish at the smaller mode), and equipment stops
+  escalation when a single product can't finish at the smaller mode), equipment stops
   (machine-share deduction with 勤務 half-day bounds, 補正後Cap ceiling, non-bottleneck
-  advisory, and end-to-end reduced-capacity days in `plan_bottleneck`).
+  advisory, and end-to-end reduced-capacity days in `plan_bottleneck`), and progress
+  (`compute_progress`: plan-cumulative only without actuals; 差/進捗 累計 with daily actuals).
 - `backend/tests/test_thm_ledger_import.py` — covers longest-prefix product resolution
   (incl. slash-less suffix codes), 台帳→demand extraction with an unmapped-row report
   (order_id = 製番, № fallback), future-due / production-line filtering, 「実績」-sheet
-  parsing (duplicate summing, missing-sheet default), 設備停止マスタ parsing (有効=Y
+  parsing (duplicate summing, missing-sheet default), 日次実績 parsing (per-day summing across
+  stages, missing-sheet default), 設備停止マスタ parsing (有効=Y
   filter, missing-sheet default), and `load_bottleneck_planning` config reading.
 - `backend/tests/test_bottleneck_export.py` — asserts the exported workbook has the four
   expected sheets, the 機種×日 matrix lists every product with all stage rows, and the
@@ -259,8 +269,10 @@ directly by FastAPI's `StaticFiles` mount.
   (with an optional `ライン` filter) posts to `/api/bottleneck/plan` and renders the
   bottleneck plan on-screen in a dedicated panel (`#bn-panel`) — a KPI row, warnings, the
   **生産計画(機種×日)** matrix (rows = 機種 × 工程 ANT/TAL/HAL/MIL, stage-coloured, sticky
-  first two columns; columns = working days) and the **製番別MIL完成予定** table (late lots
-  highlighted), with a **「この計画をExcel出力」** button that re-posts the stored file to
+  first two columns; columns = working days), the **製番別MIL完成予定** table (late lots
+  highlighted) and a **進捗** table (計画/計画累計/実績/実績累計/差/進捗 per day, negative in
+  red; shown when the ledger has a 「日次実績」 sheet, else plan-cumulative only), with a
+  **「この計画をExcel出力」** button that re-posts the stored file to
   `/api/bottleneck/export`. The discrete-scheduler view and this bottleneck view coexist on
   the page. The
   date×shift matrix (`renderShiftMatrix`)

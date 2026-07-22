@@ -20,6 +20,7 @@ const bnWarningsEl = document.getElementById("bn-warnings");
 const bnWarningListEl = document.getElementById("bn-warning-list");
 const bnMatrixEl = document.getElementById("bn-matrix");
 const bnMilEl = document.getElementById("bn-mil");
+const bnProgressEl = document.getElementById("bn-progress");
 const bnExportButton = document.getElementById("bn-export");
 const bnLinesInput = document.getElementById("bn-lines");
 
@@ -474,6 +475,35 @@ function renderBottleneckPlan(data) {
 
   renderBnMatrix(data);
   renderBnMil(data.mil_lots);
+  renderBnProgress(data);
+}
+
+function renderBnProgress(data) {
+  const rows = data.progress || [];
+  const days = rows.map((p) => fmtMd(p.day));
+  const cell = (v, cls) => `<td class="${cls || ""}">${v == null ? "" : fmtNum(v)}</td>`;
+  const head = `<thead><tr><th class="bn-c-metric">指標</th>${days.map((d) => `<th>${d}</th>`).join("")}</tr></thead>`;
+
+  const metricRow = (label, pick, opts = {}) =>
+    `<tr><td class="bn-c-metric">${label}</td>` +
+    rows
+      .map((p) => {
+        const v = pick(p);
+        const neg = opts.redNeg && v != null && v < 0;
+        return cell(v, neg ? "bn-judge-late" : "");
+      })
+      .join("") +
+    `</tr>`;
+
+  let body = metricRow("計画", (p) => (p.plan ? p.plan : null)) + metricRow("計画累計", (p) => p.plan_cum);
+  if (data.has_actuals) {
+    body +=
+      metricRow("実績", (p) => p.actual) +
+      metricRow("実績累計", (p) => p.actual_cum) +
+      metricRow("差", (p) => p.diff, { redNeg: true }) +
+      metricRow("進捗(累計)", (p) => p.progress_cum, { redNeg: true });
+  }
+  bnProgressEl.innerHTML = head + `<tbody>${body}</tbody>`;
 }
 
 function renderBnMatrix(data) {

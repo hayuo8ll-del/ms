@@ -12,6 +12,7 @@ from bottleneck_planner import (  # noqa: E402
     apply_actuals,
     apply_equipment_stops,
     choose_shift_mode,
+    compute_progress,
     expand_to_stages,
     mil_completion_by_order,
     plan_bottleneck,
@@ -326,6 +327,34 @@ def test_plan_bottleneck_uses_reduced_capacity_on_stop_days():
         per_day[c.day] = per_day.get(c.day, 0) + c.quantity
     assert per_day[date(2026, 7, 1)] == 72000  # 90,000 - 18,000
     assert per_day[date(2026, 7, 2)] == 90000
+
+
+def test_compute_progress_plan_cumulative_only_without_actuals():
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    demands = [DemandItem("A", 180000, date(2026, 7, 31), order_id="L1")]
+    result = plan_bottleneck(demands, days, CAPS)
+    rows = compute_progress(result, None)
+
+    # 計画累計は日次の累積
+    assert rows[0].plan == 90000 and rows[0].plan_cum == 90000
+    assert rows[1].plan_cum == 180000
+    # 実績なしなので実績系はNone
+    assert all(r.actual is None and r.diff is None and r.progress_cum is None for r in rows)
+
+
+def test_compute_progress_with_daily_actuals_diff_and_cumulative():
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    demands = [DemandItem("A", 180000, date(2026, 7, 31), order_id="L1")]
+    result = plan_bottleneck(demands, days, CAPS)  # 計画 90k, 90k
+    # 実績: 1日目80,000(計画比 -10,000), 2日目95,000(+5,000)
+    actuals = {days[0]: 80000, days[1]: 95000}
+    rows = compute_progress(result, actuals)
+
+    assert rows[0].actual == 80000 and rows[0].diff == -10000 and rows[0].progress_cum == -10000
+    assert rows[1].actual == 95000 and rows[1].diff == 5000 and rows[1].progress_cum == -5000
+    assert rows[0].actual_cum == 80000 and rows[1].actual_cum == 175000
+    # 実績未入力の日(3日目)は実績系None、計画は0(180,000=2日で投入完了)、計画累計は180,000で頭打ち
+    assert rows[2].actual is None and rows[2].plan == 0 and rows[2].plan_cum == 180000
 
 
 def test_hal_input_is_quantized_to_reel_units_with_final_remainder():

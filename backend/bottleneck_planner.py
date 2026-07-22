@@ -158,6 +158,19 @@ class DailyCell:
 
 
 @dataclass
+class ProgressRow:
+    """1稼働日の進捗(計画/実績/差/累計)。現場のSheet1(計画/実績/差/進捗)に相当。"""
+
+    day: date
+    plan: float  # 計画 日次(ボトルネック=ライン計)
+    plan_cum: float  # 計画累計
+    actual: float | None = None  # 実績 日次(未入力はNone)
+    actual_cum: float | None = None  # 実績累計
+    diff: float | None = None  # 実績 - 計画
+    progress_cum: float | None = None  # Σ(実績-計画) = 進捗
+
+
+@dataclass
 class BottleneckPlanResult:
     shift_mode: str
     daily_capacity: float
@@ -167,7 +180,48 @@ class BottleneckPlanResult:
     completion: dict[str, date] = field(default_factory=dict)  # 機種 -> 投入完了日
     stage_allocation: list[StageDailyCell] = field(default_factory=list)  # 全工程(ANT/TAL/HAL/MIL)の日次
     mil_lots: list[MilLotCompletion] = field(default_factory=list)  # MILの製番別完成日
+    progress: list[ProgressRow] = field(default_factory=list)  # 計画/実績/差/累計の進捗
     warnings: list[str] = field(default_factory=list)
+
+
+def compute_progress(
+    result: "BottleneckPlanResult",
+    daily_actuals: dict[date, float] | None = None,
+) -> list[ProgressRow]:
+    """稼働日ごとの計画(ボトルネック日次合計)・実績・差・累計を計算する。
+
+    daily_actuals({日付: 実績台数})を渡すと実績日次・差・進捗(Σ差)も付く。実績が無い/
+    未入力の日は実績系をNoneにして計画累計だけ出す(予定管理のみ)。
+    """
+    plan_daily: dict[date, float] = {}
+    for cell in result.allocation:
+        plan_daily[cell.day] = plan_daily.get(cell.day, 0.0) + cell.quantity
+
+    rows: list[ProgressRow] = []
+    plan_cum = 0.0
+    actual_cum = 0.0
+    progress_cum = 0.0
+    saw_actual = False
+    for day in result.working_days:
+        plan = plan_daily.get(day, 0.0)
+        plan_cum += plan
+        row = ProgressRow(day=day, plan=plan, plan_cum=plan_cum)
+        if daily_actuals is not None and day in daily_actuals:
+            saw_actual = True
+            actual = daily_actuals[day]
+            actual_cum += actual
+            progress_cum += actual - plan
+            row.actual = actual
+            row.actual_cum = actual_cum
+            row.diff = actual - plan
+            row.progress_cum = progress_cum
+        rows.append(row)
+
+    # 実績が1件も無ければ計画累計のみ(実績系はNoneのまま)
+    if not saw_actual:
+        for row in rows:
+            row.actual = row.actual_cum = row.diff = row.progress_cum = None
+    return rows
 
 
 def working_days_in_range(start: date, end: date, holidays: set[date] | None = None) -> list[date]:

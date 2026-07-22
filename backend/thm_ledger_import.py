@@ -263,6 +263,40 @@ def parse_equipment_stops(file_obj: BinaryIO, header_row: int = 1) -> list["Equi
     return stops
 
 
+DAILY_ACTUALS_SHEET_NAMES = ("日次実績", "実績_日次", "進捗実績")
+
+
+def parse_daily_actuals(file_obj: BinaryIO, header_row: int = 1) -> dict[date, float]:
+    """「日次実績」シート(日付 / [工程] / 実績数)から、日付別の生産実績(ライン計)を読む。
+
+    工程列があっても、進捗はライン計で見るため日付ごとに合算する(製番別総数の
+    `parse_actuals` とは別物; こちらは日々の進捗管理に使う)。シート無しは空dict。
+    """
+    wb = load_workbook(file_obj, data_only=True)
+    ws = None
+    for name in DAILY_ACTUALS_SHEET_NAMES:
+        if name in wb.sheetnames:
+            ws = wb[name]
+            break
+    if ws is None:
+        return {}
+
+    idx = _header_index(ws, header_row)
+    c_day = idx.get("日付") or idx.get("Date")
+    c_qty = next((idx[h] for h in ("実績数", "実績数量", "実績", "台数") if h in idx), None)
+    if c_day is None or c_qty is None:
+        return {}
+
+    result: dict[date, float] = {}
+    for r in range(header_row + 1, ws.max_row + 1):
+        d = _as_date(ws.cell(row=r, column=c_day).value)
+        qty = ws.cell(row=r, column=c_qty).value
+        if d is None or not isinstance(qty, (int, float)):
+            continue
+        result[d] = result.get(d, 0.0) + float(qty)
+    return result
+
+
 ACTUALS_SHEET_NAMES = ("実績", "実績反映")
 _ACTUALS_QTY_HEADERS = ("実績数", "実績数量", "実績")
 
