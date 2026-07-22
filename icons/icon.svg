@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="なつやすみスタディ">
+  <rect width="512" height="512" rx="112" fill="#ff8a3d"/>
+  <circle cx="256" cy="196" r="70" fill="#ffd23d"/>
+  <g stroke="#ffd23d" stroke-width="14" stroke-linecap="round">
+    <line x1="256" y1="70" x2="256" y2="100"/>
+    <line x1="256" y1="292" x2="256" y2="322"/>
+    <line x1="130" y1="196" x2="160" y2="196"/>
+    <line x1="352" y1="196" x2="382" y2="196"/>
+    <line x1="167" y1="107" x2="188" y2="128"/>
+    <line x1="324" y1="264" x2="345" y2="285"/>
+    <line x1="345" y1="107" x2="324" y2="128"/>
+    <line x1="188" y1="264" x2="167" y2="285"/>
+  </g>
+  <rect x="120" y="330" width="272" height="118" rx="20" fill="#ffffff"/>
+  <rect x="120" y="330" width="272" height="118" rx="20" fill="none" stroke="#ef6c1a" stroke-width="10"/>
+  <text x="256" y="415" font-family="'Hiragino Maru Gothic ProN','Yu Gothic',sans-serif" font-size="72" font-weight="900" fill="#ef6c1a" text-anchor="middle">1･5</text>
+</svg>

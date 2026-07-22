@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#ff8a3d" />
+  <title>なつやすみ スタディ</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="app">
+
+    <!-- ヘッダー -->
+    <header id="topbar" class="topbar">
+      <button class="icon-btn" id="homeBtn" title="ホーム" aria-label="ホーム">🏠</button>
+      <div class="grade-pill" id="gradePill">1年生</div>
+      <div class="stats">
+        <span class="stat coins" title="コイン">🪙 <b id="coinCount">0</b></span>
+        <span class="stat streak" title="れんぞく">🔥 <b id="streakCount">0</b></span>
+      </div>
+      <button class="icon-btn" id="parentBtn" title="ほごしゃ" aria-label="ほごしゃメニュー">👪</button>
+    </header>
+
+    <main id="screen"><!-- 画面はJSで描画 --></main>
+
+  </div>
+
+  <!-- 効果音・演出のためのレイヤー -->
+  <div id="fx" class="fx" aria-hidden="true"></div>
+
+  <script src="js/data.js"></script>
+  <script src="js/generators.js"></script>
+  <script src="js/strokes.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
