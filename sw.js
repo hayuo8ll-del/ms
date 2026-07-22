@@ -1,5 +1,5 @@
 /* Service Worker：オフラインでも動かす */
-const CACHE = "natsu-study-v8";
+const CACHE = "natsu-study-v9";
 const ASSETS = [
   "./",
   "./index.html",

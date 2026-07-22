@@ -250,14 +250,21 @@ function mathG5(diff) {
   ];
 }
 
-/* n問ぶん生成（連続同一を避ける） */
+/* n問ぶん生成（直近に出た問題は しばらく出さない） */
+let _mathRecent = [];          // 直近の問題シグネチャ（ラウンドをまたいで保持）
+const MATH_WINDOW = 18;        // この数だけは同じ問題を くり返さない
 function generateMathSet(grade, n, diff) {
   const gens = grade === "g1" ? mathG1(diff || "normal") : mathG5(diff || "normal");
-  const out = []; let last = "";
+  const out = [];
   for (let i = 0; i < n; i++) {
-    let item, guard = 0;
-    do { item = pick(gens)(); guard++; } while (item.q + item.answer === last && guard < 8);
-    last = item.q + item.answer;
+    let item, sig, guard = 0;
+    do {
+      item = pick(gens)();
+      sig = (item.prompt || "") + "|" + item.q + "|" + item.answer;
+      guard++;
+    } while (_mathRecent.includes(sig) && guard < 40);
+    _mathRecent.push(sig);
+    if (_mathRecent.length > MATH_WINDOW) _mathRecent.shift();
     out.push(item);
   }
   return out;

@@ -301,6 +301,28 @@ function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; }
   return arr;
 }
+
+/* 選択問題の抽選：直近に出した問題（バンクの約7割）は出さない。
+   → くり返しの間隔が つねに大きく、ほぼ全問を回ってから 再登場する。
+   状態は (grade:subject) ごとに保持し、ラウンド・タイムアタックをまたいで連続する。 */
+const _recent = {};
+function drawFromBank(grade, subject, n) {
+  const key = grade + ":" + subject;
+  const bank = DATA[grade][subject];
+  const avoid = Math.min(bank.length - 2, Math.round(bank.length * 0.7)); // これだけ 直近は避ける
+  const recent = _recent[key] || (_recent[key] = []);
+  const out = [];
+  for (let k = 0; k < n; k++) {
+    let pool = bank.filter(it => !recent.includes(it.q));
+    if (!pool.length) pool = bank;                       // 念のため
+    const item = pool[Math.floor(Math.random() * pool.length)];
+    recent.push(item.q);
+    while (recent.length > avoid) recent.shift();
+    out.push(item);
+  }
+  return out;
+}
+
 function startRound(subject) {
   clearAttackTimer();
   const n = prof().settings.perRound || QUESTIONS_PER_ROUND;
@@ -308,8 +330,7 @@ function startRound(subject) {
   if (subject === "math") {
     questions = generateMathSet(state.grade, n, difficulty());
   } else {
-    const pool = shuffle([...DATA[state.grade][subject]]);
-    questions = pool.slice(0, n).map(x => ({ ...x, input: "choice" }));
+    questions = drawFromBank(state.grade, subject, n).map(x => ({ ...x, input: "choice" }));
   }
   round = { subject, questions, idx: 0, correct: 0, current: "", locked: false, review: false };
   showQuestion();
@@ -349,21 +370,20 @@ function showAttackMenu() {
 
 function buildAttackQuestions(subject, n) {
   const grade = state.grade;
-  const out = [];
-  const addChoice = (arr, subj) => arr.map(x => ({ ...x, input: "choice", subject: subj }));
+  const asChoice = (arr, subj) => arr.map(x => ({ ...x, input: "choice", subject: subj }));
   if (subject === "math") {
     return generateMathSet(grade, n, difficulty()).map(q => ({ ...q, subject: "math" }));
   }
   if (subject === "mix") {
-    // 算数＋各教科をまぜる
-    let pool = generateMathSet(grade, Math.ceil(n / 2), difficulty()).map(q => ({ ...q, subject: "math" }));
-    for (const s of ["kokugo", "english", "other"]) pool = pool.concat(addChoice(DATA[grade][s], s));
+    // 算数＋各教科を まぜる（各教科は重複なしの全問、算数は多めに生成）
+    let pool = generateMathSet(grade, 40, difficulty()).map(q => ({ ...q, subject: "math" }));
+    for (const s of ["kokugo", "english", "other"]) {
+      pool = pool.concat(asChoice(shuffle(DATA[grade][s].slice()), s));
+    }
     return shuffle(pool).slice(0, n);
   }
-  // 単一教科（選択式）：足りなければ繰り返して n 問に
-  let base = addChoice(DATA[grade][subject], subject);
-  while (base.length < n) base = base.concat(addChoice(DATA[grade][subject], subject));
-  return shuffle(base).slice(0, n);
+  // 単一教科：袋引きで バンク全部を 出し切ってから 次サイクル（重複が固まらない）
+  return asChoice(drawFromBank(grade, subject, n), subject);
 }
 
 function startTimeAttack(subject) {
