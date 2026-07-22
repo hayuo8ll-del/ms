@@ -78,6 +78,7 @@ function moreLessG1(diff) {
 function add2d1d() { const tens = ri(2, 8), ones = ri(0, 4); const t = tens * 10 + ones; const b = ri(1, 9 - ones); return { prompt: "2けたの たしざん", q: `${t} + ${b} =`, answer: `${t + b}`, input: "number" }; }
 function sub2d1d() { const tens = ri(2, 9), ones = ri(5, 9); const t = tens * 10 + ones; const b = ri(1, ones); return { prompt: "2けたの ひきざん", q: `${t} - ${b} =`, answer: `${t - b}`, input: "number" }; }
 function countBy(diff) { const step = pick(diff === "hard" ? [2, 5, 10] : [2, 5]); const start = step * ri(1, 4); return { prompt: `${step}ずつ`, q: `${start}, ${start + step}, ${start + step * 2}, つぎは？`, answer: `${start + step * 3}`, input: "number" }; }
+function ineqG1(diff) { const hi = diff === "hard" ? 99 : 20; const a = ri(1, hi), b = ri(1, hi); const ans = a > b ? ">" : a < b ? "<" : "="; return { prompt: "□に 入る しるしは？", q: `${a} □ ${b}`, answer: ans, input: "choice", choices: [">", "<", "="] }; }
 
 /* ===== 1年生の算数（やさしい/ふつう/むずかしい） ===== */
 function mathG1(diff) {
@@ -103,6 +104,7 @@ function mathG1(diff) {
     () => moneyG1("hard"),
     () => moreLessG1("hard"),
     () => countBy("hard"),
+    () => ineqG1("hard"),
   ];
   // normal
   return [
@@ -118,6 +120,7 @@ function mathG1(diff) {
     () => moneyG1("normal"),
     () => moreLessG1("normal"),
     () => countBy("normal"),
+    () => ineqG1("normal"),
   ];
 }
 
@@ -203,6 +206,30 @@ function avg3(vMax) {
   if (rem) vals[0] += (3 - rem); sum = vals.reduce((s, v) => s + v, 0);
   return { prompt: "へいきん", q: `${vals.join(", ")} のへいきんは？`, answer: `${sum / 3}`, input: "number" };
 }
+// 分数の同分母ひき算
+function fracSubSame(dMin, dMax) {
+  const d = ri(dMin, dMax); const a = ri(2, d - 1), b = ri(1, a - 1);
+  const num = a - b; const g = gcd(num, d);
+  const ans = num % d === 0 ? `${num / d}` : `${num / g}/${d / g}`;
+  return { prompt: "分数のひき算（約分も）", q: `${a}/${d} - ${b}/${d} =`, answer: ans, input: "choice",
+    choices: uniqChoices([ans, `${num}/${d}`, `${a}/${d}`, `${num}/${d * 2}`]) };
+}
+// 分数の異分母ひき算（通分）
+function fracSubDiff() {
+  let d1 = ri(2, 6), d2 = ri(2, 6); if (d1 === d2) d2 = d2 % 6 + 1;
+  let a = ri(1, d1 - 1), b = ri(1, d2 - 1);
+  if (a / d1 < b / d2) { [a, b] = [b, a]; [d1, d2] = [d2, d1]; }   // 引く数が大きくならないように
+  const L = lcm(d1, d2); const num = a * (L / d1) - b * (L / d2); const g = gcd(num, L) || 1;
+  const ans = num === 0 ? "0" : (num % L === 0 ? `${num / L}` : `${num / g}/${L / g}`);
+  return { prompt: "分数のひき算（通分）", q: `${a}/${d1} - ${b}/${d2} =`, answer: ans, input: "choice",
+    choices: uniqChoices([ans, `${num}/${L}`, `${a + b}/${L}`, `${a}/${d2}`]) };
+}
+// 小数のたし算
+function decAdd(diff) {
+  const hi = diff === "hard" ? 199 : 59;
+  const a = ri(11, hi) / 10, b = ri(11, hi) / 10;
+  return { prompt: "小数のたし算", q: `${a} + ${b} =`, answer: `${+(a + b).toFixed(1)}`, input: "number" };
+}
 
 function mathG5(diff) {
   if (diff === "easy") return [
@@ -213,6 +240,7 @@ function mathG5(diff) {
     () => avg3(8),
     unitG5,
     () => volumeG5("easy"),
+    () => decAdd("easy"),
   ];
   if (diff === "hard") return [
     fracDiff,
@@ -228,6 +256,8 @@ function mathG5(diff) {
     divisorsG5,
     () => volumeG5("hard"),
     fracTimesInt,
+    fracSubDiff,
+    () => decAdd("hard"),
   ];
   // normal
   return [
@@ -247,6 +277,8 @@ function mathG5(diff) {
     ratioG5,
     divisorsG5,
     () => volumeG5("normal"),
+    () => fracSubSame(3, 9),
+    () => decAdd("normal"),
   ];
 }
 
