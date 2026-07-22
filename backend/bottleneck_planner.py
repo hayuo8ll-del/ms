@@ -42,6 +42,13 @@ class StageFlowConfig:
     lead_offset_days: int
     daily_capacity: float | None = None
     input_unit: float | None = None
+    # 機種別のオフセット上書き(実リード由来の動的化)。無い機種は lead_offset_days を使う。
+    lead_offset_by_product: dict[str, int] | None = None
+
+    def offset_for(self, product: str) -> int:
+        if self.lead_offset_by_product and product in self.lead_offset_by_product:
+            return self.lead_offset_by_product[product]
+        return self.lead_offset_days
 
 
 @dataclass
@@ -455,7 +462,7 @@ def expand_to_stages(
         # まずオフセット適用済みの(日, 元セル)列を作る
         shifted: list[tuple[date, DailyCell]] = []
         for cell in bottleneck_allocation:
-            target_i = day_to_index[cell.day] + flow.lead_offset_days
+            target_i = day_to_index[cell.day] + flow.offset_for(cell.product)
             if target_i < 0 or target_i >= len(working_days):
                 out_of_range.add(flow.stage_id)
                 continue

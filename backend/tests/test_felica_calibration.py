@@ -8,7 +8,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from openpyxl import Workbook  # noqa: E402
 
 from bottleneck_planner import DemandItem, StageFlowConfig, plan_bottleneck, working_days_in_range  # noqa: E402
-from felica_calibration import calibrate, compare_plans, parse_felica_plan  # noqa: E402
+from felica_calibration import (  # noqa: E402
+    calibrate,
+    compare_plans,
+    derive_stage_offsets,
+    parse_felica_plan,
+)
 
 CAPS = {"16h": 90000, "22h": 120000}
 
@@ -101,3 +106,25 @@ def test_calibrate_picks_offsets_reducing_error():
     assert cal.recommended.completion_mae + cal.recommended.start_mae <= cal.current.completion_mae + cal.current.start_mae
     # 真値(MIL=0)に近いオフセットが選ばれる
     assert cal.recommended_offsets["MIL"] == 0
+
+
+def test_derive_stage_offsets_from_span_and_ratio():
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    flows = [StageFlowConfig("ANT", -2), StageFlowConfig("TAL", -1),
+             StageFlowConfig("HAL", 0), StageFlowConfig("MIL", 1)]  # 総スパン3, 上流2/下流1
+    # 機種P: 投入7/1→完成7/6 = 3稼働日スパン(7/1,2,3,6)。機種Q: 同日→スパン0。
+    rows = [
+        ("S1", "RC-SA02F/5", 90000, {date(2026, 7, 1): 90000}, {date(2026, 7, 6): 90000}),
+        ("S2", "RC-SA02F/5", 90000, {date(2026, 7, 2): 90000}, {date(2026, 7, 7): 90000}),  # 3稼働日
+        ("S3", "RC-S127/HCB5", 50000, {date(2026, 7, 1): 50000}, {date(2026, 7, 1): 50000}),  # スパン0
+        ("S4", "RC-S127/HCB5", 50000, {date(2026, 7, 2): 50000}, {date(2026, 7, 2): 50000}),
+    ]
+    felica = parse_felica_plan(_felica_workbook(rows))
+    derived = derive_stage_offsets(felica, days, flows)
+
+    # さそり金融(RC-SA02F, スパン3) → ANT-2/TAL-1/MIL+1(現状比率どおり)
+    assert derived["ANT"]["さそり金融"] == -2
+    assert derived["MIL"]["さそり金融"] == 1
+    # MOT2(RC-S127, スパン0) → すべて0
+    assert derived["ANT"]["MOT2"] == 0
+    assert derived["MIL"]["MOT2"] == 0

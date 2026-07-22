@@ -31,7 +31,7 @@ from config_loader import (
     load_orders_data,
 )
 from excel_import import ImportValidationError, WorkbookReadError, export_workbook, parse_workbook, save_config
-from felica_calibration import calibrate, compare_plans, parse_felica_plan
+from felica_calibration import calibrate, compare_plans, derive_stage_offsets, parse_felica_plan
 from plan_export import export_plan_workbook
 from scheduler import Scheduler
 from thm_ledger_import import (
@@ -277,6 +277,8 @@ async def validate_bottleneck_plan(
         machine_counts=cfg.machine_counts,
     )
     cal = calibrate(demands, working_days, cfg.line_daily_capacities, plan_kwargs, felica)
+    # 機種別の実リード由来オフセット(WIP動的化, Phase 4)
+    derived = derive_stage_offsets(felica, working_days, cfg.stage_flows, aliases=cfg.product_aliases)
     return {
         "plan_start": plan_start.isoformat(),
         "felica_lots": len(felica),
@@ -286,6 +288,7 @@ async def validate_bottleneck_plan(
         "current_a_shift_fraction": cfg.a_shift_fraction,
         "recommended_offsets": cal.recommended_offsets,
         "recommended_a_shift_fraction": cal.recommended_a_shift_fraction,
+        "derived_offsets_by_product": derived,
     }
 
 

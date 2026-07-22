@@ -52,7 +52,9 @@ directly by FastAPI's `StaticFiles` mount.
 - `config/bottleneck_planning.json` — parameters for the bottleneck daily-flow planner
   (`load_bottleneck_planning` in `config_loader.py`, embedded defaults when absent):
   `lineDailyCapacities` (per shift mode), `bottleneckStage`, `stageFlows` (per-stage
-  working-day offsets, plus optional `inputUnit` — **input granularity**: HAL feeds in
+  working-day offsets, plus optional `inputUnit` and `leadOffsetByProduct` (`{機種: offset}`
+  — per-product offset overrides that replace the fixed one for those products, the
+  WIP/実リード dynamic offsets from Phase 4) — **input granularity**: HAL feeds in
   10,000-unit reels, TAL in 40,000-unit batches, MIL in 1,920-unit inspection lots;
   allocations are multiples of the unit with each lot's remainder absorbed by its final
   feed (機種の台数による調整); TAL/MIL batching is front-loaded per lot in `expand_to_stages`
@@ -99,7 +101,9 @@ directly by FastAPI's `StaticFiles` mount.
   enumerates weekday working days. **Step 3** (`expand_to_stages` / `StageFlowConfig`):
   the HAL daily allocation is expanded to every stage (ANT/TAL/HAL/MIL) by a per-stage
   working-day `lead_offset_days` (upstream negative = fed earlier, bottleneck 0, downstream
-  positive = completed later), with out-of-horizon and per-stage-capacity warnings —
+  positive = completed later; `StageFlowConfig.offset_for(product)` applies an optional
+  per-product `lead_offset_by_product` override — the Phase-4 dynamic offsets), with
+  out-of-horizon and per-stage-capacity warnings —
   `plan_bottleneck(..., stage_flows=[...])` attaches `stage_allocation`. **Step 4**
   (`mil_completion_by_order`): the MIL stage's daily flow is grouped by 製番 (出荷ロット =
   `order_id`) into `MilLotCompletion`s (completion day = the lot's last MIL day, plus
@@ -165,8 +169,12 @@ directly by FastAPI's `StaticFiles` mount.
   grid-searches ANT/TAL/MIL offsets (HAL fixed 0) and A-shift fraction to minimise
   completion+start MAE (re-running `plan_bottleneck` with `equipment_stops` disabled),
   returning the current vs best error and the recommended offsets/fraction (advisory —
-  `config/bottleneck_planning.json` is not auto-edited). Verified on the real files: 32
-  matched 製番, completion MAE 3.12→2.66 working days after calibration.
+  `config/bottleneck_planning.json` is not auto-edited). `derive_stage_offsets` computes
+  **per-product** offsets from FeliCa's own 投入→完成 span (median working-days per 機種,
+  resolved to 呼称), split around HAL by the current offset ratio — data-driven values for
+  `stageFlows[].leadOffsetByProduct` (Phase 4 dynamic offsets). Verified on the real files:
+  32 matched 製番, completion MAE 3.12→2.66 working days after calibration; per-product
+  leads range span-3 (さそり金融/SuicaⅢ/Lite-S) to span-0 (MOT2/さそり交通).
 - `backend/bottleneck_export.py` — renders a `BottleneckPlanResult` into a `.xlsx` matching
   the two shop-floor tables: `生産計画(機種×日)` (per-機種 rows split by stage ANT/TAL/HAL/MIL,
   columns = working days — the TA1_生産計画 form) and `製番別MIL` (one row per 製番/出荷ロット
@@ -233,8 +241,8 @@ directly by FastAPI's `StaticFiles` mount.
   per-day 進捗 (`progress` + `has_actuals`), 納期遅れ解消の `remedies`, warnings, summary —
   for on-screen rendering; shares `_build_bottleneck_plan` with the export route),
   `POST /api/bottleneck/validate` (multipart THM 台帳 + FeliCa 実計画; runs
-  `felica_calibration` and returns current vs recommended offset/A-shift error metrics as
-  JSON), `POST /api/import` (multipart
+  `felica_calibration` and returns current vs recommended global offset/A-shift error
+  metrics plus per-product `derived_offsets_by_product` as JSON), `POST /api/import` (multipart
   `.xlsx` upload; 422 with a list of `{sheet, row, message}` on validation failure,
   otherwise overwrites `config/*.json` and returns import counts), and
   `GET /api/import/template` (downloads the current config as a pre-filled `.xlsx`).
@@ -279,8 +287,10 @@ directly by FastAPI's `StaticFiles` mount.
   expected sheets, the 機種×日 matrix lists every product with all stage rows, and the
   製番別MIL sheet has one row per lot with the overrun verdict.
 - `backend/tests/test_felica_calibration.py` — covers FeliCa parsing (per-製番 Line-In/
-  Completion), `compare_plans` completion-day diff/bias against a synthetic FeliCa, and
-  `calibrate` picking offsets that reduce the error toward a known-truth plan.
+  Completion), `compare_plans` completion-day diff/bias against a synthetic FeliCa,
+  `calibrate` picking offsets that reduce the error toward a known-truth plan, and
+  `derive_stage_offsets` computing per-product offsets from the 投入→完成 span split by the
+  current ratio.
 - `backend/tests/test_plan_export.py` — runs the scheduler against the real
   `config/*.json` and asserts the exported workbook has exactly the four expected sheets
   (no utilization sheet), the schedule sheet row count matches the schedule, the matrix
@@ -306,7 +316,8 @@ directly by FastAPI's `StaticFiles` mount.
   **納期遅れ 解消の提案** panel (`suggest_remedies`, shown only when lots are late), and a
   **実計画(FeliCa)との照合** panel — the **「実計画と照合(精度検証)」** button uploads a FeliCa
   workbook (with the stored ledger) to `/api/bottleneck/validate` and shows current vs
-  recommended offset/A-shift error (完成日/投入日 MAE・バイアス), plus a
+  recommended offset/A-shift error (完成日/投入日 MAE・バイアス) and a per-機種 実リード由来
+  オフセット table (for `leadOffsetByProduct`), plus a
   **「この計画をExcel出力」** button that re-posts the stored file to
   `/api/bottleneck/export`. The discrete-scheduler view and this bottleneck view coexist on
   the page. The

@@ -409,6 +409,24 @@ def test_compute_progress_with_daily_actuals_diff_and_cumulative():
     assert rows[2].actual is None and rows[2].plan == 0 and rows[2].plan_cum == 180000
 
 
+def test_per_product_offset_overrides_global():
+    # Aは既定オフセット(MIL+1)、BだけMIL+3に上書き
+    from bottleneck_planner import DailyCell
+
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    alloc = [
+        DailyCell(date(2026, 7, 6), "A", 30000, "LA"),
+        DailyCell(date(2026, 7, 6), "B", 30000, "LB"),
+    ]
+    flows = [StageFlowConfig("HAL", 0), StageFlowConfig("MIL", 1, lead_offset_by_product={"B": 3})]
+    cells, _w = expand_to_stages(alloc, days, flows)
+    mil = {c.product: c.day for c in cells if c.stage_id == "MIL"}
+    hal_day = date(2026, 7, 6)  # index in working days
+    hi = days.index(hal_day)
+    assert mil["A"] == days[hi + 1]  # 既定 +1
+    assert mil["B"] == days[hi + 3]  # 上書き +3
+
+
 def test_hal_input_is_quantized_to_reel_units_with_final_remainder():
     # HALはリール1本=10,000単位。35,000のロットは 30,000(3本) + 端数5,000 で投入される。
     days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 10))

@@ -181,6 +181,59 @@ def compare_plans(result, felica: dict[str, FelicaLot], working_days: list[date]
     )
 
 
+def _median(xs: list[int]) -> int:
+    s = sorted(xs)
+    n = len(s)
+    return int(round((s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2)))
+
+
+def derive_stage_offsets(
+    felica: dict[str, FelicaLot],
+    working_days: list[date],
+    current_flows: list[StageFlowConfig],
+    aliases: dict[str, str] | None = None,
+    min_samples: int = 2,
+) -> dict[str, dict[str, int]]:
+    """FeliCaの実投入→完成の稼働日スパンから、機種別の工程オフセットを実測で導出する。
+
+    製番ごとの (Completion − Line-In) を稼働日で測り、機種ごとに中央値=実リードLを求める。
+    現状オフセット(例 ANT-2/HAL0/MIL+1, 総スパン3)の各工程比率を保ったまま L で割り付ける
+    (ANTは上流に -round(L×上流比率)、MILは下流に +round(L×下流比率)、HALは0)。
+    FeliCaのItem Desc(RC-コード)は呼称へ解決して集計する。
+    `stageFlows[].leadOffsetByProduct` に入れられる {stage_id: {機種: off}} を返す。
+    """
+    from thm_ledger_import import resolve_product
+
+    wd_index = _wd_index_map(working_days)
+
+    spans: dict[str, list[int]] = {}
+    for fl in felica.values():
+        product = resolve_product(fl.product, aliases)
+        if fl.line_in_first is None or fl.completion_last is None or not product:
+            continue
+        li = _nearest_index(fl.line_in_first, wd_index, working_days)
+        co = _nearest_index(fl.completion_last, wd_index, working_days)
+        if li is None or co is None:
+            continue
+        spans.setdefault(product, []).append(max(co - li, 0))
+    lead_by_product = {p: _median(xs) for p, xs in spans.items() if len(xs) >= min_samples}
+
+    # 現状オフセットの総スパンと各工程比率
+    ant_off = min((f.lead_offset_days for f in current_flows), default=-2)
+    mil_off = max((f.lead_offset_days for f in current_flows), default=1)
+    total_span = mil_off - ant_off or 1
+
+    result: dict[str, dict[str, int]] = {}
+    for flow in current_flows:
+        if flow.lead_offset_days == 0:  # HAL(基準)は0固定
+            continue
+        frac = flow.lead_offset_days / total_span  # 上流は負、下流は正
+        result[flow.stage_id] = {
+            product: int(round(lead * frac)) for product, lead in lead_by_product.items()
+        }
+    return result
+
+
 @dataclass
 class CalibrationResult:
     current: ComparisonReport

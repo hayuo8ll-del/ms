@@ -92,7 +92,13 @@ def load_bottleneck_planning() -> BottleneckPlanningConfig:
             data = json.load(f)
 
     flows = [
-        StageFlowConfig(f["stageId"], int(f["leadOffsetDays"]), f.get("dailyCapacity"), f.get("inputUnit"))
+        StageFlowConfig(
+            f["stageId"],
+            int(f["leadOffsetDays"]),
+            f.get("dailyCapacity"),
+            f.get("inputUnit"),
+            {k: int(v) for k, v in (f.get("leadOffsetByProduct") or {}).items()} or None,
+        )
         for f in data.get(
             "stageFlows",
             [

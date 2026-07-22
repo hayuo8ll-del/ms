@@ -677,7 +677,26 @@ function renderValidation(d) {
     `<tr><td>投入日 MAE</td><td class="bn-num">${d.current.start_mae}</td><td class="bn-num"${better(d.current.start_mae, d.recommended.start_mae)}>${d.recommended.start_mae}</td></tr>` +
     `<tr><td>工程オフセット</td><td>${offStr(d.current_offsets)}</td><td>${offStr(d.recommended_offsets)}</td></tr>` +
     `<tr><td>A勤割合</td><td class="bn-num">${d.current_a_shift_fraction}</td><td class="bn-num">${d.recommended_a_shift_fraction}</td></tr>` +
-    `</tbody></table>`;
+    `</tbody></table>` +
+    renderDerivedOffsets(d.derived_offsets_by_product);
+}
+
+function renderDerivedOffsets(derived) {
+  if (!derived) return "";
+  const stages = ["ANT", "TAL", "MIL"];
+  const products = [...new Set(stages.flatMap((s) => Object.keys(derived[s] || {})))].sort();
+  if (products.length === 0) return "";
+  const head = `<tr><th>機種</th>${stages.map((s) => `<th class="bn-num">${s}</th>`).join("")}</tr>`;
+  const rows = products
+    .map((p) => {
+      const cells = stages.map((s) => `<td class="bn-num">${derived[s] && derived[s][p] != null ? derived[s][p] : "-"}</td>`).join("");
+      return `<tr><td>${p}</td>${cells}</tr>`;
+    })
+    .join("");
+  return (
+    `<p class="bn-validation-note" style="margin-top:10px">機種別 実リード由来オフセット（FeliCaの投入→完成スパン由来。config の <code>stageFlows[].leadOffsetByProduct</code> に手動反映で機種別に動的化できます）</p>` +
+    `<table class="bn-vtable"><thead>${head}</thead><tbody>${rows}</tbody></table>`
+  );
 }
 
 runButton.addEventListener("click", runPlan);
