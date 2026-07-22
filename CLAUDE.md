@@ -118,6 +118,16 @@ directly by FastAPI's `StaticFiles` mount.
   `result.progress`): per-working-day 計画(bottleneck daily total)/計画累計, and — when
   daily actuals are given — 実績/実績累計/差(実績−計画)/進捗(Σ差), matching the 現場 THM 短期
   投入予定表 Sheet1 (計画/実績/差/進捗). Days with no actual leave the actual columns blank.
+  **Remedies** (`suggest_remedies(demands, working_days, shift_capacities, plan_kwargs,
+  base_result, high_mode="22h")` → `Remedy`s on `result.remedies`): decision support when
+  lots miss due dates — how many lates clear if the whole horizon runs 22H
+  (`shift_escalation`), the minimum leading working-days to run 22H that clears all
+  (`min_high_days`, binary search), the binding 機種 (demand vs 機種別キャパ×working-days,
+  `bottleneck_product`), horizon extension (`horizon_extension`) or, when no capacity move
+  helps, a due-date-infeasible note (`due_date_infeasible`); on-time plans yield a single
+  `ok`. Backed by `plan_bottleneck(..., high_mode, high_mode_days)` — the first N working
+  days use `high_mode`'s line + per-product caps (via `allocate_bottleneck`'s
+  `product_daily_caps_by_day` / `daily_capacity_by_day`; stop-reduced days are left as-is).
   **Equipment stops** (`EquipmentStop` / `apply_equipment_stops`): enabled (有効=Y) stop
   rows (期間×勤務×設備, methods 全停止/時間控除/停止率控除, plus 補正後Cap as a per-day
   ceiling) are converted into per-day bottleneck capacity overrides — one machine's share
@@ -150,7 +160,8 @@ directly by FastAPI's `StaticFiles` mount.
   columns = working days — the TA1_生産計画 form) and `製番別MIL` (one row per 製番/出荷ロット
   with MIL completion day, due date, on-time verdict — the THM 短期投入予定表 form; MIL cells
   tinted orange, late lots red), `進捗` (計画/計画累計/実績/実績累計/差/進捗 per working day,
-  negative-progress cells red — the Sheet1 form), plus サマリー and 警告.
+  negative-progress cells red — the Sheet1 form), `提案` (`suggest_remedies` output when
+  lots are late), plus サマリー and 警告.
   `export_bottleneck_workbook(result, demands, stage_order)`.
 - `backend/scheduler.py` — the `Scheduler` class: finite-capacity, multi-machine forward
   scheduling. Orders are sorted by **EDD** (earliest due date). For each order: raw
@@ -207,8 +218,9 @@ directly by FastAPI's `StaticFiles` mount.
   設備停止反映件数 rows when applicable; an optional 「日次実績」 sheet drives the 進捗 sheet),
   `POST /api/bottleneck/plan` (same multipart inputs,
   returns the plan as JSON — shift mode, per-stage×day allocation, per-製番 MIL lots,
-  per-day 進捗 (`progress` + `has_actuals`), warnings, summary — for on-screen rendering;
-  shares `_build_bottleneck_plan` with the export route), `POST /api/import` (multipart
+  per-day 進捗 (`progress` + `has_actuals`), 納期遅れ解消の `remedies`, warnings, summary —
+  for on-screen rendering; shares `_build_bottleneck_plan` with the export route),
+  `POST /api/import` (multipart
   `.xlsx` upload; 422 with a list of `{sheet, row, message}` on validation failure,
   otherwise overwrites `config/*.json` and returns import counts), and
   `GET /api/import/template` (downloads the current config as a pre-filled `.xlsx`).
@@ -239,8 +251,10 @@ directly by FastAPI's `StaticFiles` mount.
   same-day parallel fill by other products, exclusion of cap-less products, and shift-mode
   escalation when a single product can't finish at the smaller mode), equipment stops
   (machine-share deduction with 勤務 half-day bounds, 補正後Cap ceiling, non-bottleneck
-  advisory, and end-to-end reduced-capacity days in `plan_bottleneck`), and progress
-  (`compute_progress`: plan-cumulative only without actuals; 差/進捗 累計 with daily actuals).
+  advisory, and end-to-end reduced-capacity days in `plan_bottleneck`), progress
+  (`compute_progress`: plan-cumulative only without actuals; 差/進捗 累計 with daily actuals),
+  and remedies (`suggest_remedies`: full-22H escalation, min-22H-days search, all-on-time
+  `ok`; `high_mode_days` raising only the leading days' capacity).
 - `backend/tests/test_thm_ledger_import.py` — covers longest-prefix product resolution
   (incl. slash-less suffix codes), 台帳→demand extraction with an unmapped-row report
   (order_id = 製番, № fallback), future-due / production-line filtering, 「実績」-sheet
@@ -271,7 +285,8 @@ directly by FastAPI's `StaticFiles` mount.
   **生産計画(機種×日)** matrix (rows = 機種 × 工程 ANT/TAL/HAL/MIL, stage-coloured, sticky
   first two columns; columns = working days), the **製番別MIL完成予定** table (late lots
   highlighted) and a **進捗** table (計画/計画累計/実績/実績累計/差/進捗 per day, negative in
-  red; shown when the ledger has a 「日次実績」 sheet, else plan-cumulative only), with a
+  red; shown when the ledger has a 「日次実績」 sheet, else plan-cumulative only) and a
+  **納期遅れ 解消の提案** panel (`suggest_remedies`, shown only when lots are late), with a
   **「この計画をExcel出力」** button that re-posts the stored file to
   `/api/bottleneck/export`. The discrete-scheduler view and this bottleneck view coexist on
   the page. The

@@ -16,6 +16,7 @@ from bottleneck_planner import (  # noqa: E402
     expand_to_stages,
     mil_completion_by_order,
     plan_bottleneck,
+    suggest_remedies,
     working_days_in_range,
 )
 
@@ -327,6 +328,57 @@ def test_plan_bottleneck_uses_reduced_capacity_on_stop_days():
         per_day[c.day] = per_day.get(c.day, 0) + c.quantity
     assert per_day[date(2026, 7, 1)] == 72000  # 90,000 - 18,000
     assert per_day[date(2026, 7, 2)] == 90000
+
+
+def _remedy_fixture():
+    # 早い納期(7/10)のロット。16Hのキャパでは完成が納期に間に合わないが、
+    # 22H(機種別キャパが上がる)にすると早く完成して間に合う。総需要は小さいので基準は16H。
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 8, 15))
+    flows = [StageFlowConfig("HAL", 0), StageFlowConfig("MIL", 0)]
+    caps = {"16h": {"X": 30000}, "22h": {"X": 45000}}
+    demands = [DemandItem("X", 300000, date(2026, 7, 10), order_id="L1")]
+    plan_kwargs = dict(stage_flows=flows, product_caps_by_mode=caps, a_shift_only_switch=False)
+    base = plan_bottleneck(demands, days, CAPS, **plan_kwargs)
+    return demands, days, plan_kwargs, base
+
+
+def test_remedy_full_escalation_and_min_high_days():
+    demands, days, plan_kwargs, base = _remedy_fixture()
+    assert any(lot.on_time is False for lot in base.mil_lots)  # 16Hでは遅れる
+
+    remedies = suggest_remedies(demands, days, CAPS, plan_kwargs, base, high_mode="22h")
+    kinds = {r.kind for r in remedies}
+    assert "shift_escalation" in kinds
+    assert "min_high_days" in kinds
+    # 22Hを何日やればよいかが具体日数で出る
+    min_r = next(r for r in remedies if r.kind == "min_high_days")
+    assert "稼働日" in min_r.detail
+
+
+def test_remedy_none_when_all_on_time():
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    flows = [StageFlowConfig("HAL", 0), StageFlowConfig("MIL", 0)]
+    caps = {"16h": {"X": 90000}, "22h": {"X": 120000}}
+    demands = [DemandItem("X", 90000, date(2026, 7, 31), order_id="L1")]
+    plan_kwargs = dict(stage_flows=flows, product_caps_by_mode=caps)
+    base = plan_bottleneck(demands, days, CAPS, **plan_kwargs)
+    remedies = suggest_remedies(demands, days, CAPS, plan_kwargs, base)
+    assert [r.kind for r in remedies] == ["ok"]
+
+
+def test_high_mode_days_raises_capacity_on_leading_days():
+    # 先頭2日だけ22H(12万)、残り16H(9万)
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    flows = [StageFlowConfig("HAL", 0)]
+    caps = {"16h": {"X": 90000}, "22h": {"X": 120000}}
+    demands = [DemandItem("X", 500000, date(2026, 7, 31), order_id="L1")]
+    result = plan_bottleneck(demands, days, CAPS, stage_flows=flows,
+                             product_caps_by_mode=caps, high_mode="22h", high_mode_days=2)
+    per_day = {}
+    for c in result.allocation:
+        per_day[c.day] = per_day.get(c.day, 0) + c.quantity
+    assert per_day[days[0]] == 120000 and per_day[days[1]] == 120000
+    assert per_day[days[2]] == 90000  # 3日目は16Hに戻る
 
 
 def test_compute_progress_plan_cumulative_only_without_actuals():

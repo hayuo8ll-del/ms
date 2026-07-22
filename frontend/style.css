@@ -370,6 +370,49 @@ button#bn-export:disabled {
   margin-bottom: 12px;
 }
 
+.bn-remedies {
+  border: 1px solid color-mix(in srgb, var(--accent-b) 45%, transparent);
+  background: color-mix(in srgb, var(--accent-b) 8%, transparent);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+
+.bn-remedies[hidden] {
+  display: none;
+}
+
+.bn-remedies-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--accent-b);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.bn-remedy {
+  display: flex;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 13px;
+  border-top: 1px solid color-mix(in srgb, var(--accent-b) 20%, transparent);
+}
+
+.bn-remedy:first-child {
+  border-top: none;
+}
+
+.bn-remedy-t {
+  flex: 0 0 auto;
+  min-width: 200px;
+  font-weight: 600;
+}
+
+.bn-remedy-d {
+  color: var(--text-dim);
+}
+
 .bn-kpi {
   flex: 1;
   min-width: 130px;

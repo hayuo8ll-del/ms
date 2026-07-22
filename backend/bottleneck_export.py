@@ -177,6 +177,20 @@ def _add_progress(wb: Workbook, result: BottleneckPlanResult) -> None:
     ws.freeze_panes = "B2"
 
 
+def _add_remedies(wb: Workbook, result: BottleneckPlanResult) -> None:
+    """納期遅れの解消提案。"""
+    if not result.remedies:
+        return
+    ws = wb.create_sheet("提案")
+    ws.append(["提案", "内容"])
+    _style_header(ws, 1, 2)
+    for r in result.remedies:
+        ws.append([r.title, r.detail])
+        ws.cell(row=ws.max_row, column=1).font = _BOLD
+    _set_widths(ws, [26, 90])
+    ws.freeze_panes = "A2"
+
+
 def _add_warnings(wb: Workbook, result: BottleneckPlanResult) -> None:
     ws = wb.create_sheet("警告")
     ws.append(["メッセージ"])
@@ -203,5 +217,6 @@ def export_bottleneck_workbook(
     _add_stage_matrix(wb, result, stage_order)
     _add_mil_lots(wb, result)
     _add_progress(wb, result)
+    _add_remedies(wb, result)
     _add_warnings(wb, result)
     return wb

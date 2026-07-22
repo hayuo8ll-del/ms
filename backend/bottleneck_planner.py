@@ -181,6 +181,7 @@ class BottleneckPlanResult:
     stage_allocation: list[StageDailyCell] = field(default_factory=list)  # 全工程(ANT/TAL/HAL/MIL)の日次
     mil_lots: list[MilLotCompletion] = field(default_factory=list)  # MILの製番別完成日
     progress: list[ProgressRow] = field(default_factory=list)  # 計画/実績/差/累計の進捗
+    remedies: list["Remedy"] = field(default_factory=list)  # 納期遅れの解消提案
     warnings: list[str] = field(default_factory=list)
 
 
@@ -314,6 +315,7 @@ def allocate_bottleneck(
     product_daily_caps: dict[str, float] | None = None,
     daily_capacity_by_day: dict[date, float] | None = None,
     input_unit: float | None = None,
+    product_daily_caps_by_day: dict[date, dict[str, float]] | None = None,
 ) -> tuple[list[DailyCell], dict[str, date], list[str]]:
     """ボトルネック工程の日次能力を上限に、機種別台数を稼働日へ割り付ける。
 
@@ -352,6 +354,8 @@ def allocate_bottleneck(
             prev_day_products = set()  # 全停止日: 生産なし(翌日は切替扱いで再開)
             continue
         line_remaining = cap_today
+        # その日の機種別キャパ(一部の日だけシフト増強する場合は日別に上書き)
+        caps_today = (product_daily_caps_by_day or {}).get(day, product_daily_caps)
         today_products: set[str] = set()
         product_used_today: dict[str, float] = {}
         blocked_today: set[str] = set()
@@ -380,8 +384,8 @@ def allocate_bottleneck(
                     continue
 
             available = line_remaining
-            if product_daily_caps is not None:
-                cap = product_daily_caps.get(product)
+            if caps_today is not None:
+                cap = caps_today.get(product)
                 if cap is not None:
                     available = min(available, cap - product_used_today.get(product, 0.0))
             if available <= 0:
@@ -550,6 +554,143 @@ def mil_completion_by_order(
     return lots
 
 
+@dataclass
+class Remedy:
+    """納期遅れの解消策(意思決定支援)。"""
+
+    kind: str  # shift_escalation / min_high_days / bottleneck_product / horizon_extension / ok
+    title: str
+    detail: str
+
+
+def _late_count(result: "BottleneckPlanResult") -> int:
+    return sum(1 for lot in result.mil_lots if lot.on_time is False)
+
+
+def suggest_remedies(
+    demands: list[DemandItem],
+    working_days: list[date],
+    shift_capacities: dict[str, float],
+    plan_kwargs: dict,
+    base_result: "BottleneckPlanResult",
+    high_mode: str = "22h",
+) -> list[Remedy]:
+    """現計画に納期遅れがあるとき、解消策を自動算出する(HAL#9シナリオ手作業の自動版)。
+
+    - シフト昇格(全期間 high_mode)で遅れが何件解消するか。
+    - 全納期を満たす最小の high_mode 稼働日数(先頭から)を二分探索で逆算。
+    - それでも残る場合は律速機種の特定と必要な期間延長(稼働日数)を提示。
+    plan_kwargs は base の plan_bottleneck に渡したキーワード引数一式(high_mode系を除く)。
+    """
+    late0 = _late_count(base_result)
+    if late0 == 0:
+        return [Remedy("ok", "納期遅れなし", "現計画で全ロットが納期内です。追加策は不要です。")]
+
+    remedies: list[Remedy] = []
+    base_mode = base_result.shift_mode
+    caps_by_mode = plan_kwargs.get("product_caps_by_mode") or {}
+    ndays = len(working_days)
+
+    def plan_with(days: list[date], high_days: int) -> "BottleneckPlanResult":
+        return plan_bottleneck(
+            demands, days, shift_capacities, high_mode=high_mode, high_mode_days=high_days, **plan_kwargs
+        )
+
+    can_escalate = high_mode in shift_capacities and base_mode != high_mode
+
+    if can_escalate:
+        full = plan_with(working_days, ndays)
+        late_full = _late_count(full)
+        if late_full < late0:
+            remedies.append(
+                Remedy(
+                    "shift_escalation",
+                    f"全期間 {high_mode} に上げる",
+                    f"納期遅れ {late0}件 → {late_full}件。"
+                    + ("全ロット納期内になります。" if late_full == 0 else f"まだ{late_full}件残ります。"),
+                )
+            )
+        if late_full == 0:
+            # 全納期を満たす最小の high_mode 日数を二分探索(先頭からN日を high_mode)
+            lo, hi, best = 1, ndays, ndays
+            while lo <= hi:
+                mid = (lo + hi) // 2
+                if _late_count(plan_with(working_days, mid)) == 0:
+                    best, hi = mid, mid - 1
+                else:
+                    lo = mid + 1
+            remedies.append(
+                Remedy(
+                    "min_high_days",
+                    f"{high_mode} を最短で何日やればよいか",
+                    f"先頭 {best} 稼働日を {high_mode} にすれば全納期を満たせます"
+                    f"(残り {ndays - best} 日は現行 {base_mode} のまま)。",
+                )
+            )
+        else:
+            # 全期間 high でも解消しない → 期間延長で解消するか探索
+            cleared_extra: int | None = None
+            for extra in range(1, 41):
+                extended = working_days + working_days_in_range(
+                    working_days[-1] + timedelta(days=1),
+                    working_days[-1] + timedelta(days=extra * 2 + 10),
+                )[:extra]
+                if _late_count(plan_with(extended, len(extended))) == 0:
+                    cleared_extra = extra
+                    break
+            if cleared_extra is not None:
+                remedies.append(
+                    Remedy(
+                        "horizon_extension",
+                        "期間延長が必要",
+                        f"全期間 {high_mode} に加え、稼働日を {cleared_extra} 日延長すれば全納期を満たせます。",
+                    )
+                )
+            else:
+                remedies.append(
+                    Remedy(
+                        "due_date_infeasible",
+                        "能力増強では取り戻せない遅れ",
+                        f"全期間 {high_mode} ＋期間延長でも {late_full}件が残ります。"
+                        f"これらは納期が計画開始付近で早く、シフト増強・期間延長では間に合いません。"
+                        f"納期調整または着手の前倒しをご検討ください。",
+                    )
+                )
+    else:
+        remedies.append(
+            Remedy(
+                "shift_escalation",
+                "シフト昇格の余地なし",
+                f"すでに {base_mode} で立案しており、これ以上のシフト増強はできません。期間延長や設備増強を検討してください。",
+            )
+        )
+
+    # 律速機種の特定: 需要 vs 機種別キャパ×稼働日
+    base_caps = caps_by_mode.get(base_mode, {})
+    high_caps = caps_by_mode.get(high_mode, {})
+    per_product: dict[str, float] = {}
+    for d in demands:
+        per_product[d.product] = per_product.get(d.product, 0.0) + d.quantity
+    binding: list[str] = []
+    for product, qty in sorted(per_product.items(), key=lambda kv: -kv[1]):
+        cap_b = base_caps.get(product)
+        if cap_b and qty > cap_b * ndays:
+            need = qty / cap_b
+            cap_h = high_caps.get(product)
+            hint = f"（{high_mode}でも {qty / cap_h:.0f}日必要）" if cap_h and qty > cap_h * ndays else ""
+            binding.append(f"{product}: 需要{qty:.0f} > {base_mode}能力{cap_b:.0f}×{ndays}日。単独で約{need:.0f}稼働日必要{hint}")
+    if binding:
+        remedies.append(
+            Remedy(
+                "bottleneck_product",
+                "律速となっている機種",
+                " / ".join(binding),
+            )
+        )
+
+    return remedies
+
+
 def plan_bottleneck(
     demands: list[DemandItem],
     working_days: list[date],
@@ -562,6 +703,8 @@ def plan_bottleneck(
     equipment_stops: list[EquipmentStop] | None = None,
     bottleneck_stage: str = "HAL",
     machine_counts: dict[str, int] | None = None,
+    high_mode: str | None = None,
+    high_mode_days: int = 0,
 ) -> BottleneckPlanResult:
     """Step 1(シフト/レート決定)＋Step 2(HAL日次配分)を実行する。
 
@@ -571,6 +714,8 @@ def plan_bottleneck(
     product_caps_by_mode({モード: {機種: 日産キャパ}})を渡すと、機種×設備の生産可否を
     織り込んだ機種別キャパで配分を制限し、キャパ定義の無い機種(=生産可能な設備が無い)は
     警告して計画から除外する。シフトモード選択も機種別の実現性を確認する。
+    high_mode/high_mode_days を渡すと、先頭 high_mode_days 稼働日だけ high_mode(例 "22h")の
+    能力・機種別キャパを使う(納期遅れ解消の「22Hを◯日」検討用)。
     """
     pre_warnings: list[str] = []
     if product_caps_by_mode:
@@ -629,6 +774,20 @@ def plan_bottleneck(
         )
         result.warnings.extend(stop_warnings)
 
+    # 先頭 N 稼働日だけ high_mode(例 22h)に増強する日別上書き(納期遅れ解消の検討用)
+    caps_by_day: dict[date, float] | None = day_caps
+    pcaps_by_day: dict[date, dict[str, float]] | None = None
+    if high_mode and high_mode_days > 0 and high_mode in shift_capacities and high_mode != shift_mode:
+        high_days = working_days[: min(high_mode_days, len(working_days))]
+        high_cap = shift_capacities[high_mode]
+        merged = dict(day_caps or {})
+        for d in high_days:
+            merged.setdefault(d, high_cap)  # 設備停止で下げた日は据え置き
+        caps_by_day = merged
+        high_pcaps = (product_caps_by_mode or {}).get(high_mode)
+        if high_pcaps:
+            pcaps_by_day = {d: high_pcaps for d in high_days}
+
     allocation, completion, warnings = allocate_bottleneck(
         demands,
         working_days,
@@ -636,10 +795,11 @@ def plan_bottleneck(
         a_shift_only_switch=a_shift_only_switch,
         a_shift_fraction=a_shift_fraction,
         product_daily_caps=(product_caps_by_mode or {}).get(shift_mode),
-        daily_capacity_by_day=day_caps,
+        daily_capacity_by_day=caps_by_day,
         input_unit=next(
             (f.input_unit for f in (stage_flows or []) if f.stage_id == bottleneck_stage), None
         ),
+        product_daily_caps_by_day=pcaps_by_day,
     )
     result.allocation = allocation
     result.completion = completion

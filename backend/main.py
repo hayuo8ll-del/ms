@@ -17,7 +17,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from bottleneck_export import export_bottleneck_workbook
-from bottleneck_planner import apply_actuals, compute_progress, plan_bottleneck, working_days_in_range
+from bottleneck_planner import (
+    apply_actuals,
+    compute_progress,
+    plan_bottleneck,
+    suggest_remedies,
+    working_days_in_range,
+)
 from config_loader import (
     load_bottleneck_planning,
     load_changeover_config,
@@ -140,10 +146,7 @@ async def _build_bottleneck_plan(
         raise HTTPException(status_code=422, detail="対象となる受注が台帳から見つかりませんでした(期間・ライン・実績反映の条件を確認してください)。")
 
     working_days = working_days_in_range(plan_start, plan_end)
-    result = plan_bottleneck(
-        demands,
-        working_days,
-        cfg.line_daily_capacities,
+    plan_kwargs = dict(
         stage_flows=cfg.stage_flows,
         a_shift_only_switch=True,
         a_shift_fraction=cfg.a_shift_fraction,
@@ -152,6 +155,7 @@ async def _build_bottleneck_plan(
         bottleneck_stage=cfg.bottleneck_stage,
         machine_counts=cfg.machine_counts,
     )
+    result = plan_bottleneck(demands, working_days, cfg.line_daily_capacities, **plan_kwargs)
     result.warnings.extend(actual_warnings)
     if unmapped:
         result.warnings.append(
@@ -159,6 +163,9 @@ async def _build_bottleneck_plan(
         )
 
     result.progress = compute_progress(result, daily_actuals or None)
+    result.remedies = suggest_remedies(
+        demands, working_days, cfg.line_daily_capacities, plan_kwargs, result
+    )
 
     extra_summary: list[tuple[str, object]] = []
     if actuals:
@@ -212,6 +219,7 @@ async def bottleneck_plan(
             for p in result.progress
         ],
         "has_actuals": any(p.actual is not None for p in result.progress),
+        "remedies": [{"kind": r.kind, "title": r.title, "detail": r.detail} for r in result.remedies],
         "warnings": result.warnings,
         "summary": {
             "lot_count": len(demands),

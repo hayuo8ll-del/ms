@@ -21,6 +21,8 @@ const bnWarningListEl = document.getElementById("bn-warning-list");
 const bnMatrixEl = document.getElementById("bn-matrix");
 const bnMilEl = document.getElementById("bn-mil");
 const bnProgressEl = document.getElementById("bn-progress");
+const bnRemediesEl = document.getElementById("bn-remedies");
+const bnRemedyListEl = document.getElementById("bn-remedy-list");
 const bnExportButton = document.getElementById("bn-export");
 const bnLinesInput = document.getElementById("bn-lines");
 
@@ -464,6 +466,17 @@ function renderBottleneckPlan(data) {
   bnKpisEl.innerHTML = cards
     .map(([label, value]) => `<div class="bn-kpi"><div class="label">${label}</div><div class="value">${value}</div></div>`)
     .join("");
+
+  // 納期遅れ解消の提案（遅れがあるときのみ、"ok"は非表示）
+  const remedies = (data.remedies || []).filter((r) => r.kind !== "ok");
+  if (remedies.length === 0) {
+    bnRemediesEl.hidden = true;
+  } else {
+    bnRemediesEl.hidden = false;
+    bnRemedyListEl.innerHTML = remedies
+      .map((r) => `<div class="bn-remedy"><span class="bn-remedy-t">${r.title}</span><span class="bn-remedy-d">${r.detail}</span></div>`)
+      .join("");
+  }
 
   // 警告
   if (data.warnings.length === 0) {
