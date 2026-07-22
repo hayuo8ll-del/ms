@@ -32,9 +32,17 @@
   <section class="bn-panel" id="bn-panel" hidden>
     <div class="bn-head">
       <div class="bn-title">ボトルネック計画 <span class="bn-sub">HAL基準・日次フロー（機種×日／製番別MIL）</span></div>
-      <button id="bn-export" type="button">この計画をExcel出力</button>
+      <div class="bn-head-actions">
+        <input type="file" id="felica-file" accept=".xlsx" hidden />
+        <button id="bn-validate" type="button" title="実計画(FeliCa)と製番単位で照合し、完成日/投入日の予実差と、誤差最小の推奨オフセット/A勤割合を出します">実計画と照合(精度検証)</button>
+        <button id="bn-export" type="button">この計画をExcel出力</button>
+      </div>
     </div>
     <div class="bn-kpis" id="bn-kpis"></div>
+    <div class="bn-validation" id="bn-validation" hidden>
+      <div class="bn-validation-title">実計画(FeliCa)との照合</div>
+      <div id="bn-validation-body"></div>
+    </div>
     <div class="bn-remedies" id="bn-remedies" hidden>
       <div class="bn-remedies-title">納期遅れ 解消の提案</div>
       <div id="bn-remedy-list"></div>

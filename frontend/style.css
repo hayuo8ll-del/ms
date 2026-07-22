@@ -343,7 +343,14 @@ button#export-plan:disabled {
   margin-left: 8px;
 }
 
-button#bn-export {
+.bn-head-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+button#bn-export,
+button#bn-validate {
   border: 1px solid var(--accent-b);
   background: transparent;
   color: var(--accent-b);
@@ -354,9 +361,69 @@ button#bn-export {
   white-space: nowrap;
 }
 
-button#bn-export:disabled {
+button#bn-validate {
+  border-color: var(--accent-a);
+  color: var(--accent-a);
+}
+
+button#bn-export:disabled,
+button#bn-validate:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+.bn-validation {
+  border: 1px solid color-mix(in srgb, var(--accent-a) 45%, transparent);
+  background: color-mix(in srgb, var(--accent-a) 6%, transparent);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+
+.bn-validation[hidden] {
+  display: none;
+}
+
+.bn-validation-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--accent-a);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.bn-validation-note {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.bn-vtable {
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.bn-vtable th,
+.bn-vtable td {
+  border-bottom: 1px solid var(--line);
+  padding: 4px 14px 4px 0;
+  text-align: left;
+}
+
+.bn-vtable thead th {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.bn-vtable .bn-num {
+  font-family: var(--mono);
+  text-align: right;
+}
+
+.bn-vtable .bn-improved {
+  color: var(--accent-b);
+  font-weight: 700;
 }
 
 .bn-kpis {

@@ -155,6 +155,18 @@ directly by FastAPI's `StaticFiles` mount.
   progress view (distinct from the per-製番 `parse_actuals`). `parse_equipment_stops` reads
   a 設備停止マスタ sheet (`01_設備停止マスタ` or `設備停止`, 有効=Y rows only) from either
   the ledger workbook or the real stop-master workbook into `EquipmentStop`s.
+- `backend/felica_calibration.py` — validates a generated plan against the real production
+  plan (FeliCa) and calibrates the stage offsets / A-shift fraction. `parse_felica_plan`
+  reads the FeliCa workbook (`YYYYMM_CTA{1,2}` sheets; per-製番 `Line-In`=投入/start and
+  `Completion`=完成/≈MIL daily rows, merged across sheets) into `FelicaLot`s.
+  `compare_plans(result, felica, working_days)` → `ComparisonReport`: per-製番 completion-day
+  and ANT-start-day differences (in working-day indices) vs FeliCa → matched count, MAE and
+  bias for both, plus daily-shape MAE (MIL vs Completion, ANT vs Line-In). `calibrate`
+  grid-searches ANT/TAL/MIL offsets (HAL fixed 0) and A-shift fraction to minimise
+  completion+start MAE (re-running `plan_bottleneck` with `equipment_stops` disabled),
+  returning the current vs best error and the recommended offsets/fraction (advisory —
+  `config/bottleneck_planning.json` is not auto-edited). Verified on the real files: 32
+  matched 製番, completion MAE 3.12→2.66 working days after calibration.
 - `backend/bottleneck_export.py` — renders a `BottleneckPlanResult` into a `.xlsx` matching
   the two shop-floor tables: `生産計画(機種×日)` (per-機種 rows split by stage ANT/TAL/HAL/MIL,
   columns = working days — the TA1_生産計画 form) and `製番別MIL` (one row per 製番/出荷ロット
@@ -220,7 +232,9 @@ directly by FastAPI's `StaticFiles` mount.
   returns the plan as JSON — shift mode, per-stage×day allocation, per-製番 MIL lots,
   per-day 進捗 (`progress` + `has_actuals`), 納期遅れ解消の `remedies`, warnings, summary —
   for on-screen rendering; shares `_build_bottleneck_plan` with the export route),
-  `POST /api/import` (multipart
+  `POST /api/bottleneck/validate` (multipart THM 台帳 + FeliCa 実計画; runs
+  `felica_calibration` and returns current vs recommended offset/A-shift error metrics as
+  JSON), `POST /api/import` (multipart
   `.xlsx` upload; 422 with a list of `{sheet, row, message}` on validation failure,
   otherwise overwrites `config/*.json` and returns import counts), and
   `GET /api/import/template` (downloads the current config as a pre-filled `.xlsx`).
@@ -264,6 +278,9 @@ directly by FastAPI's `StaticFiles` mount.
 - `backend/tests/test_bottleneck_export.py` — asserts the exported workbook has the four
   expected sheets, the 機種×日 matrix lists every product with all stage rows, and the
   製番別MIL sheet has one row per lot with the overrun verdict.
+- `backend/tests/test_felica_calibration.py` — covers FeliCa parsing (per-製番 Line-In/
+  Completion), `compare_plans` completion-day diff/bias against a synthetic FeliCa, and
+  `calibrate` picking offsets that reduce the error toward a known-truth plan.
 - `backend/tests/test_plan_export.py` — runs the scheduler against the real
   `config/*.json` and asserts the exported workbook has exactly the four expected sheets
   (no utilization sheet), the schedule sheet row count matches the schedule, the matrix
@@ -286,7 +303,10 @@ directly by FastAPI's `StaticFiles` mount.
   first two columns; columns = working days), the **製番別MIL完成予定** table (late lots
   highlighted) and a **進捗** table (計画/計画累計/実績/実績累計/差/進捗 per day, negative in
   red; shown when the ledger has a 「日次実績」 sheet, else plan-cumulative only) and a
-  **納期遅れ 解消の提案** panel (`suggest_remedies`, shown only when lots are late), with a
+  **納期遅れ 解消の提案** panel (`suggest_remedies`, shown only when lots are late), and a
+  **実計画(FeliCa)との照合** panel — the **「実計画と照合(精度検証)」** button uploads a FeliCa
+  workbook (with the stored ledger) to `/api/bottleneck/validate` and shows current vs
+  recommended offset/A-shift error (完成日/投入日 MAE・バイアス), plus a
   **「この計画をExcel出力」** button that re-posts the stored file to
   `/api/bottleneck/export`. The discrete-scheduler view and this bottleneck view coexist on
   the page. The

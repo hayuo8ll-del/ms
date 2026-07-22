@@ -31,6 +31,7 @@ from config_loader import (
     load_orders_data,
 )
 from excel_import import ImportValidationError, WorkbookReadError, export_workbook, parse_workbook, save_config
+from felica_calibration import calibrate, compare_plans, parse_felica_plan
 from plan_export import export_plan_workbook
 from scheduler import Scheduler
 from thm_ledger_import import (
@@ -227,6 +228,64 @@ async def bottleneck_plan(
             "late_count": sum(1 for lot in result.mil_lots if lot.on_time is False),
             "extra": [[label, value] for label, value in extra_summary],
         },
+    }
+
+
+def _report_dict(rep) -> dict:
+    return {
+        "matched": rep.matched,
+        "completion_mae": rep.completion_mae,
+        "completion_bias": rep.completion_bias,
+        "start_mae": rep.start_mae,
+        "start_bias": rep.start_bias,
+        "completion_daily_mae": rep.completion_daily_mae,
+        "line_in_daily_mae": rep.line_in_daily_mae,
+    }
+
+
+@app.post("/api/bottleneck/validate")
+async def validate_bottleneck_plan(
+    file: UploadFile = File(...),
+    felica_file: UploadFile = File(...),
+    start_date: date | None = Form(None),
+    end_date: date | None = Form(None),
+    lines: str | None = Form(None),
+    future_only: bool = Form(True),
+):
+    """台帳から立てた計画を実計画(FeliCa)と製番単位で照合し、精度と推奨パラメータを返す。
+
+    現状のオフセット/A勤割合での誤差(完成日MAE・投入日MAE)と、グリッド探索で誤差最小に
+    較正した推奨オフセット/A勤割合を返す。config は自動更新しない(手動反映の提示のみ)。
+    """
+    result, demands, _extra, cfg, plan_start = await _build_bottleneck_plan(
+        file, None, start_date, end_date, lines, future_only
+    )
+    try:
+        felica = parse_felica_plan(io.BytesIO(await felica_file.read()))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"FeliCaファイルを読み込めませんでした: {exc}") from exc
+    if not felica:
+        raise HTTPException(status_code=422, detail="FeliCa実計画から製番が読み取れませんでした。")
+
+    working_days = result.working_days
+    plan_kwargs = dict(
+        stage_flows=cfg.stage_flows,
+        a_shift_only_switch=True,
+        a_shift_fraction=cfg.a_shift_fraction,
+        product_caps_by_mode=cfg.product_daily_caps_by_mode,
+        bottleneck_stage=cfg.bottleneck_stage,
+        machine_counts=cfg.machine_counts,
+    )
+    cal = calibrate(demands, working_days, cfg.line_daily_capacities, plan_kwargs, felica)
+    return {
+        "plan_start": plan_start.isoformat(),
+        "felica_lots": len(felica),
+        "current": _report_dict(cal.current),
+        "recommended": _report_dict(cal.recommended),
+        "current_offsets": {f.stage_id: f.lead_offset_days for f in cfg.stage_flows},
+        "current_a_shift_fraction": cfg.a_shift_fraction,
+        "recommended_offsets": cal.recommended_offsets,
+        "recommended_a_shift_fraction": cal.recommended_a_shift_fraction,
     }
 
 

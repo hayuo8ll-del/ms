@@ -23,6 +23,10 @@ const bnMilEl = document.getElementById("bn-mil");
 const bnProgressEl = document.getElementById("bn-progress");
 const bnRemediesEl = document.getElementById("bn-remedies");
 const bnRemedyListEl = document.getElementById("bn-remedy-list");
+const bnValidateButton = document.getElementById("bn-validate");
+const felicaFileInput = document.getElementById("felica-file");
+const bnValidationEl = document.getElementById("bn-validation");
+const bnValidationBodyEl = document.getElementById("bn-validation-body");
 const bnExportButton = document.getElementById("bn-export");
 const bnLinesInput = document.getElementById("bn-lines");
 
@@ -628,6 +632,54 @@ async function exportBottleneckPlan() {
   }
 }
 
+async function validateAgainstFelica() {
+  const felica = felicaFileInput.files[0];
+  if (!felica || !lastLedgerFile) return;
+
+  errorBanner.hidden = true;
+  bnValidateButton.disabled = true;
+  bnValidateButton.textContent = "照合中...";
+
+  try {
+    const formData = new FormData();
+    formData.append("file", lastLedgerFile);
+    formData.append("felica_file", felica);
+    if (startDateInput.value) formData.append("start_date", startDateInput.value);
+    if (bnLinesInput.value.trim()) formData.append("lines", bnLinesInput.value.trim());
+    const res = await fetch("/api/bottleneck/validate", { method: "POST", body: formData });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(typeof data.detail === "string" ? data.detail : `APIエラー: ${res.status}`);
+    }
+    renderValidation(data);
+    bnValidationEl.hidden = false;
+    bnValidationEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (err) {
+    errorBanner.hidden = false;
+    errorBanner.textContent = `実計画との照合に失敗しました:\n${err.message}`;
+  } finally {
+    bnValidateButton.disabled = false;
+    bnValidateButton.textContent = "実計画と照合(精度検証)";
+    felicaFileInput.value = "";
+  }
+}
+
+function renderValidation(d) {
+  const offStr = (o) => `ANT ${o.ANT} / TAL ${o.TAL} / HAL ${o.HAL} / MIL ${o.MIL}`;
+  const row = (label, cur, rec) =>
+    `<tr><td>${label}</td><td class="bn-num">${cur}</td><td class="bn-num">${rec}</td></tr>`;
+  const better = (c, r) => (r < c ? ' class="bn-improved"' : "");
+  bnValidationBodyEl.innerHTML =
+    `<p class="bn-validation-note">FeliCa実計画の${d.felica_lots}製番のうち一致した${d.current.matched}製番で照合（単位=稼働日）。config への反映は手動です。</p>` +
+    `<table class="bn-vtable"><thead><tr><th>指標</th><th>現状</th><th>推奨較正後</th></tr></thead><tbody>` +
+    `<tr><td>完成日 MAE</td><td class="bn-num">${d.current.completion_mae}</td><td class="bn-num"${better(d.current.completion_mae, d.recommended.completion_mae)}>${d.recommended.completion_mae}</td></tr>` +
+    `<tr><td>完成日 バイアス(our−実)</td><td class="bn-num">${d.current.completion_bias}</td><td class="bn-num">${d.recommended.completion_bias}</td></tr>` +
+    `<tr><td>投入日 MAE</td><td class="bn-num">${d.current.start_mae}</td><td class="bn-num"${better(d.current.start_mae, d.recommended.start_mae)}>${d.recommended.start_mae}</td></tr>` +
+    `<tr><td>工程オフセット</td><td>${offStr(d.current_offsets)}</td><td>${offStr(d.recommended_offsets)}</td></tr>` +
+    `<tr><td>A勤割合</td><td class="bn-num">${d.current_a_shift_fraction}</td><td class="bn-num">${d.recommended_a_shift_fraction}</td></tr>` +
+    `</tbody></table>`;
+}
+
 runButton.addEventListener("click", runPlan);
 exportButton.addEventListener("click", exportPlan);
 importButton.addEventListener("click", () => importFileInput.click());
@@ -635,4 +687,6 @@ importFileInput.addEventListener("change", importExcel);
 bottleneckButton.addEventListener("click", () => ledgerFileInput.click());
 ledgerFileInput.addEventListener("change", loadBottleneckPlan);
 bnExportButton.addEventListener("click", exportBottleneckPlan);
+bnValidateButton.addEventListener("click", () => felicaFileInput.click());
+felicaFileInput.addEventListener("change", validateAgainstFelica);
 runPlan();
