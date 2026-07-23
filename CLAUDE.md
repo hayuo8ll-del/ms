@@ -167,9 +167,16 @@ directly by FastAPI's `StaticFiles` mount.
   plan (FeliCa) and calibrates the stage offsets / A-shift fraction. `parse_felica_plan`
   reads the FeliCa workbook (`YYYYMM_CTA{1,2}` sheets; per-製番 `Line-In`=投入/start and
   `Completion`=完成/≈MIL daily rows, merged across sheets) into `FelicaLot`s.
-  `compare_plans(result, felica, working_days)` → `ComparisonReport`: per-製番 completion-day
-  and ANT-start-day differences (in working-day indices) vs FeliCa → matched count, MAE and
-  bias for both, plus daily-shape MAE (MIL vs Completion, ANT vs Line-In). `calibrate`
+  `compare_plans(result, felica, working_days, aliases=None)` → `ComparisonReport`: per-製番
+  completion-day and ANT-start-day differences (in working-day indices) vs FeliCa → matched
+  count, MAE and bias for both, plus **windowed** daily-shape MAE (MIL vs Completion, ANT vs
+  Line-In) — `_windowed_daily_mae` limits the daily comparison to the two series' overlapping
+  active-day range so a plan window that only partly overlaps FeliCa's month no longer inflates
+  the number (union-of-all-days would; e.g. 66k→38k on the real files). With `aliases` it also
+  fills `daily_shape_by_product` (`{呼称: {completion_mae, line_in_mae, days}}`, FeliCa RC-code
+  resolved via `resolve_product`, our per-機種 series from `stage_allocation.product`) — the
+  per-機種 breakdown that shows *which* 機種's day-by-day plan diverges most (さそり金融 is
+  the worst on the real files). `calibrate`
   grid-searches ANT/TAL/MIL offsets (HAL fixed 0) and A-shift fraction to minimise
   completion+start MAE (re-running `plan_bottleneck` with `equipment_stops` disabled),
   returning the current vs best error and the recommended offsets/fraction (advisory —
@@ -246,7 +253,10 @@ directly by FastAPI's `StaticFiles` mount.
   for on-screen rendering; shares `_build_bottleneck_plan` with the export route),
   `POST /api/bottleneck/validate` (multipart THM 台帳 + FeliCa 実計画; runs
   `felica_calibration` and returns current vs recommended global offset/A-shift error
-  metrics plus per-product `derived_offsets_by_product` as JSON),
+  metrics (incl. the windowed daily-shape line totals) plus a top-level
+  `daily_shape_by_product` (per-機種 windowed daily-shape MAE, sorted worst-first — from a
+  direct `compare_plans(..., aliases=cfg.product_aliases)` on the base plan, since `calibrate`
+  doesn't thread aliases) and per-product `derived_offsets_by_product` as JSON),
   `POST /api/bottleneck/apply-calibration` (JSON `{offsets, a_shift_fraction}` — typically the
   validate route's `recommended_offsets`/`recommended_a_shift_fraction`; validates the keys
   against the current stageFlows and the ranges (offset −15..15, fraction 0..1), then calls
@@ -304,10 +314,12 @@ directly by FastAPI's `StaticFiles` mount.
   expected sheets, the 機種×日 matrix lists every product with all stage rows, and the
   製番別MIL sheet has one row per lot with the overrun verdict.
 - `backend/tests/test_felica_calibration.py` — covers FeliCa parsing (per-製番 Line-In/
-  Completion), `compare_plans` completion-day diff/bias against a synthetic FeliCa,
-  `calibrate` picking offsets that reduce the error toward a known-truth plan, and
-  `derive_stage_offsets` computing per-product offsets from the 投入→完成 span split by the
-  current ratio.
+  Completion), `compare_plans` completion-day diff/bias against a synthetic FeliCa, the
+  windowed daily-shape MAE (non-overlap tails excluded → smaller than the union version) and
+  the per-機種 `daily_shape_by_product` breakdown (matching 機種 = 0, perturbed 機種 > 0, via
+  `aliases`; empty when `aliases` omitted), `calibrate` picking offsets that reduce the error
+  toward a known-truth plan, and `derive_stage_offsets` computing per-product offsets from the
+  投入→完成 span split by the current ratio.
 - `backend/tests/test_plan_export.py` — runs the scheduler against the real
   `config/*.json` and asserts the exported workbook has exactly the four expected sheets
   (no utilization sheet), the schedule sheet row count matches the schedule, the matrix
@@ -333,7 +345,9 @@ directly by FastAPI's `StaticFiles` mount.
   **納期遅れ 解消の提案** panel (`suggest_remedies`, shown only when lots are late), and a
   **実計画(FeliCa)との照合** panel — the **「実計画と照合(精度検証)」** button uploads a FeliCa
   workbook (with the stored ledger) to `/api/bottleneck/validate` and shows current vs
-  recommended offset/A-shift error (完成日/投入日 MAE・バイアス) and a per-機種 実リード由来
+  recommended offset/A-shift error (完成日/投入日 MAE・バイアス), a **機種別 日次形状の予実差**
+  table (per-機種 MIL/ANT windowed daily-shape MAE, worst-first with the top 機種 tinted red,
+  plus the line-total windowed MAE) and a per-機種 実リード由来
   オフセット table (for `leadOffsetByProduct`); when the recommendation differs from the
   current config a **「推奨値をconfigに反映」** button (`#bn-apply-calibration`) posts the
   recommended offsets/A-shift fraction to `/api/bottleneck/apply-calibration` to write them

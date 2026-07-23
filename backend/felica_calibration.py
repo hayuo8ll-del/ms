@@ -101,8 +101,10 @@ class ComparisonReport:
     completion_bias: float  # 平均符号付き差(our - felica; 正=遅い)
     start_mae: float  # 投入日の平均絶対誤差(稼働日)
     start_bias: float
-    completion_daily_mae: float  # 日次形状(MIL vs Completion)
-    line_in_daily_mae: float  # 日次形状(ANT vs Line-In)
+    completion_daily_mae: float  # 日次形状(MIL vs Completion; 予実の重複窓に限定)
+    line_in_daily_mae: float  # 日次形状(ANT vs Line-In; 予実の重複窓に限定)
+    # 機種別 日次形状MAE(重複窓): {呼称: {"completion_mae", "line_in_mae", "days"}}
+    daily_shape_by_product: dict[str, dict] = field(default_factory=dict)
 
 
 def _wd_index_map(working_days: list[date]) -> dict[date, int]:
@@ -118,22 +120,59 @@ def _nearest_index(d: date, wd_index: dict[date, int], working_days: list[date])
     return min(range(len(working_days)), key=lambda i: abs((working_days[i] - d).days))
 
 
-def compare_plans(result, felica: dict[str, FelicaLot], working_days: list[date]) -> ComparisonReport:
-    """生成計画と FeliCa 実計画を製番単位で突き合わせて誤差を出す。"""
+def _windowed_daily_mae(a: dict[date, float], b: dict[date, float]) -> tuple[float, int]:
+    """2つの日次系列を、両者の活動日レンジの**重複窓**に限定して MAE を出す。
+
+    計画窓とFeliCaの月レンジがずれると、非重複の裾(片側だけ台数がある日)が誤差を水増し
+    するため、`lo=max(min(a),min(b))`〜`hi=min(max(a),max(b))` の範囲に絞る。窓内で
+    どちらかに台数がある日だけを母数にする(両方ゼロの日は比較対象にしない)。
+    戻り値 = (MAE, 対象日数)。重複が無ければ (0, 0)。
+    """
+    if not a or not b:
+        return 0.0, 0
+    lo = max(min(a), min(b))
+    hi = min(max(a), max(b))
+    if lo > hi:
+        return 0.0, 0
+    days = [d for d in (set(a) | set(b)) if lo <= d <= hi]
+    if not days:
+        return 0.0, 0
+    return sum(abs(a.get(d, 0.0) - b.get(d, 0.0)) for d in days) / len(days), len(days)
+
+
+def compare_plans(
+    result,
+    felica: dict[str, FelicaLot],
+    working_days: list[date],
+    aliases: dict[str, str] | None = None,
+) -> ComparisonReport:
+    """生成計画と FeliCa 実計画を製番単位で突き合わせて誤差を出す。
+
+    `aliases` を渡すと、FeliCa の Item Desc(RCコード)を呼称へ解決して機種別の日次形状MAEも出す
+    (our の機種名は `stage_allocation` の product=呼称)。省略時は機種別内訳は空。
+    """
+    from thm_ledger_import import resolve_product
+
     wd_index = _wd_index_map(working_days)
 
-    # our: 製番 -> MIL完成日 / ANT最早投入日
+    # our: 製番 -> MIL完成日 / ANT最早投入日、および工程×機種の日次
     our_completion = {lot.order_id: lot.completion_day for lot in result.mil_lots if lot.order_id}
     our_ant_start: dict[str, date] = {}
     our_mil_daily: dict[date, float] = {}
     our_ant_daily: dict[date, float] = {}
+    our_mil_by_product: dict[str, dict[date, float]] = {}
+    our_ant_by_product: dict[str, dict[date, float]] = {}
     for c in result.stage_allocation:
         if c.stage_id == "ANT":
             our_ant_daily[c.day] = our_ant_daily.get(c.day, 0.0) + c.quantity
+            series = our_ant_by_product.setdefault(c.product, {})
+            series[c.day] = series.get(c.day, 0.0) + c.quantity
             if c.order_id and (c.order_id not in our_ant_start or c.day < our_ant_start[c.order_id]):
                 our_ant_start[c.order_id] = c.day
         elif c.stage_id == "MIL":
             our_mil_daily[c.day] = our_mil_daily.get(c.day, 0.0) + c.quantity
+            series = our_mil_by_product.setdefault(c.product, {})
+            series[c.day] = series.get(c.day, 0.0) + c.quantity
 
     comp_diffs: list[int] = []
     start_diffs: list[int] = []
@@ -149,20 +188,41 @@ def compare_plans(result, felica: dict[str, FelicaLot], working_days: list[date]
             if oi is not None and fi is not None:
                 start_diffs.append(oi - fi)
 
-    # 日次形状MAE(製番横断のライン計)
+    # FeliCa 日次形状(ライン計 + 機種別)
     fel_comp_daily: dict[date, float] = {}
     fel_li_daily: dict[date, float] = {}
+    fel_comp_by_product: dict[str, dict[date, float]] = {}
+    fel_li_by_product: dict[str, dict[date, float]] = {}
     for fl in felica.values():
+        product = resolve_product(fl.product, aliases) if aliases is not None else None
         for d, q in fl.completion_daily.items():
             fel_comp_daily[d] = fel_comp_daily.get(d, 0.0) + q
+            if product:
+                s = fel_comp_by_product.setdefault(product, {})
+                s[d] = s.get(d, 0.0) + q
         for d, q in fl.line_in_daily.items():
             fel_li_daily[d] = fel_li_daily.get(d, 0.0) + q
+            if product:
+                s = fel_li_by_product.setdefault(product, {})
+                s[d] = s.get(d, 0.0) + q
 
-    def daily_mae(a: dict[date, float], b: dict[date, float]) -> float:
-        days = set(a) | set(b)
-        if not days:
-            return 0.0
-        return sum(abs(a.get(d, 0.0) - b.get(d, 0.0)) for d in days) / len(days)
+    # 機種別 日次形状MAE(重複窓)
+    daily_shape_by_product: dict[str, dict] = {}
+    if aliases is not None:
+        for product in set(our_mil_by_product) | set(fel_comp_by_product) | set(our_ant_by_product) | set(fel_li_by_product):
+            comp_mae, comp_n = _windowed_daily_mae(
+                our_mil_by_product.get(product, {}), fel_comp_by_product.get(product, {})
+            )
+            li_mae, li_n = _windowed_daily_mae(
+                our_ant_by_product.get(product, {}), fel_li_by_product.get(product, {})
+            )
+            if comp_n == 0 and li_n == 0:
+                continue  # 予実の重複が無い機種は出さない
+            daily_shape_by_product[product] = {
+                "completion_mae": round(comp_mae, 0),
+                "line_in_mae": round(li_mae, 0),
+                "days": max(comp_n, li_n),
+            }
 
     def mae(xs: list[int]) -> float:
         return sum(abs(x) for x in xs) / len(xs) if xs else 0.0
@@ -176,8 +236,9 @@ def compare_plans(result, felica: dict[str, FelicaLot], working_days: list[date]
         completion_bias=round(bias(comp_diffs), 2),
         start_mae=round(mae(start_diffs), 2),
         start_bias=round(bias(start_diffs), 2),
-        completion_daily_mae=round(daily_mae(our_mil_daily, fel_comp_daily), 0),
-        line_in_daily_mae=round(daily_mae(our_ant_daily, fel_li_daily), 0),
+        completion_daily_mae=round(_windowed_daily_mae(our_mil_daily, fel_comp_daily)[0], 0),
+        line_in_daily_mae=round(_windowed_daily_mae(our_ant_daily, fel_li_daily)[0], 0),
+        daily_shape_by_product=daily_shape_by_product,
     )
 
 

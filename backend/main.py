@@ -283,6 +283,16 @@ async def validate_bottleneck_plan(
         machine_counts=cfg.machine_counts,
     )
     cal = calibrate(demands, working_days, cfg.line_daily_capacities, plan_kwargs, felica)
+    # 機種別 日次形状(重複窓): calibrate は aliases を通さないので base に直接1回かける
+    base_report = compare_plans(result, felica, working_days, aliases=cfg.product_aliases)
+    daily_shape = [
+        {"product": p, **v}
+        for p, v in sorted(
+            base_report.daily_shape_by_product.items(),
+            key=lambda kv: kv[1]["completion_mae"] + kv[1]["line_in_mae"],
+            reverse=True,
+        )
+    ]
     # 機種別の実リード由来オフセット(WIP動的化, Phase 4)
     derived = derive_stage_offsets(felica, working_days, cfg.stage_flows, aliases=cfg.product_aliases)
     return {
@@ -290,6 +300,7 @@ async def validate_bottleneck_plan(
         "felica_lots": len(felica),
         "current": _report_dict(cal.current),
         "recommended": _report_dict(cal.recommended),
+        "daily_shape_by_product": daily_shape,
         "current_offsets": {f.stage_id: f.lead_offset_days for f in cfg.stage_flows},
         "current_a_shift_fraction": cfg.a_shift_fraction,
         "recommended_offsets": cal.recommended_offsets,

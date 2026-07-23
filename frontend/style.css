@@ -426,6 +426,11 @@ button#bn-validate:disabled {
   font-weight: 700;
 }
 
+.bn-vtable .bn-worst {
+  color: var(--danger);
+  font-weight: 700;
+}
+
 .bn-validation-actions {
   display: flex;
   flex-wrap: wrap;

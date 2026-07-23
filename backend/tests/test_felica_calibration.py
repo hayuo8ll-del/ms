@@ -108,6 +108,67 @@ def test_calibrate_picks_offsets_reducing_error():
     assert cal.recommended_offsets["MIL"] == 0
 
 
+def test_daily_shape_mae_limited_to_overlap_window():
+    """予実の重複窓外の裾は日次形状MAEに含めない(union版より小さくなる)。"""
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 8, 31))
+    flows = [StageFlowConfig("ANT", -1), StageFlowConfig("HAL", 0), StageFlowConfig("MIL", 1)]
+    caps = {"16h": {"さそり金融": 90000}, "22h": {"さそり金融": 120000}}
+    demands = [DemandItem("さそり金融", 90000, date(2026, 7, 31), order_id="S1")]
+    result = plan_bottleneck(demands, days, CAPS, stage_flows=flows, product_caps_by_mode=caps)
+
+    our_comp = {lot.order_id: lot.completion_day for lot in result.mil_lots}["S1"]
+    ci = days.index(our_comp)
+    # FeliCa: our と重なる完成日 + 遠く離れた裾(非重複)を持たせる
+    far = days[-1]  # 8月末、our MIL には無い日
+    buf = _felica_workbook([
+        ("S1", "RC-SA02F/5", 90000, {days[0]: 90000}, {days[ci]: 60000, far: 30000}),
+    ])
+    felica = parse_felica_plan(buf)
+
+    rep = compare_plans(result, felica, days)
+    # 非重複の裾(far=30000)は窓外なので除外され、重複窓の差(完成日の 90000 vs 60000=30000)が主
+    assert rep.completion_daily_mae <= 30000
+
+
+def test_daily_shape_by_product_breakdown():
+    """aliases を渡すと機種別の日次形状MAEが出る(一致機種=0, ズレ機種=正)。"""
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    flows = [StageFlowConfig("ANT", 0), StageFlowConfig("HAL", 0), StageFlowConfig("MIL", 0)]
+    caps = {
+        "16h": {"さそり金融": 90000, "MOT2": 90000},
+        "22h": {"さそり金融": 120000, "MOT2": 120000},
+    }
+    demands = [
+        DemandItem("さそり金融", 90000, date(2026, 7, 31), order_id="S1"),
+        DemandItem("MOT2", 90000, date(2026, 7, 31), order_id="S2"),
+    ]
+    result = plan_bottleneck(demands, days, CAPS, stage_flows=flows, product_caps_by_mode=caps)
+
+    # our の MIL 日次を機種別に取り出す
+    our_mil = {}
+    for c in result.stage_allocation:
+        if c.stage_id == "MIL":
+            our_mil.setdefault(c.product, {})[c.day] = c.quantity
+
+    # FeliCa: さそり金融は our と同一形状(重複窓でMAE 0)、
+    # MOT2 は同じ日だが台数を半分に(重複窓で台数ズレ → MAE > 0)
+    sasori_co = dict(our_mil["さそり金融"])
+    mot_co = {d: q / 2 for d, q in our_mil["MOT2"].items()}
+    buf = _felica_workbook([
+        ("S1", "RC-SA02F/5", 90000, {days[0]: 90000}, sasori_co),
+        ("S2", "RC-S127/HCB5", 90000, {days[0]: 90000}, mot_co),
+    ])
+    felica = parse_felica_plan(buf)
+
+    aliases = {"RC-SA02F": "さそり金融", "RC-S127": "MOT2"}
+    rep = compare_plans(result, felica, days, aliases=aliases)
+    assert set(rep.daily_shape_by_product) == {"さそり金融", "MOT2"}
+    assert rep.daily_shape_by_product["さそり金融"]["completion_mae"] == 0
+    assert rep.daily_shape_by_product["MOT2"]["completion_mae"] > 0
+    # aliases 省略時は機種別内訳を作らない(後方互換)
+    assert compare_plans(result, felica, days).daily_shape_by_product == {}
+
+
 def test_derive_stage_offsets_from_span_and_ratio():
     days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
     flows = [StageFlowConfig("ANT", -2), StageFlowConfig("TAL", -1),

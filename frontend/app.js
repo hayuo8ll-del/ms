@@ -686,6 +686,7 @@ function renderValidation(d) {
     `<tr><td>工程オフセット</td><td>${offStr(d.current_offsets)}</td><td>${offStr(d.recommended_offsets)}</td></tr>` +
     `<tr><td>A勤割合</td><td class="bn-num">${d.current_a_shift_fraction}</td><td class="bn-num">${d.recommended_a_shift_fraction}</td></tr>` +
     `</tbody></table>` +
+    renderDailyShape(d.daily_shape_by_product, d.current) +
     renderDerivedOffsets(d.derived_offsets_by_product);
 
   // 推奨値が現状と異なるときだけ「configに反映」ボタンを出す
@@ -721,6 +722,25 @@ async function applyCalibration() {
     bnApplyButton.disabled = false;
     bnApplyButton.textContent = "推奨値をconfigに反映";
   }
+}
+
+function renderDailyShape(rows, cur) {
+  if (!rows || rows.length === 0) return "";
+  const fmt = (n) => Number(n).toLocaleString();
+  const head = `<tr><th>機種</th><th class="bn-num">MIL形状MAE</th><th class="bn-num">ANT形状MAE</th><th class="bn-num">日数</th></tr>`;
+  const body = rows
+    .map((r, i) => {
+      const emph = i === 0 ? ' class="bn-worst"' : "";
+      return `<tr><td${emph}>${r.product}</td><td class="bn-num">${fmt(r.completion_mae)}</td><td class="bn-num">${fmt(r.line_in_mae)}</td><td class="bn-num">${r.days}</td></tr>`;
+    })
+    .join("");
+  const lineTotal = cur
+    ? `ライン計(窓限定): MIL ${fmt(cur.completion_daily_mae)} / ANT ${fmt(cur.line_in_daily_mae)} 台/日。`
+    : "";
+  return (
+    `<p class="bn-validation-note" style="margin-top:10px">機種別 日次形状の予実差（予実の重複窓・稼働日、台数）。MIL=完成日次 vs FeliCa Completion、ANT=投入日次 vs Line-In。乖離の大きい順。${lineTotal}</p>` +
+    `<table class="bn-vtable"><thead>${head}</thead><tbody>${body}</tbody></table>`
+  );
 }
 
 function renderDerivedOffsets(derived) {
