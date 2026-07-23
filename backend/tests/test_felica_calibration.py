@@ -169,6 +169,42 @@ def test_daily_shape_by_product_breakdown():
     assert compare_plans(result, felica, days).daily_shape_by_product == {}
 
 
+def test_timing_by_product_reports_signed_bias():
+    """機種別 予実タイミング差: ourが実績より遅い機種は completion_bias>0, 早い機種は<0。"""
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 8, 31))
+    flows = [StageFlowConfig("ANT", -1), StageFlowConfig("HAL", 0), StageFlowConfig("MIL", 1)]
+    caps = {
+        "16h": {"さそり金融": 90000, "MOT2": 90000},
+        "22h": {"さそり金融": 120000, "MOT2": 120000},
+    }
+    demands = [
+        DemandItem("さそり金融", 90000, date(2026, 7, 31), order_id="S1"),
+        DemandItem("MOT2", 90000, date(2026, 7, 31), order_id="S2"),
+    ]
+    result = plan_bottleneck(demands, days, CAPS, stage_flows=flows, product_caps_by_mode=caps)
+    our_comp = {lot.order_id: lot.completion_day for lot in result.mil_lots}
+
+    ci_s1 = days.index(our_comp["S1"])
+    ci_s2 = days.index(our_comp["S2"])
+    # さそり金融(S1): FeliCa完成を our より2稼働日「前」に置く → our遅い → bias +2
+    # MOT2(S2):     FeliCa完成を our より2稼働日「後」に置く → our早い → bias -2
+    fel_s1 = days[ci_s1 - 2]
+    fel_s2 = days[ci_s2 + 2]
+    buf = _felica_workbook([
+        ("S1", "RC-SA02F/5", 90000, {days[0]: 90000}, {fel_s1: 90000}),
+        ("S2", "RC-S127/HCB5", 90000, {days[0]: 90000}, {fel_s2: 90000}),
+    ])
+    felica = parse_felica_plan(buf)
+
+    aliases = {"RC-SA02F": "さそり金融", "RC-S127": "MOT2"}
+    rep = compare_plans(result, felica, days, aliases=aliases)
+    assert rep.timing_by_product["さそり金融"]["completion_bias"] == 2.0
+    assert rep.timing_by_product["MOT2"]["completion_bias"] == -2.0
+    assert rep.timing_by_product["さそり金融"]["n"] == 1
+    # aliases 省略時は機種別タイミングを作らない(後方互換)
+    assert compare_plans(result, felica, days).timing_by_product == {}
+
+
 def test_derive_stage_offsets_from_span_and_ratio():
     days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
     flows = [StageFlowConfig("ANT", -2), StageFlowConfig("TAL", -1),

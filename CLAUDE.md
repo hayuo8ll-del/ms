@@ -182,10 +182,13 @@ directly by FastAPI's `StaticFiles` mount.
   returning the current vs best error and the recommended offsets/fraction (advisory —
   `config/bottleneck_planning.json` is not auto-edited). `derive_stage_offsets` computes
   **per-product** offsets from FeliCa's own 投入→完成 span (median working-days per 機種,
-  resolved to 呼称), split around HAL by the current offset ratio — data-driven values for
-  `stageFlows[].leadOffsetByProduct` (Phase 4 dynamic offsets). Verified on the real files:
-  32 matched 製番, completion MAE 3.12→2.66 working days after calibration; per-product
-  leads range span-3 (さそり金融/SuicaⅢ/Lite-S) to span-0 (MOT2/さそり交通).
+  resolved to 呼称), split around HAL by the current offset ratio — kept (and unit-tested) but
+  **no longer surfaced** by `/validate`: on the real files it (and any per-product
+  offset-fit) *raised* error, because the residual per-機種 timing error is HAL campaign
+  sequencing, not lead-time — correcting it via offsets requires physically-impossible values
+  (投入 after HAL / 完成 before HAL). Verified: 32 matched 製番, global calibration got
+  completion MAE 3.12→2.66 working days; the remaining per-機種 bias is now shown as a
+  diagnostic (`timing_by_product`) rather than auto-corrected.
 - `backend/bottleneck_export.py` — renders a `BottleneckPlanResult` into a `.xlsx` matching
   the two shop-floor tables: `生産計画(機種×日)` (per-機種 rows split by stage ANT/TAL/HAL/MIL,
   columns = working days — the TA1_生産計画 form) and `製番別MIL` (one row per 製番/出荷ロット
@@ -254,9 +257,18 @@ directly by FastAPI's `StaticFiles` mount.
   `POST /api/bottleneck/validate` (multipart THM 台帳 + FeliCa 実計画; runs
   `felica_calibration` and returns current vs recommended global offset/A-shift error
   metrics (incl. the windowed daily-shape line totals) plus a top-level
-  `daily_shape_by_product` (per-機種 windowed daily-shape MAE, sorted worst-first — from a
-  direct `compare_plans(..., aliases=cfg.product_aliases)` on the base plan, since `calibrate`
-  doesn't thread aliases) and per-product `derived_offsets_by_product` as JSON),
+  `daily_shape_by_product` (per-機種 windowed daily-shape MAE — mostly structural, see below)
+  and `timing_by_product` (per-機種 completion/start-day **bias** our−FeliCa, +=our runs late /
+  −=early, sorted by |completion_bias| — the actionable diagnostic showing which 機種 the model
+  systematically mis-times; both from a direct `compare_plans(..., aliases=cfg.product_aliases)`
+  on the base plan since `calibrate` doesn't thread aliases) as JSON. Note on the two shape
+  metrics: FeliCa books each 出荷ロット's whole quantity as a lump on its completion day while
+  our MIL is a smoothed rate, so `daily_shape_by_product` is largely a structural lump-vs-rate
+  difference (not a fixable planning error) — surfaced as 参考; the per-機種 completion residual
+  is driven by HAL **campaign sequencing** (low-cap 機種 like Lite-S finish late) and can't be
+  fixed by per-product offsets (a bias-correction would need 投入-after-HAL / 完成-before-HAL
+  offsets — physically impossible), which is why the discredited span-based
+  `derive_stage_offsets` recommendation is no longer surfaced),
   `POST /api/bottleneck/apply-calibration` (JSON `{offsets, a_shift_fraction}` — typically the
   validate route's `recommended_offsets`/`recommended_a_shift_fraction`; validates the keys
   against the current stageFlows and the ranges (offset −15..15, fraction 0..1), then calls
@@ -315,9 +327,11 @@ directly by FastAPI's `StaticFiles` mount.
   製番別MIL sheet has one row per lot with the overrun verdict.
 - `backend/tests/test_felica_calibration.py` — covers FeliCa parsing (per-製番 Line-In/
   Completion), `compare_plans` completion-day diff/bias against a synthetic FeliCa, the
-  windowed daily-shape MAE (non-overlap tails excluded → smaller than the union version) and
-  the per-機種 `daily_shape_by_product` breakdown (matching 機種 = 0, perturbed 機種 > 0, via
-  `aliases`; empty when `aliases` omitted), `calibrate` picking offsets that reduce the error
+  windowed daily-shape MAE (non-overlap tails excluded → smaller than the union version), the
+  per-機種 `daily_shape_by_product` breakdown (matching 機種 = 0, perturbed 機種 > 0, via
+  `aliases`; empty when `aliases` omitted), the per-機種 `timing_by_product` signed bias
+  (our-later 機種 completion_bias > 0, our-earlier < 0; empty without `aliases`), `calibrate`
+  picking offsets that reduce the error
   toward a known-truth plan, and `derive_stage_offsets` computing per-product offsets from the
   投入→完成 span split by the current ratio.
 - `backend/tests/test_plan_export.py` — runs the scheduler against the real
@@ -345,10 +359,10 @@ directly by FastAPI's `StaticFiles` mount.
   **納期遅れ 解消の提案** panel (`suggest_remedies`, shown only when lots are late), and a
   **実計画(FeliCa)との照合** panel — the **「実計画と照合(精度検証)」** button uploads a FeliCa
   workbook (with the stored ledger) to `/api/bottleneck/validate` and shows current vs
-  recommended offset/A-shift error (完成日/投入日 MAE・バイアス), a **機種別 日次形状の予実差**
-  table (per-機種 MIL/ANT windowed daily-shape MAE, worst-first with the top 機種 tinted red,
-  plus the line-total windowed MAE) and a per-機種 実リード由来
-  オフセット table (for `leadOffsetByProduct`); when the recommendation differs from the
+  recommended offset/A-shift error (完成日/投入日 MAE・バイアス), a **機種別 予実タイミング差**
+  table (per-機種 completion/start-day bias, +=late/−=early, |bias|≥2 tinted red — the primary
+  per-機種 diagnostic) and a secondary **機種別 日次形状の予実差** table (labelled 参考 since it
+  is mostly structural lump-vs-rate); when the recommendation differs from the
   current config a **「推奨値をconfigに反映」** button (`#bn-apply-calibration`) posts the
   recommended offsets/A-shift fraction to `/api/bottleneck/apply-calibration` to write them
   into `config/bottleneck_planning.json` in one click (hidden — with a "既に較正済み" note —

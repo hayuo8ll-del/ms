@@ -105,6 +105,9 @@ class ComparisonReport:
     line_in_daily_mae: float  # 日次形状(ANT vs Line-In; 予実の重複窓に限定)
     # 機種別 日次形状MAE(重複窓): {呼称: {"completion_mae", "line_in_mae", "days"}}
     daily_shape_by_product: dict[str, dict] = field(default_factory=dict)
+    # 機種別 予実タイミング差: {呼称: {"completion_bias/mae", "start_bias/mae", "n"}}
+    # bias>0 = ourが遅い(モデルが後ろ倒し), <0 = ourが早い(前倒し)
+    timing_by_product: dict[str, dict] = field(default_factory=dict)
 
 
 def _wd_index_map(working_days: list[date]) -> dict[date, int]:
@@ -176,17 +179,24 @@ def compare_plans(
 
     comp_diffs: list[int] = []
     start_diffs: list[int] = []
+    comp_diffs_by_product: dict[str, list[int]] = {}
+    start_diffs_by_product: dict[str, list[int]] = {}
     for seiban, fl in felica.items():
+        product = resolve_product(fl.product, aliases) if aliases is not None else None
         if seiban in our_completion and fl.completion_last is not None:
             oi = _nearest_index(our_completion[seiban], wd_index, working_days)
             fi = _nearest_index(fl.completion_last, wd_index, working_days)
             if oi is not None and fi is not None:
                 comp_diffs.append(oi - fi)
+                if product:
+                    comp_diffs_by_product.setdefault(product, []).append(oi - fi)
         if seiban in our_ant_start and fl.line_in_first is not None:
             oi = _nearest_index(our_ant_start[seiban], wd_index, working_days)
             fi = _nearest_index(fl.line_in_first, wd_index, working_days)
             if oi is not None and fi is not None:
                 start_diffs.append(oi - fi)
+                if product:
+                    start_diffs_by_product.setdefault(product, []).append(oi - fi)
 
     # FeliCa 日次形状(ライン計 + 機種別)
     fel_comp_daily: dict[date, float] = {}
@@ -230,6 +240,20 @@ def compare_plans(
     def bias(xs: list[int]) -> float:
         return sum(xs) / len(xs) if xs else 0.0
 
+    # 機種別 予実タイミング差(完成日/投入日; bias=our-felica, 正=遅い)
+    timing_by_product: dict[str, dict] = {}
+    if aliases is not None:
+        for product in set(comp_diffs_by_product) | set(start_diffs_by_product):
+            cd = comp_diffs_by_product.get(product, [])
+            sd = start_diffs_by_product.get(product, [])
+            timing_by_product[product] = {
+                "completion_bias": round(bias(cd), 2),
+                "completion_mae": round(mae(cd), 2),
+                "start_bias": round(bias(sd), 2),
+                "start_mae": round(mae(sd), 2),
+                "n": max(len(cd), len(sd)),
+            }
+
     return ComparisonReport(
         matched=len(comp_diffs),
         completion_mae=round(mae(comp_diffs), 2),
@@ -239,6 +263,7 @@ def compare_plans(
         completion_daily_mae=round(_windowed_daily_mae(our_mil_daily, fel_comp_daily)[0], 0),
         line_in_daily_mae=round(_windowed_daily_mae(our_ant_daily, fel_li_daily)[0], 0),
         daily_shape_by_product=daily_shape_by_product,
+        timing_by_product=timing_by_product,
     )
 
 

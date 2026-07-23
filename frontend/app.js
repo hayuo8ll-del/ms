@@ -686,8 +686,8 @@ function renderValidation(d) {
     `<tr><td>工程オフセット</td><td>${offStr(d.current_offsets)}</td><td>${offStr(d.recommended_offsets)}</td></tr>` +
     `<tr><td>A勤割合</td><td class="bn-num">${d.current_a_shift_fraction}</td><td class="bn-num">${d.recommended_a_shift_fraction}</td></tr>` +
     `</tbody></table>` +
-    renderDailyShape(d.daily_shape_by_product, d.current) +
-    renderDerivedOffsets(d.derived_offsets_by_product);
+    renderTimingByProduct(d.timing_by_product) +
+    renderDailyShape(d.daily_shape_by_product, d.current);
 
   // 推奨値が現状と異なるときだけ「configに反映」ボタンを出す
   const differs =
@@ -738,26 +738,26 @@ function renderDailyShape(rows, cur) {
     ? `ライン計(窓限定): MIL ${fmt(cur.completion_daily_mae)} / ANT ${fmt(cur.line_in_daily_mae)} 台/日。`
     : "";
   return (
-    `<p class="bn-validation-note" style="margin-top:10px">機種別 日次形状の予実差（予実の重複窓・稼働日、台数）。MIL=完成日次 vs FeliCa Completion、ANT=投入日次 vs Line-In。乖離の大きい順。${lineTotal}</p>` +
+    `<p class="bn-validation-note" style="margin-top:10px">機種別 日次形状の予実差（参考・重複窓の台数/日）。FeliCaは出荷ロット完成を完成日に一括計上（山）、計画はライン率で平準化するため、この差は大半が構造差（直しても意味は薄い）。上のタイミング差が本命指標。${lineTotal}</p>` +
     `<table class="bn-vtable"><thead>${head}</thead><tbody>${body}</tbody></table>`
   );
 }
 
-function renderDerivedOffsets(derived) {
-  if (!derived) return "";
-  const stages = ["ANT", "TAL", "MIL"];
-  const products = [...new Set(stages.flatMap((s) => Object.keys(derived[s] || {})))].sort();
-  if (products.length === 0) return "";
-  const head = `<tr><th>機種</th>${stages.map((s) => `<th class="bn-num">${s}</th>`).join("")}</tr>`;
-  const rows = products
-    .map((p) => {
-      const cells = stages.map((s) => `<td class="bn-num">${derived[s] && derived[s][p] != null ? derived[s][p] : "-"}</td>`).join("");
-      return `<tr><td>${p}</td>${cells}</tr>`;
+function renderTimingByProduct(rows) {
+  if (!rows || rows.length === 0) return "";
+  const sign = (n) => `${n > 0 ? "+" : ""}${n}`;
+  const head =
+    `<tr><th>機種</th><th class="bn-num">完成日差</th><th class="bn-num">投入日差</th><th class="bn-num">n</th></tr>`;
+  const body = rows
+    .map((r) => {
+      // |完成日差| が大きい機種を強調(モデルが系統的に前/後ろ倒ししている機種)
+      const emph = Math.abs(r.completion_bias) >= 2 ? ' class="bn-worst"' : "";
+      return `<tr><td${emph}>${r.product}</td><td class="bn-num">${sign(r.completion_bias)}</td><td class="bn-num">${sign(r.start_bias)}</td><td class="bn-num">${r.n}</td></tr>`;
     })
     .join("");
   return (
-    `<p class="bn-validation-note" style="margin-top:10px">機種別 実リード由来オフセット（FeliCaの投入→完成スパン由来。config の <code>stageFlows[].leadOffsetByProduct</code> に手動反映で機種別に動的化できます）</p>` +
-    `<table class="bn-vtable"><thead>${head}</thead><tbody>${rows}</tbody></table>`
+    `<p class="bn-validation-note" style="margin-top:10px">機種別 予実タイミング差（稼働日、our−FeliCa。<strong>＋＝計画が実績より遅い／−＝早い</strong>）。系統的な差はボトルネック(HAL)での投入順・機種別キャパ由来で、固定オフセットでは物理的に補正できない（投入がHALより後／完成がHALより前になる）。どの機種の予測を割り引いて見るべきかの目安。</p>` +
+    `<table class="bn-vtable"><thead>${head}</thead><tbody>${body}</tbody></table>`
   );
 }
 

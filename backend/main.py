@@ -32,7 +32,7 @@ from config_loader import (
     save_bottleneck_calibration,
 )
 from excel_import import ImportValidationError, WorkbookReadError, export_workbook, parse_workbook, save_config
-from felica_calibration import calibrate, compare_plans, derive_stage_offsets, parse_felica_plan
+from felica_calibration import calibrate, compare_plans, parse_felica_plan
 from plan_export import export_plan_workbook
 from scheduler import Scheduler
 from thm_ledger_import import (
@@ -293,19 +293,25 @@ async def validate_bottleneck_plan(
             reverse=True,
         )
     ]
-    # 機種別の実リード由来オフセット(WIP動的化, Phase 4)
-    derived = derive_stage_offsets(felica, working_days, cfg.stage_flows, aliases=cfg.product_aliases)
+    timing = [
+        {"product": p, **v}
+        for p, v in sorted(
+            base_report.timing_by_product.items(),
+            key=lambda kv: abs(kv[1]["completion_bias"]),
+            reverse=True,
+        )
+    ]
     return {
         "plan_start": plan_start.isoformat(),
         "felica_lots": len(felica),
         "current": _report_dict(cal.current),
         "recommended": _report_dict(cal.recommended),
         "daily_shape_by_product": daily_shape,
+        "timing_by_product": timing,
         "current_offsets": {f.stage_id: f.lead_offset_days for f in cfg.stage_flows},
         "current_a_shift_fraction": cfg.a_shift_fraction,
         "recommended_offsets": cal.recommended_offsets,
         "recommended_a_shift_fraction": cal.recommended_a_shift_fraction,
-        "derived_offsets_by_product": derived,
     }
 
 
