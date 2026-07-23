@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>生産計画 自動立案</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <div class="title-group">
+      <h1>生産計画スケジューラ</h1>
+      <span class="tag">仮データ版 — SAMPLE DATA</span>
+    </div>
+    <div class="controls">
+      <a id="download-template" href="/api/import/template" download>Excelテンプレートをダウンロード</a>
+      <input type="file" id="import-file" accept=".xlsx" hidden />
+      <button id="import-button" type="button">Excelを取り込む</button>
+      <span class="divider"></span>
+      <label for="start-date">計画開始日</label>
+      <input type="date" id="start-date" />
+      <button id="run-plan" type="button">計画を立案する</button>
+      <button id="export-plan" type="button">計画をExcel出力</button>
+      <span class="divider"></span>
+      <label for="bn-lines">ライン</label>
+      <input type="text" id="bn-lines" placeholder="任意 例:CTA1,CTA2" size="12" />
+      <input type="file" id="ledger-file" accept=".xlsx" hidden />
+      <button id="bottleneck-button" type="button" title="THM生産台帳を取り込み、HALボトルネック基準の日次計画(機種×日／製番別MIL)を画面表示します。ライン欄で対象ラインを絞れます(空欄=全ライン)。台帳に「実績」シート(製番/実績数)や「設備停止」シートを足しておくと反映します。">台帳→ボトルネック計画</button>
+    </div>
+  </header>
+
+  <section class="bn-panel" id="bn-panel" hidden>
+    <div class="bn-head">
+      <div class="bn-title">ボトルネック計画 <span class="bn-sub">HAL基準・日次フロー（機種×日／製番別MIL）</span></div>
+      <div class="bn-head-actions">
+        <input type="file" id="thm-plan-file" accept=".xlsx" hidden />
+        <button id="bn-thm-actuals" type="button" title="THM短期投入予定表の赤字=MIL完成実績を製番別に取り込み、需要から控除して再立案します(完了ロットは除外)">実績取込:THM短期(MIL)</button>
+        <input type="file" id="ta1-file" accept=".xlsx" hidden />
+        <button id="bn-ta1-actuals" type="button" title="TA1_投入計画の赤字=HAL実績を日別に取り込み、進捗の実績ラインに反映して再立案します">実績取込:TA1(HAL)</button>
+        <input type="file" id="felica-calendar-file" accept=".xlsx" hidden />
+        <button id="bn-apply-calendar" type="button" title="FeliCa短期投入予定表の灰色(非稼働日=祝日/計画休)を読み取り、計画カレンダーに反映します(config に保存し、以降の立案・出力で稼働日から除外)">非稼働日カレンダー取込(FeliCa)</button>
+        <input type="file" id="felica-file" accept=".xlsx" hidden />
+        <button id="bn-validate" type="button" title="実計画(FeliCa)と製番単位で照合し、完成日/投入日の予実差と、誤差最小の推奨オフセット/A勤割合を出します">実計画と照合(精度検証)</button>
+        <button id="bn-export" type="button">この計画をExcel出力</button>
+      </div>
+    </div>
+    <div class="bn-kpis" id="bn-kpis"></div>
+    <div class="bn-validation" id="bn-validation" hidden>
+      <div class="bn-validation-title">実計画(FeliCa)との照合</div>
+      <div id="bn-validation-body"></div>
+      <div class="bn-validation-actions">
+        <button id="bn-apply-calibration" type="button" hidden title="推奨較正オフセット/A勤割合を config/bottleneck_planning.json に書き戻します。次回以降の立案・照合から有効になります。">推奨値をconfigに反映</button>
+        <span id="bn-apply-result" class="bn-apply-result"></span>
+      </div>
+    </div>
+    <div class="bn-remedies" id="bn-remedies" hidden>
+      <div class="bn-remedies-title">納期遅れ 解消の提案</div>
+      <div id="bn-remedy-list"></div>
+    </div>
+    <section class="warnings" id="bn-warnings" hidden>
+      <div class="w-title">警告</div>
+      <div id="bn-warning-list"></div>
+    </section>
+    <div class="bn-h">生産計画（機種 × 日）</div>
+    <div class="bn-matrix-wrap"><table class="bn-table" id="bn-matrix"></table></div>
+    <div class="bn-h">製番別 MIL 完成予定</div>
+    <div class="bn-mil-wrap"><table class="bn-table" id="bn-mil"></table></div>
+    <div class="bn-h" id="bn-progress-h">進捗（計画 / 実績 / 差 / 累計）</div>
+    <div class="bn-progress-wrap"><table class="bn-table" id="bn-progress"></table></div>
+  </section>
+
+  <section class="kpis" id="kpis" aria-live="polite"></section>
+
+  <p id="import-result" role="status" hidden></p>
+
+  <section class="warnings" id="warnings" hidden>
+    <div class="w-title">警告</div>
+    <div id="warning-list"></div>
+  </section>
+
+  <div class="legend">
+    <span><span class="dot stage-STAGE1"></span>工程A</span>
+    <span><span class="dot stage-STAGE2"></span>工程B(連続作業制約あり)</span>
+    <span><span class="dot stage-STAGE3"></span>工程C(数量丸めあり)</span>
+  </div>
+
+  <section class="gantt-wrap" id="gantt"></section>
+
+  <section class="matrix-panel" id="shift-matrix" hidden>
+    <div class="matrix-title">日付 × シフト 台数マトリクス</div>
+    <p class="matrix-note">各セルは、その勤務帯に注文が占有している号機の台数を工程別(A/B/C)に表示します。</p>
+    <div class="matrix-wrap"><table class="matrix-table" id="matrix-table"></table></div>
+  </section>
+
+  <section class="util-panel">
+    <div class="util-title">設備稼働率</div>
+    <div class="util-grid" id="util-grid"></div>
+  </section>
+
+  <footer>
+    config/equipment_master.json ・ changeover_matrix.json ・ orders_sample.json を読み込んで生成。
+    実データ移行時は「Excelテンプレートをダウンロード」→編集→「Excelを取り込む」で config/ を差し替えられる。
+  </footer>
+
+  <p id="error-banner" role="alert" hidden></p>
+
+  <script src="app.js"></script>
+</body>
+</html>

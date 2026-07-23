@@ -1,0 +1,74 @@
+{
+  "_comment": "ボトルネック(HAL)日次フロー計画のパラメータ。実データ移行・キャパ改定時はこのファイルを編集するだけでよい(コード変更不要)。stageFlows のオフセット(ANT-1/TAL-2/HAL0/MIL+2)と aShiftFraction 0.4 は実計画(FeliCa)照合で較正した値(完成日MAE 3.12→2.66/投入日MAE 2.79→2.4 稼働日)。機種別 leadOffsetByProduct は実測(短スパン機種の圧縮)で誤差が悪化したため採用せず、グローバル値のみ。shipmentBufferDays は納期の捉え方: 真の納期=台帳の出荷日、完成目標=出荷日−この日数(暦日)。EDD・遅れ判定はこの完成目標で行う。productDailyCapsByMode はCAP表の機種別キャパ列(設備可否○/△/×の帰結を織り込んだ機種別の日産台数)。キャパ未定義の機種は生産不可として計画から除外される。",
+  "lineDailyCapacities": { "16h": 90000, "22h": 120000 },
+  "bottleneckStage": "HAL",
+  "stageFlows": [
+    { "stageId": "ANT", "leadOffsetDays": -1 },
+    { "stageId": "TAL", "leadOffsetDays": -2, "inputUnit": 40000 },
+    { "stageId": "HAL", "leadOffsetDays": 0, "inputUnit": 10000 },
+    { "stageId": "MIL", "leadOffsetDays": 2, "inputUnit": 1920 }
+  ],
+  "machineCounts": { "ANT": 1, "TAL": 2, "HAL": 5, "MIL": 4 },
+  "aShiftFraction": 0.4,
+  "shipmentBufferDays": 2,
+  "productAliases": {
+    "RC-S100": "さそり金融",
+    "RC-SA02F": "さそり金融",
+    "RC-S103": "さそり交通",
+    "RC-S104": "さそり交通",
+    "RC-SA05A": "さそり交通",
+    "RC-S105": "SuicaⅢ",
+    "RC-S106": "SuicaⅢ",
+    "RC-SA06A": "SuicaⅢ",
+    "RC-S982F": "Lite-S(Mies)",
+    "RC-SA10A": "部分リライト",
+    "RC-S123": "SD-T1",
+    "RC-SA15A": "SD-T1",
+    "RC-S125": "Suica4",
+    "RC-S127": "MOT2",
+    "RC-S140": "SD3",
+    "RC-SA42F": "SD3"
+  },
+  "productDailyCapsByMode": {
+    "22h": {
+      "さそり金融": 120000,
+      "SuicaⅢ": 120000,
+      "さそり交通": 120000,
+      "Lite-S(Mies)": 42240,
+      "部分リライト": 30000,
+      "SD3": 30000,
+      "SD-T1": 30000,
+      "MOT2": 60000
+    },
+    "16h": {
+      "さそり金融": 80000,
+      "SuicaⅢ": 80000,
+      "さそり交通": 80000,
+      "Lite-S(Mies)": 30720,
+      "部分リライト": 20000,
+      "SD3": 20000,
+      "SD-T1": 20000,
+      "MOT2": 20000
+    },
+    "11h": {
+      "さそり金融": 60000,
+      "SuicaⅢ": 60000,
+      "さそり交通": 60000,
+      "Lite-S(Mies)": 21120,
+      "部分リライト": 15000,
+      "SD3": 15000,
+      "SD-T1": 15000,
+      "MOT2": 15000
+    },
+    "8h": {
+      "さそり金融": 40000,
+      "SuicaⅢ": 40000,
+      "さそり交通": 40000,
+      "Lite-S(Mies)": 15360,
+      "部分リライト": 10000,
+      "SD3": 10000,
+      "SD-T1": 10000,
+      "MOT2": 10000
+    }
+  }
+}
