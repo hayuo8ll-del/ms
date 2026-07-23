@@ -33,6 +33,10 @@
     <div class="bn-head">
       <div class="bn-title">ボトルネック計画 <span class="bn-sub">HAL基準・日次フロー（機種×日／製番別MIL）</span></div>
       <div class="bn-head-actions">
+        <input type="file" id="thm-plan-file" accept=".xlsx" hidden />
+        <button id="bn-thm-actuals" type="button" title="THM短期投入予定表の赤字=MIL完成実績を製番別に取り込み、需要から控除して再立案します(完了ロットは除外)">実績取込:THM短期(MIL)</button>
+        <input type="file" id="ta1-file" accept=".xlsx" hidden />
+        <button id="bn-ta1-actuals" type="button" title="TA1_投入計画の赤字=HAL実績を日別に取り込み、進捗の実績ラインに反映して再立案します">実績取込:TA1(HAL)</button>
         <input type="file" id="felica-calendar-file" accept=".xlsx" hidden />
         <button id="bn-apply-calendar" type="button" title="FeliCa短期投入予定表の灰色(非稼働日=祝日/計画休)を読み取り、計画カレンダーに反映します(config に保存し、以降の立案・出力で稼働日から除外)">非稼働日カレンダー取込(FeliCa)</button>
         <input type="file" id="felica-file" accept=".xlsx" hidden />

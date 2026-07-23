@@ -346,3 +346,94 @@ def parse_actuals(file_obj: BinaryIO, header_row: int = 1) -> dict[str, float]:
         key = str(seiban).strip()
         actuals[key] = actuals.get(key, 0.0) + float(qty)
     return actuals
+
+
+def _is_red_font(cell) -> bool:
+    """セルの文字色が赤(FFFF0000)か。現場の表では赤字=実績、黒字=予定。"""
+    fc = cell.font.color
+    return bool(fc and isinstance(fc.rgb, str) and fc.rgb == "FFFF0000")
+
+
+def parse_thm_shortterm_actuals(file_obj: BinaryIO, sheet_name: str = "TA1") -> dict[str, dict[str, float]]:
+    """THM短期投入予定表から、製番別に TAL(投入)/MIL(完成) の**実績(赤字)**を合算する。
+
+    レイアウト: 製番ごとに「Line-In行(=TAL投入, ピンク)」と直後の「Completion行(=MIL完成,
+    オレンジ)」の2行ペア。列6="Line-In"、列3=製番、列7以降が日付列(列1-6はラベル/累計)。
+    各行の日付列のうち**赤字**セル(=実績)だけを合算する。黒字(予定)は無視。
+    戻り値: {製番: {"TAL": 実績台数, "MIL": 実績台数}}(実績が1つでもある製番のみ)。
+    """
+    wb = load_workbook(file_obj, data_only=True)
+    ws = wb[sheet_name] if sheet_name in wb.sheetnames else wb[wb.sheetnames[0]]
+    first_date_col = 7
+    out: dict[str, dict[str, float]] = {}
+
+    def row_red_sum(r: int) -> float:
+        total = 0.0
+        for c in range(first_date_col, ws.max_column + 1):
+            cell = ws.cell(row=r, column=c)
+            v = cell.value
+            if isinstance(v, (int, float)) and _is_red_font(cell):
+                total += float(v)
+        return total
+
+    r = 5
+    while r <= ws.max_row:
+        role = ws.cell(row=r, column=6).value
+        seiban = ws.cell(row=r, column=3).value
+        if role == "Line-In" and seiban not in (None, "", "-"):
+            key = str(seiban).strip()
+            tal = row_red_sum(r)
+            mil = row_red_sum(r + 1)
+            if tal or mil:
+                cur = out.setdefault(key, {"TAL": 0.0, "MIL": 0.0})
+                cur["TAL"] += tal
+                cur["MIL"] += mil
+            r += 2
+        else:
+            r += 1
+    return out
+
+
+def parse_ta1_hal_actuals(
+    file_obj: BinaryIO, year: int, sheet_name: str = "生産計画"
+) -> dict[date, float]:
+    """TA1_投入計画(生産計画シート)から、HAL工程の**実績(赤字)**を日別に合算する。
+
+    レイアウト: 機種ごとにブロック(TAL/TAL累計/HAL/HAL累計/MIL...)。列1が工程ラベル。
+    行1に月ラベル(例 "9月", 列持ち越し)、行2に日番号。列3以降が日付。HAL行(列1=="HAL")の
+    日付セルのうち**赤字**を全機種ブロック横断で日別合算する。`year` は開始年(月が戻ったら+1)。
+    戻り値: {date: HAL実績台数}。
+    """
+    wb = load_workbook(file_obj, data_only=True)
+    ws = wb[sheet_name] if sheet_name in wb.sheetnames else wb[wb.sheetnames[0]]
+
+    col_date: dict[int, date] = {}
+    cur_month: int | None = None
+    cur_year = year
+    for c in range(3, ws.max_column + 1):
+        mv = ws.cell(row=1, column=c).value
+        if isinstance(mv, str) and mv.endswith("月"):
+            try:
+                m = int(mv[:-1])
+                if cur_month is not None and m < cur_month:
+                    cur_year += 1
+                cur_month = m
+            except ValueError:
+                pass
+        dv = ws.cell(row=2, column=c).value
+        if cur_month and isinstance(dv, (int, float)):
+            try:
+                col_date[c] = date(cur_year, cur_month, int(dv))
+            except ValueError:
+                pass
+
+    hal: dict[date, float] = {}
+    for r in range(1, ws.max_row + 1):
+        if ws.cell(row=r, column=1).value != "HAL":
+            continue
+        for c, d in col_date.items():
+            cell = ws.cell(row=r, column=c)
+            v = cell.value
+            if isinstance(v, (int, float)) and _is_red_font(cell):
+                hal[d] = hal.get(d, 0.0) + float(v)
+    return hal

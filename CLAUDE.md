@@ -185,6 +185,14 @@ directly by FastAPI's `StaticFiles` mount.
   progress view (distinct from the per-製番 `parse_actuals`). `parse_equipment_stops` reads
   a 設備停止マスタ sheet (`01_設備停止マスタ` or `設備停止`, 有効=Y rows only) from either
   the ledger workbook or the real stop-master workbook into `EquipmentStop`s.
+  **実績 from the shop-floor plan files** (red font = 実績, black = 予定):
+  `parse_thm_shortterm_actuals` reads the **THM短期投入予定表** (sheet `TA1`; per-製番
+  Line-In=TAL / Completion=MIL row pairs) and sums each row's **red-font** date cells into
+  `{製番: {"TAL", "MIL"}}` — the MIL total is the per-製番 完成実績 (→ `apply_actuals` demand
+  reduction). `parse_ta1_hal_actuals(file, year)` reads the **TA1_投入計画** (sheet `生産計画`;
+  per-機種 blocks, col1 stage labels, row1 月 carried forward + row2 日) and sums the **HAL**
+  rows' red-font cells into `{date: HAL実績}` (→ the 進捗 daily 実績 line). Both are robust to
+  layout (row-role / stage-label + red-font), no fixed date-column mapping for THM短期.
 - `backend/felica_calibration.py` — validates a generated plan against the real production
   plan (FeliCa) and calibrates the stage offsets / A-shift fraction. `parse_felica_plan`
   reads the FeliCa workbook (`YYYYMM_CTA{1,2}` sheets; per-製番 `Line-In`=投入/start and
@@ -279,6 +287,9 @@ directly by FastAPI's `StaticFiles` mount.
   the `bottleneck_export` `.xlsx` as
   `bottleneck_plan_YYYYMMDD.xlsx`; the サマリー gains 実績反映製番数/実績控除数量/
   設備停止反映件数 rows when applicable; an optional 「日次実績」 sheet drives the 進捗 sheet),
+  optional `thm_plan_file` (THM短期投入予定表 → per-製番 MIL完成実績 folded into `apply_actuals`)
+  and `ta1_file` (TA1_投入計画 → HAL日別実績 into the 進捗 実績 line, year=plan_start.year, in
+  plan window) uploads reflect real actuals when supplied;
   `POST /api/bottleneck/plan` (same multipart inputs,
   returns the plan as JSON — shift mode, per-stage×day allocation, per-製番 MIL lots,
   per-day 進捗 (`progress` + `has_actuals`), `campaigns` (段取り/切替 per stage), 納期遅れ解消の
@@ -353,7 +364,9 @@ directly by FastAPI's `StaticFiles` mount.
   (due_date = 出荷日 − shipment_buffer_days with `ship_date` kept; configurable buffer;
   fallback to 完成予定日 when 出荷日 absent), 「実績」-sheet
   parsing (duplicate summing, missing-sheet default), 日次実績 parsing (per-day summing across
-  stages, missing-sheet default), 設備停止マスタ parsing (有効=Y
+  stages, missing-sheet default), THM短期投入予定表 実績 (`parse_thm_shortterm_actuals`:
+  per-製番 red-font TAL/MIL sums, black 予定 ignored) and TA1 HAL 実績
+  (`parse_ta1_hal_actuals`: red-font HAL per day with 月→年 rollover), 設備停止マスタ parsing (有効=Y
   filter, missing-sheet default), `load_bottleneck_planning` config reading,
   `save_bottleneck_calibration` (offset/A-shift write-back on a tmp config, other fields
   preserved), and `save_nonworking_days` (nonWorkingDays write-back, sorted, other fields kept).
@@ -417,7 +430,11 @@ directly by FastAPI's `StaticFiles` mount.
   `/api/bottleneck/export`, and a **「非稼働日カレンダー取込(FeliCa)」** button
   (`#bn-apply-calendar`) that uploads a FeliCa workbook to `/api/bottleneck/apply-calendar`
   (writes the grey 非稼働日 into config) and re-plans from the stored ledger so 祝日/計画休
-  drop out of the matrix columns. The discrete-scheduler view and this bottleneck view coexist on
+  drop out of the matrix columns, plus **「実績取込:THM短期(MIL)」** (`#bn-thm-actuals`) and
+  **「実績取込:TA1(HAL)」** (`#bn-ta1-actuals`) buttons that store a THM短期投入予定表 /
+  TA1_投入計画 file (`lastThmPlanFile`/`lastTa1File`, sent with every plan/export POST via
+  `appendActualsFiles`) and re-plan so the red-font 実績 reduce demand (MIL) / fill the 進捗
+  実績 line (HAL). The discrete-scheduler view and this bottleneck view coexist on
   the page. The
   date×shift matrix (`renderShiftMatrix`)
   fetches the active shift pattern from `GET /api/equipment`

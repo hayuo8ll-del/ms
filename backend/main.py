@@ -41,7 +41,9 @@ from thm_ledger_import import (
     parse_actuals,
     parse_daily_actuals,
     parse_equipment_stops,
+    parse_ta1_hal_actuals,
     parse_thm_ledger,
+    parse_thm_shortterm_actuals,
 )
 
 app = FastAPI(title="生産計画自動立案API")
@@ -116,8 +118,14 @@ async def _build_bottleneck_plan(
     end_date: date | None,
     lines: str | None,
     future_only: bool,
+    thm_plan_file: UploadFile | None = None,
+    ta1_file: UploadFile | None = None,
 ):
     """台帳アップロードからボトルネック計画を立てる(export/plan で共通)。
+
+    実績の取り込み: THM短期投入予定表(`thm_plan_file`)の赤字=MIL完成実績を製番別に読み、
+    需要から控除(apply_actuals)する。TA1_投入計画(`ta1_file`)の赤字=HAL実績を日別に読み、
+    進捗の実績ラインに使う。どちらも任意。
 
     戻り値: (result, demands, extra_summary, cfg, plan_start)。
     """
@@ -143,6 +151,30 @@ async def _build_bottleneck_plan(
             stops = parse_equipment_stops(io.BytesIO(content))
     except Exception as exc:  # noqa: BLE001 - 壊れたファイル/非対応形式を一律400にする
         raise HTTPException(status_code=400, detail=f"台帳ファイルを読み込めませんでした: {exc}") from exc
+
+    # 実績: THM短期投入予定表(製番別MIL完成実績=赤字) → 需要控除
+    thm_tal_total = 0.0
+    if thm_plan_file is not None:
+        try:
+            thm_act = parse_thm_shortterm_actuals(io.BytesIO(await thm_plan_file.read()))
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=f"THM短期投入予定表を読み込めませんでした: {exc}") from exc
+        for seiban, per_stage in thm_act.items():
+            if per_stage.get("MIL"):
+                actuals[seiban] = actuals.get(seiban, 0.0) + per_stage["MIL"]
+            thm_tal_total += per_stage.get("TAL", 0.0)
+
+    # 実績: TA1_投入計画(HAL日別実績=赤字) → 進捗の実績ライン
+    hal_actual_days = 0
+    if ta1_file is not None:
+        try:
+            hal_act = parse_ta1_hal_actuals(io.BytesIO(await ta1_file.read()), year=plan_start.year)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=f"TA1_投入計画を読み込めませんでした: {exc}") from exc
+        for d, q in hal_act.items():
+            if plan_start <= d <= plan_end:
+                daily_actuals[d] = daily_actuals.get(d, 0.0) + q
+                hal_actual_days += 1
 
     actual_warnings: list[str] = []
     actuals_total = 0.0
@@ -181,6 +213,12 @@ async def _build_bottleneck_plan(
     extra_summary: list[tuple[str, object]] = []
     if actuals:
         extra_summary += [("実績反映製番数", len(actuals)), ("実績控除数量", actuals_total)]
+    if thm_plan_file is not None:
+        extra_summary.append(("THM短期MIL実績反映(製番)", len(actuals)))
+        if thm_tal_total:
+            extra_summary.append(("THM短期TAL実績(参考)", thm_tal_total))
+    if ta1_file is not None:
+        extra_summary.append(("TA1 HAL実績反映(日数)", hal_actual_days))
     if daily_actuals:
         extra_summary.append(("日次実績反映日数", len(daily_actuals)))
     if stops:
@@ -200,6 +238,8 @@ async def _build_bottleneck_plan(
 async def bottleneck_plan(
     file: UploadFile = File(...),
     stops_file: UploadFile | None = File(None),
+    thm_plan_file: UploadFile | None = File(None),
+    ta1_file: UploadFile | None = File(None),
     start_date: date | None = Form(None),
     end_date: date | None = Form(None),
     lines: str | None = Form(None),
@@ -208,9 +248,11 @@ async def bottleneck_plan(
     """THM生産台帳をアップロードし、HALボトルネック計画をJSONで返す(画面表示用)。
 
     入力・制約は /api/bottleneck/export と同じ。工程×日の配分と製番別MIL完成日を返す。
+    `thm_plan_file`(THM短期投入予定表)/`ta1_file`(TA1_投入計画)を足すと実績を反映する。
     """
     result, demands, extra_summary, cfg, plan_start = await _build_bottleneck_plan(
-        file, stops_file, start_date, end_date, lines, future_only
+        file, stops_file, start_date, end_date, lines, future_only,
+        thm_plan_file=thm_plan_file, ta1_file=ta1_file,
     )
     return {
         "plan_start": plan_start.isoformat(),
@@ -376,6 +418,8 @@ async def apply_bottleneck_calendar(felica_file: UploadFile = File(...)):
 async def export_bottleneck_plan(
     file: UploadFile = File(...),
     stops_file: UploadFile | None = File(None),
+    thm_plan_file: UploadFile | None = File(None),
+    ta1_file: UploadFile | None = File(None),
     start_date: date | None = Form(None),
     end_date: date | None = Form(None),
     lines: str | None = Form(None),
@@ -398,7 +442,8 @@ async def export_bottleneck_plan(
       config/bottleneck_planning.json で差し替えられる。
     """
     result, demands, extra_summary, cfg, plan_start = await _build_bottleneck_plan(
-        file, stops_file, start_date, end_date, lines, future_only
+        file, stops_file, start_date, end_date, lines, future_only,
+        thm_plan_file=thm_plan_file, ta1_file=ta1_file,
     )
     wb = export_bottleneck_workbook(result, demands, cfg.stage_order, extra_summary=extra_summary or None)
     buf = io.BytesIO()

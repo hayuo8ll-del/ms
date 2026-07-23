@@ -16,7 +16,9 @@ from thm_ledger_import import (  # noqa: E402
     parse_actuals,
     parse_daily_actuals,
     parse_equipment_stops,
+    parse_ta1_hal_actuals,
     parse_thm_ledger,
+    parse_thm_shortterm_actuals,
     resolve_product,
 )
 
@@ -254,3 +256,66 @@ def test_save_and_load_nonworking_days(tmp_path):
     assert data["nonWorkingDays"] == ["2026-07-20", "2026-08-11", "2026-08-14"]
     assert data["aShiftFraction"] == 0.4
     assert data["productAliases"]["RC-S100"] == "さそり金融"
+
+
+def test_parse_thm_shortterm_actuals_sums_red_font_per_stage():
+    """THM短期投入予定表: Line-In(TAL)/Completion(MIL)行の赤字=実績だけを製番別に合算。"""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    red = Font(color="FFFF0000")
+    black = Font(color="FF000000")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "TA1"
+    # 製番S1: Line-In行(r5) TAL実績=1000(赤)+予定500(黒), Completion行(r6) MIL実績=800+200(赤)
+    ws.cell(row=5, column=3, value="S1")
+    ws.cell(row=5, column=6, value="Line-In")
+    ws.cell(row=5, column=7, value=1000).font = red
+    ws.cell(row=5, column=8, value=500).font = black  # 予定→無視
+    ws.cell(row=6, column=7, value=800).font = red
+    ws.cell(row=6, column=9, value=200).font = red
+    # 製番S2: 実績なし(全部黒) → 出力に含まれない
+    ws.cell(row=7, column=3, value="S2")
+    ws.cell(row=7, column=6, value="Line-In")
+    ws.cell(row=7, column=7, value=300).font = black
+    ws.cell(row=8, column=7, value=300).font = black
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    out = parse_thm_shortterm_actuals(buf)
+    assert out == {"S1": {"TAL": 1000.0, "MIL": 1000.0}}  # MIL=800+200
+
+
+def test_parse_ta1_hal_actuals_reads_red_hal_with_month_rollover():
+    """TA1_投入計画: HAL行の赤字=実績を日別に。月が戻ったら年を+1(年跨ぎ)。"""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    red = Font(color="FFFF0000")
+    black = Font(color="FF000000")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "生産計画"
+    # 行1: 月ラベル(持ち越し), 行2: 日, HAL行の赤字を拾う
+    ws.cell(row=1, column=3, value="12月")
+    ws.cell(row=1, column=5, value="1月")   # 12→1 で年+1
+    ws.cell(row=2, column=3, value=30)
+    ws.cell(row=2, column=4, value=31)
+    ws.cell(row=2, column=5, value=1)
+    ws.cell(row=2, column=6, value=2)
+    ws.cell(row=6, column=1, value="HAL")
+    ws.cell(row=6, column=3, value=100).font = red
+    ws.cell(row=6, column=4, value=200).font = red
+    ws.cell(row=6, column=5, value=300).font = red
+    ws.cell(row=6, column=6, value=400).font = black  # 予定→無視
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    hal = parse_ta1_hal_actuals(buf, year=2026)
+    assert hal[date(2026, 12, 30)] == 100.0
+    assert hal[date(2026, 12, 31)] == 200.0
+    assert hal[date(2027, 1, 1)] == 300.0  # 年跨ぎ
+    assert date(2027, 1, 2) not in hal      # 黒字は実績でない

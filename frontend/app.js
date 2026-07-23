@@ -24,6 +24,10 @@ const bnProgressEl = document.getElementById("bn-progress");
 const bnRemediesEl = document.getElementById("bn-remedies");
 const bnRemedyListEl = document.getElementById("bn-remedy-list");
 const bnValidateButton = document.getElementById("bn-validate");
+const bnThmActualsButton = document.getElementById("bn-thm-actuals");
+const thmPlanFileInput = document.getElementById("thm-plan-file");
+const bnTa1ActualsButton = document.getElementById("bn-ta1-actuals");
+const ta1FileInput = document.getElementById("ta1-file");
 const bnApplyCalendarButton = document.getElementById("bn-apply-calendar");
 const felicaCalendarFileInput = document.getElementById("felica-calendar-file");
 const felicaFileInput = document.getElementById("felica-file");
@@ -36,8 +40,17 @@ const bnLinesInput = document.getElementById("bn-lines");
 
 // 直近に取り込んだ台帳ファイル(画面表示 → Excel出力で再利用)
 let lastLedgerFile = null;
+// 実績ファイル(THM短期=MIL実績, TA1=HAL実績)。立案・出力に同送する。
+let lastThmPlanFile = null;
+let lastTa1File = null;
 // 直近の照合結果(推奨値のconfig反映で再利用)
 let lastValidation = null;
+
+// 立案/出力のFormDataに実績ファイルを付ける(あるときだけ)。
+function appendActualsFiles(formData) {
+  if (lastThmPlanFile) formData.append("thm_plan_file", lastThmPlanFile);
+  if (lastTa1File) formData.append("ta1_file", lastTa1File);
+}
 
 const BN_STAGE_COLOR = { ANT: "var(--accent-a)", TAL: "var(--accent-b)", HAL: "var(--danger)", MIL: "var(--accent-c)" };
 
@@ -434,6 +447,7 @@ async function loadBottleneckPlan() {
     formData.append("file", file);
     if (startDateInput.value) formData.append("start_date", startDateInput.value);
     if (bnLinesInput.value.trim()) formData.append("lines", bnLinesInput.value.trim());
+    appendActualsFiles(formData);
     const res = await fetch("/api/bottleneck/plan", { method: "POST", body: formData });
     const data = await res.json();
     if (!res.ok) {
@@ -492,6 +506,7 @@ async function replanFromStoredLedger() {
   formData.append("file", lastLedgerFile);
   if (startDateInput.value) formData.append("start_date", startDateInput.value);
   if (bnLinesInput.value.trim()) formData.append("lines", bnLinesInput.value.trim());
+  appendActualsFiles(formData);
   const res = await fetch("/api/bottleneck/plan", { method: "POST", body: formData });
   const data = await res.json();
   if (!res.ok) {
@@ -499,6 +514,31 @@ async function replanFromStoredLedger() {
   }
   renderBottleneckPlan(data);
   bnPanelEl.hidden = false;
+}
+
+// 実績ファイル(THM短期=MIL / TA1=HAL)を選んで保存し、台帳があれば再立案する。
+async function loadActualsFile(which) {
+  const input = which === "thm" ? thmPlanFileInput : ta1FileInput;
+  const f = input.files[0];
+  if (!f) return;
+  if (which === "thm") lastThmPlanFile = f;
+  else lastTa1File = f;
+  errorBanner.hidden = true;
+  try {
+    if (lastLedgerFile) {
+      await replanFromStoredLedger();
+      bnPanelEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } else {
+      errorBanner.hidden = false;
+      errorBanner.textContent =
+        `実績ファイルを保持しました(${which === "thm" ? "THM短期/MIL" : "TA1/HAL"})。台帳を取り込むと反映されます。`;
+    }
+  } catch (err) {
+    errorBanner.hidden = false;
+    errorBanner.textContent = `実績の反映に失敗しました:\n${err.message}`;
+  } finally {
+    input.value = "";
+  }
 }
 
 function fmtNum(n) {
@@ -693,6 +733,7 @@ async function exportBottleneckPlan() {
     formData.append("file", lastLedgerFile);
     if (startDateInput.value) formData.append("start_date", startDateInput.value);
     if (bnLinesInput.value.trim()) formData.append("lines", bnLinesInput.value.trim());
+    appendActualsFiles(formData);
     const res = await fetch("/api/bottleneck/export", { method: "POST", body: formData });
     if (!res.ok) {
       let detail = `APIエラー: ${res.status}`;
@@ -863,4 +904,8 @@ felicaFileInput.addEventListener("change", validateAgainstFelica);
 bnApplyButton.addEventListener("click", applyCalibration);
 bnApplyCalendarButton.addEventListener("click", () => felicaCalendarFileInput.click());
 felicaCalendarFileInput.addEventListener("change", applyCalendar);
+bnThmActualsButton.addEventListener("click", () => thmPlanFileInput.click());
+thmPlanFileInput.addEventListener("change", () => loadActualsFile("thm"));
+bnTa1ActualsButton.addEventListener("click", () => ta1FileInput.click());
+ta1FileInput.addEventListener("change", () => loadActualsFile("ta1"));
 runPlan();
