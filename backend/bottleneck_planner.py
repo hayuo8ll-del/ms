@@ -23,12 +23,17 @@ A_SHIFT_DEFERRAL_TAG = "機種切替(管理者作業)はA勤のみ"
 
 @dataclass
 class DemandItem:
-    """一定期間に生産すべき機種と数量・納期。"""
+    """一定期間に生産すべき機種と数量・納期。
+
+    `due_date` は**完成目標日**(=出荷日−出荷前バッファ)。EDD並べ替え・遅れ判定はこれを使う。
+    `ship_date` は本当の納期=出荷日(表示用。台帳に出荷日が無い行は None)。
+    """
 
     product: str
     quantity: float
     due_date: date
     order_id: str = ""
+    ship_date: date | None = None
 
 
 @dataclass
@@ -148,7 +153,11 @@ def apply_equipment_stops(
 
 @dataclass
 class MilLotCompletion:
-    """MIL(最終工程)を製番(出荷ロット)単位で見た完成日と納期充足。"""
+    """MIL(最終工程)を製番(出荷ロット)単位で見た完成日と納期充足。
+
+    `due_date` は完成目標日(出荷日−出荷前バッファ)。`on_time` は完成日<=完成目標日。
+    `ship_date` は本当の納期=出荷日(表示用)。
+    """
 
     order_id: str
     product: str
@@ -156,6 +165,7 @@ class MilLotCompletion:
     completion_day: date
     due_date: date | None = None
     on_time: bool | None = None
+    ship_date: date | None = None
 
 
 @dataclass
@@ -370,7 +380,7 @@ def apply_actuals(
                 f"製番{d.order_id}({d.product}): 実績{done:.0f}で計画数{d.quantity:.0f}を満たしたため計画から除外しました。"
             )
             continue
-        adjusted.append(DemandItem(product=d.product, quantity=rest, due_date=d.due_date, order_id=d.order_id))
+        adjusted.append(DemandItem(product=d.product, quantity=rest, due_date=d.due_date, order_id=d.order_id, ship_date=d.ship_date))
 
     for seiban in sorted(set(actuals) - matched):
         warnings.append(f"実績の製番{seiban}が台帳の対象受注に見つかりません(製番・対象期間を確認してください)。")
@@ -596,8 +606,10 @@ def mil_completion_by_order(
     demands を渡すと納期(due_date)と間に合うか(on_time)も付与する。
     """
     due_by_order: dict[str, date] = {}
+    ship_by_order: dict[str, date] = {}
     if demands:
         due_by_order = {d.order_id: d.due_date for d in demands if d.order_id}
+        ship_by_order = {d.order_id: d.ship_date for d in demands if d.order_id and d.ship_date}
 
     grouped: dict[str, dict] = {}
     for c in stage_allocation:
@@ -620,6 +632,7 @@ def mil_completion_by_order(
                 completion_day=g["completion"],
                 due_date=due,
                 on_time=on_time,
+                ship_date=ship_by_order.get(order_id),
             )
         )
     lots.sort(key=lambda lot: (lot.completion_day, lot.order_id))

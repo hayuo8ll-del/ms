@@ -660,22 +660,26 @@ function renderChangeoverSummary(data, stages) {
 }
 function renderBnMil(lots) {
   const head =
-    `<thead><tr><th>製番</th><th>機種</th><th class="bn-num">数量</th><th>MIL完成</th><th>納期</th><th>判定</th></tr></thead>`;
+    `<thead><tr><th>製番</th><th>機種</th><th class="bn-num">数量</th><th>MIL完成</th>` +
+    `<th>出荷日(納期)</th><th>完成目標</th><th>判定</th></tr></thead>`;
   const body = lots
     .map((lot) => {
       const late = lot.on_time === false;
-      const judge = lot.on_time == null ? "—" : late ? "× 超過" : "○ 納期内";
+      const judge = lot.on_time == null ? "—" : late ? "× 目標超過" : "○ 目標内";
       return (
         `<tr class="${late ? "bn-late" : ""}">` +
         `<td class="bn-mono">${lot.order_id}</td><td>${lot.product}</td>` +
         `<td class="bn-num">${fmtNum(lot.quantity)}</td>` +
         `<td class="bn-mono">${fmtMd(lot.completion_day)}</td>` +
+        `<td class="bn-mono">${lot.ship_date ? fmtMd(lot.ship_date) : "—"}</td>` +
         `<td class="bn-mono">${lot.due_date ? fmtMd(lot.due_date) : "—"}</td>` +
         `<td class="${late ? "bn-judge-late" : "bn-judge-ok"}">${judge}</td></tr>`
       );
     })
     .join("");
-  bnMilEl.innerHTML = head + `<tbody>${body}</tbody>`;
+  bnMilEl.innerHTML =
+    head + `<tbody>${body}</tbody>` +
+    `<p class="bn-changeover-note">「完成目標」＝出荷日−2日(config: shipmentBufferDays)。判定はこの完成目標に対する予実。</p>`;
 }
 
 async function exportBottleneckPlan() {

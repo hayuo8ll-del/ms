@@ -1,5 +1,5 @@
 {
-  "_comment": "ボトルネック(HAL)日次フロー計画のパラメータ。実データ移行・キャパ改定時はこのファイルを編集するだけでよい(コード変更不要)。stageFlows のオフセット(ANT-1/TAL-2/HAL0/MIL+2)と aShiftFraction 0.4 は実計画(FeliCa)照合で較正した値(完成日MAE 3.12→2.66/投入日MAE 2.79→2.4 稼働日)。機種別 leadOffsetByProduct は実測(短スパン機種の圧縮)で誤差が悪化したため採用せず、グローバル値のみ。productDailyCapsByMode はCAP表の機種別キャパ列(設備可否○/△/×の帰結を織り込んだ機種別の日産台数)。キャパ未定義の機種は生産不可として計画から除外される。",
+  "_comment": "ボトルネック(HAL)日次フロー計画のパラメータ。実データ移行・キャパ改定時はこのファイルを編集するだけでよい(コード変更不要)。stageFlows のオフセット(ANT-1/TAL-2/HAL0/MIL+2)と aShiftFraction 0.4 は実計画(FeliCa)照合で較正した値(完成日MAE 3.12→2.66/投入日MAE 2.79→2.4 稼働日)。機種別 leadOffsetByProduct は実測(短スパン機種の圧縮)で誤差が悪化したため採用せず、グローバル値のみ。shipmentBufferDays は納期の捉え方: 真の納期=台帳の出荷日、完成目標=出荷日−この日数(暦日)。EDD・遅れ判定はこの完成目標で行う。productDailyCapsByMode はCAP表の機種別キャパ列(設備可否○/△/×の帰結を織り込んだ機種別の日産台数)。キャパ未定義の機種は生産不可として計画から除外される。",
   "lineDailyCapacities": { "16h": 90000, "22h": 120000 },
   "bottleneckStage": "HAL",
   "stageFlows": [
@@ -10,6 +10,7 @@
   ],
   "machineCounts": { "ANT": 1, "TAL": 2, "HAL": 5, "MIL": 4 },
   "aShiftFraction": 0.4,
+  "shipmentBufferDays": 2,
   "productAliases": {
     "RC-S100": "さそり金融",
     "RC-SA02F": "さそり金融",

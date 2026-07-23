@@ -133,6 +133,7 @@ async def _build_bottleneck_plan(
             aliases=cfg.product_aliases,
             only_due_on_or_after=plan_start if future_only else None,
             lines=line_set,
+            shipment_buffer_days=cfg.shipment_buffer_days,
         )
         actuals = parse_actuals(io.BytesIO(content))
         daily_actuals = parse_daily_actuals(io.BytesIO(content))
@@ -227,6 +228,7 @@ async def bottleneck_plan(
             {"order_id": lot.order_id, "product": lot.product, "quantity": lot.quantity,
              "completion_day": lot.completion_day.isoformat(),
              "due_date": lot.due_date.isoformat() if lot.due_date else None,
+             "ship_date": lot.ship_date.isoformat() if lot.ship_date else None,
              "on_time": lot.on_time}
             for lot in result.mil_lots
         ],

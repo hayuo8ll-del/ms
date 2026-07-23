@@ -74,5 +74,6 @@ def test_mil_sheet_has_one_row_per_lot_and_flags_late():
     ws = wb["製番別MIL"]
     order_ids = [ws.cell(row=r, column=1).value for r in range(2, ws.max_row + 1)]
     assert set(order_ids) == {"L1", "L2"}
-    judges = [ws.cell(row=r, column=6).value for r in range(2, ws.max_row + 1)]
-    assert any(j and j.startswith("×") for j in judges)  # 早納期ロットが超過判定
+    assert [ws.cell(row=1, column=c).value for c in (5, 6, 7)] == ["出荷日(納期)", "完成目標", "判定"]
+    judges = [ws.cell(row=r, column=7).value for r in range(2, ws.max_row + 1)]
+    assert any(j and j.startswith("×") for j in judges)  # 完成目標を超過するロット

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import BinaryIO
 
 from openpyxl import load_workbook
@@ -140,10 +140,16 @@ def parse_thm_ledger(
     header_row: int = 2,
     only_due_on_or_after: date | None = None,
     lines: set[str] | None = None,
+    shipment_buffer_days: int = 2,
 ) -> tuple[list[DemandItem], list[UnmappedRow]]:
     """台帳ワークブックを需要(DemandItem)一覧へ変換する。
 
-    - `only_due_on_or_after`: 完成予定日がこの日以降の受注だけを対象にする(未来分のみ等)。
+    **納期の捉え方**: 本当の納期は台帳の**出荷日**。完成はその `shipment_buffer_days`(既定2)
+    日前に済ませたいので、EDD・遅れ判定に使う `due_date`(完成目標日)=出荷日−バッファ(暦日)
+    とする。出荷日が無い行のみ**完成予定日**へフォールバック(この場合バッファは掛けない)。
+    `ship_date` には出荷日(表示用の真の納期)を入れる。
+
+    - `only_due_on_or_after`: 完成目標日(=出荷日−バッファ)がこの日以降の受注だけ対象にする。
     - `lines`: ライン名の集合を渡すと、その受注だけに絞る(例: {"CTA1", "CTA2"})。
     戻り値: (需要一覧, 呼称解決できなかった行一覧)。
     """
@@ -163,10 +169,12 @@ def parse_thm_ledger(
     c_code = col("完成品コード")
     c_seiban = col("製番")
     c_qty = col("完成予定数")
-    c_due = col("完成予定日")
+    c_comp = col("完成予定日")
+    c_ship = col("出荷日")
 
     demands: list[DemandItem] = []
     unmapped: list[UnmappedRow] = []
+    buffer = timedelta(days=shipment_buffer_days)
 
     for r in range(header_row + 1, ws.max_row + 1):
         row_no = ws.cell(row=r, column=c_no).value if c_no else None
@@ -183,7 +191,13 @@ def parse_thm_ledger(
                 continue
 
         qty = ws.cell(row=r, column=c_qty).value if c_qty else None
-        due = _as_date(ws.cell(row=r, column=c_due).value) if c_due else None
+        ship = _as_date(ws.cell(row=r, column=c_ship).value) if c_ship else None
+        comp = _as_date(ws.cell(row=r, column=c_comp).value) if c_comp else None
+        # 完成目標日 = 出荷日 − バッファ。出荷日が無ければ完成予定日にフォールバック。
+        if ship is not None:
+            due = ship - buffer
+        else:
+            due = comp
         if not isinstance(qty, (int, float)) or qty <= 0 or due is None:
             continue
         if only_due_on_or_after and due < only_due_on_or_after:
@@ -196,7 +210,9 @@ def parse_thm_ledger(
             unmapped.append(UnmappedRow(row=r, order_id=order_id, name=str(name)))
             continue
 
-        demands.append(DemandItem(product=product, quantity=float(qty), due_date=due, order_id=order_id))
+        demands.append(
+            DemandItem(product=product, quantity=float(qty), due_date=due, order_id=order_id, ship_date=ship)
+        )
 
     return demands, unmapped
 

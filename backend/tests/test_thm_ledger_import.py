@@ -38,7 +38,7 @@ def _ledger_workbook(rows):
     wb = Workbook()
     ws = wb.active
     ws.title = "台帳"
-    headers = ["№", "ライン", "完成品名", "x", "完成品コード", "製番", "ICチップ", "y", "着手予定日", "完成予定日", "完成予定数"]
+    headers = ["№", "ライン", "完成品名", "x", "完成品コード", "製番", "ICチップ", "y", "着手予定日", "完成予定日", "完成予定数", "出荷日"]
     for c, h in enumerate(headers, start=1):
         ws.cell(row=2, column=c, value=h)
     for i, row in enumerate(rows, start=3):
@@ -87,6 +87,29 @@ def test_parse_ledger_filters_future_due_and_lines():
         lines={"CTA1", "CTA2"},
     )
     assert [d.order_id for d in demands] == ["THM2"]
+
+
+def test_due_date_is_ship_date_minus_buffer():
+    # 出荷日=真の納期。完成目標=出荷日−2日(暦日, 既定)。完成予定日(7/15)は使わない。
+    rows = [
+        ["THM1", "CTA1", "RC-SA02F/5", None, None, "S1", None, None, None, date(2026, 7, 15), 12000, date(2026, 8, 7)],
+    ]
+    demands, _ = parse_thm_ledger(_ledger_workbook(rows))
+    d = demands[0]
+    assert d.ship_date == date(2026, 8, 7)
+    assert d.due_date == date(2026, 8, 5)  # 8/7 − 2日
+
+
+def test_buffer_is_configurable_and_falls_back_to_completion_when_no_ship():
+    rows = [
+        ["THM1", "CTA1", "RC-SA02F/5", None, None, "S1", None, None, None, date(2026, 7, 15), 100, date(2026, 8, 10)],
+        ["THM2", "CTA1", "RC-SA05A/5", None, None, "S2", None, None, None, date(2026, 7, 20), 200, None],  # 出荷日なし
+    ]
+    demands, _ = parse_thm_ledger(_ledger_workbook(rows), shipment_buffer_days=3)
+    by = {d.order_id: d for d in demands}
+    assert by["S1"].due_date == date(2026, 8, 7)   # 8/10 − 3日
+    assert by["S2"].ship_date is None
+    assert by["S2"].due_date == date(2026, 7, 20)  # 出荷日なし → 完成予定日にフォールバック(バッファ無し)
 
 
 def _with_actuals_sheet(buf, rows):

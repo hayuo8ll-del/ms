@@ -121,26 +121,32 @@ def _add_stage_matrix(wb: Workbook, result: BottleneckPlanResult, stage_order: l
 def _add_mil_lots(wb: Workbook, result: BottleneckPlanResult) -> None:
     """製番(出荷ロット)別のMIL完成予定(THM 短期投入予定表 の形)。"""
     ws = wb.create_sheet("製番別MIL")
-    headers = ["製番", "機種", "数量", "MIL完成予定", "納期", "判定"]
+    headers = ["製番", "機種", "数量", "MIL完成予定", "出荷日(納期)", "完成目標", "判定"]
     ws.append(headers)
     _style_header(ws, 1, len(headers))
 
     for lot in result.mil_lots:
-        due = lot.due_date.isoformat() if lot.due_date else "-"
         if lot.on_time is None:
             judge = "-"
         else:
-            judge = "○ 納期内" if lot.on_time else "× 超過"
-        ws.append([lot.order_id, lot.product, lot.quantity, lot.completion_day, due, judge])
+            judge = "○ 目標内" if lot.on_time else "× 目標超過"
+        ws.append([
+            lot.order_id, lot.product, lot.quantity, lot.completion_day,
+            lot.ship_date if lot.ship_date else "-",
+            lot.due_date if lot.due_date else "-",
+            judge,
+        ])
         r = ws.max_row
-        ws.cell(row=r, column=4).number_format = _DATE_FMT
-        # MILはオレンジ、納期超過行は赤で強調
+        for c in (4, 5, 6):
+            if isinstance(ws.cell(row=r, column=c).value, date):
+                ws.cell(row=r, column=c).number_format = _DATE_FMT
+        # 完成目標超過行は赤、それ以外はMILオレンジで判定セルを強調
         fill = _LATE_FILL if lot.on_time is False else _MIL_FILL
         for c in range(1, len(headers) + 1):
             ws.cell(row=r, column=c).border = _BORDER
-        ws.cell(row=r, column=6).fill = fill
+        ws.cell(row=r, column=7).fill = fill
 
-    _set_widths(ws, [12, 14, 10, 13, 12, 10])
+    _set_widths(ws, [12, 14, 10, 13, 13, 11, 11])
     ws.freeze_panes = "A2"
 
 

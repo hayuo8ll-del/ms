@@ -63,8 +63,9 @@ directly by FastAPI's `StaticFiles` mount.
   deductions), `aShiftFraction`, `productAliases` (RC-code → 呼称),
   `productDailyCapsByMode` (機種別キャパ) and `nonWorkingDays` (ISO dates — weekday
   非稼働日/祝日/計画休 that `working_days_in_range` excludes on top of weekends; populated from
-  the FeliCa 短期投入予定表's grey cells via `/api/bottleneck/apply-calendar`). Swapping
-  capacities/aliases needs only this file.
+  the FeliCa 短期投入予定表's grey cells via `/api/bottleneck/apply-calendar`) and
+  `shipmentBufferDays` (完成目標 = 出荷日 − this many calendar days; default 2 — the 納期 model,
+  see `thm_ledger_import`). Swapping capacities/aliases needs only this file.
 - `config/changeover_matrix.json` — per-stage, per-product-pair changeover minutes, plus
   `aShiftOnlyTransitions` (some product transitions on some stages may only start during
   the day shift).
@@ -116,9 +117,10 @@ directly by FastAPI's `StaticFiles` mount.
   out-of-horizon and per-stage-capacity warnings —
   `plan_bottleneck(..., stage_flows=[...])` attaches `stage_allocation`. **Step 4**
   (`mil_completion_by_order`): the MIL stage's daily flow is grouped by 製番 (出荷ロット =
-  `order_id`) into `MilLotCompletion`s (completion day = the lot's last MIL day, plus
-  due-date / on-time when demands carry due dates), attached as `mil_lots` and surfaced as
-  the per-製番 completion table (THM 短期投入予定表 form); late lots also raise warnings.
+  `order_id`) into `MilLotCompletion`s (completion day = the lot's last MIL day, plus the
+  完成目標 `due_date`=出荷日−buffer / `ship_date`=出荷日 / on-time = completion ≤ 完成目標 when
+  demands carry them), attached as `mil_lots` and surfaced as the per-製番 completion table
+  (THM 短期投入予定表 form); lots missing the 完成目標 also raise warnings.
   **A-shift-only changeover** (`allocate_bottleneck(..., a_shift_only_switch=True,
   a_shift_fraction=0.5)`): product changeovers (performed by supervisors on TAL/MIL) can
   only happen during the day shift — if the previous campaign ends past `a_shift_fraction`
@@ -171,7 +173,12 @@ directly by FastAPI's `StaticFiles` mount.
   `PRODUCT_ALIASES` (RC-code → 呼称, derived from the CAP 機種一覧; the ICチップ column is
   deliberately not used since it can't distinguish さそり金融/交通). `parse_thm_ledger`
   reads the 台帳 sheet (header row 2), optionally filters to future-due orders and specific
-  production lines, and returns `(demands, unmapped_rows)`. `parse_actuals` reads an
+  production lines, and returns `(demands, unmapped_rows)`. **納期の捉え方**: the true 納期 is
+  the ledger's **出荷日**; completion should finish `shipment_buffer_days` (default 2, calendar
+  days) earlier, so each `DemandItem.due_date` (= completion target used for EDD / lateness) =
+  出荷日 − buffer, and `ship_date` carries the raw 出荷日 for display. Rows with no 出荷日 fall
+  back to 完成予定日 (no buffer). The future-due filter (`only_due_on_or_after`) is applied to
+  this completion target. `parse_actuals` reads an
   optional 「実績」 sheet (columns 製番/実績数, duplicates summed) from the same workbook,
   feeding `apply_actuals` for plan revision against actuals. `parse_daily_actuals` reads an
   optional 「日次実績」 sheet (日付/[工程]/実績数, summed per day across stages) for the
@@ -210,8 +217,8 @@ directly by FastAPI's `StaticFiles` mount.
 - `backend/bottleneck_export.py` — renders a `BottleneckPlanResult` into a `.xlsx` matching
   the two shop-floor tables: `生産計画(機種×日)` (per-機種 rows split by stage ANT/TAL/HAL/MIL,
   columns = working days — the TA1_生産計画 form) and `製番別MIL` (one row per 製番/出荷ロット
-  with MIL completion day, due date, on-time verdict — the THM 短期投入予定表 form; MIL cells
-  tinted orange, late lots red), `進捗` (計画/計画累計/実績/実績累計/差/進捗 per working day,
+  with MIL completion day, 出荷日(納期), 完成目標(=出荷日−buffer), on-time verdict — the THM
+  短期投入予定表 form; MIL cells tinted orange, late lots red), `進捗` (計画/計画累計/実績/実績累計/差/進捗 per working day,
   negative-progress cells red — the Sheet1 form), `段取り` (one row per campaign: 工程/機種/
   開始日/終了日/日数/数量/区分, changeover rows tinted red — from `result.campaigns`), `提案`
   (`suggest_remedies` output when lots are late), plus サマリー and 警告.
@@ -339,7 +346,9 @@ directly by FastAPI's `StaticFiles` mount.
   `result.campaigns`).
 - `backend/tests/test_thm_ledger_import.py` — covers longest-prefix product resolution
   (incl. slash-less suffix codes), 台帳→demand extraction with an unmapped-row report
-  (order_id = 製番, № fallback), future-due / production-line filtering, 「実績」-sheet
+  (order_id = 製番, № fallback), future-due / production-line filtering, the 納期 model
+  (due_date = 出荷日 − shipment_buffer_days with `ship_date` kept; configurable buffer;
+  fallback to 完成予定日 when 出荷日 absent), 「実績」-sheet
   parsing (duplicate summing, missing-sheet default), 日次実績 parsing (per-day summing across
   stages, missing-sheet default), 設備停止マスタ parsing (有効=Y
   filter, missing-sheet default), `load_bottleneck_planning` config reading,
@@ -352,7 +361,7 @@ directly by FastAPI's `StaticFiles` mount.
   config restored in `finally`; bad-file → 400).
 - `backend/tests/test_bottleneck_export.py` — asserts the exported workbook's sheet list
   (incl. the `段取り` sheet), the 機種×日 matrix lists every product with all stage rows, the
-  製番別MIL sheet has one row per lot with the overrun verdict, and the 段取り sheet has one row
+  製番別MIL sheet has the 出荷日(納期)/完成目標/判定 columns and flags 完成目標 overruns, and the 段取り sheet has one row
   per campaign with 立上げ/切替 区分.
 - `backend/tests/test_felica_calibration.py` — covers FeliCa parsing (per-製番 Line-In/
   Completion), `compare_plans` completion-day diff/bias against a synthetic FeliCa, the
@@ -385,8 +394,8 @@ directly by FastAPI's `StaticFiles` mount.
   **生産計画(機種×日)** matrix (rows = 機種 × 工程 ANT/TAL/HAL/MIL, stage-coloured, sticky
   first two columns; columns = working days; **campaign-start cells marked** — red left border
   for a 段取り替え/切替, grey for a 立上げ — with a per-stage 切替回数 summary line below, from
-  `campaigns`), the **製番別MIL完成予定** table (late lots
-  highlighted) and a **進捗** table (計画/計画累計/実績/実績累計/差/進捗 per day, negative in
+  `campaigns`), the **製番別MIL完成予定** table (出荷日(納期)/完成目標(=出荷日−buffer)/判定
+  columns, late-vs-完成目標 lots highlighted) and a **進捗** table (計画/計画累計/実績/実績累計/差/進捗 per day, negative in
   red; shown when the ledger has a 「日次実績」 sheet, else plan-cumulative only) and a
   **納期遅れ 解消の提案** panel (`suggest_remedies`, shown only when lots are late), and a
   **実計画(FeliCa)との照合** panel — the **「実計画と照合(精度検証)」** button uploads a FeliCa

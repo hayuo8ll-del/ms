@@ -75,6 +75,7 @@ class BottleneckPlanningConfig:
     product_aliases: dict[str, str]
     product_daily_caps_by_mode: dict[str, dict[str, float]]
     non_working_days: list[date]  # 平日の非稼働日(祝日/計画休); 週末は別途除外
+    shipment_buffer_days: int  # 完成目標=出荷日−この日数(暦日)。既定2
 
     @property
     def stage_order(self) -> list[str]:
@@ -121,6 +122,7 @@ def load_bottleneck_planning() -> BottleneckPlanningConfig:
             mode: dict(caps) for mode, caps in PRODUCT_DAILY_CAPS_BY_MODE.items()
         },
         non_working_days=[date.fromisoformat(d) for d in data.get("nonWorkingDays", [])],
+        shipment_buffer_days=int(data.get("shipmentBufferDays", 2)),
     )
 
 
