@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from bottleneck_export import export_bottleneck_workbook
 from bottleneck_planner import (
+    A_SHIFT_DEFERRAL_TAG,
     apply_actuals,
     compute_progress,
     plan_bottleneck,
@@ -181,6 +182,12 @@ async def _build_bottleneck_plan(
         extra_summary.append(("日次実績反映日数", len(daily_actuals)))
     if stops:
         extra_summary.append(("設備停止反映件数", len(stops)))
+    changeovers = sum(1 for c in result.campaigns if c.is_changeover)
+    if changeovers:
+        extra_summary.append(("切替(段取り)回数", changeovers))
+    a_shift_deferrals = sum(1 for w in result.warnings if A_SHIFT_DEFERRAL_TAG in w)
+    if a_shift_deferrals:
+        extra_summary.append(("A勤限定切替の翌朝繰下げ", a_shift_deferrals))
     return result, demands, extra_summary, cfg, plan_start
 
 
@@ -226,6 +233,12 @@ async def bottleneck_plan(
             for p in result.progress
         ],
         "has_actuals": any(p.actual is not None for p in result.progress),
+        "campaigns": [
+            {"stage_id": c.stage_id, "product": c.product,
+             "start_day": c.start_day.isoformat(), "end_day": c.end_day.isoformat(),
+             "quantity": c.quantity, "is_changeover": c.is_changeover}
+            for c in result.campaigns
+        ],
         "remedies": [{"kind": r.kind, "title": r.title, "detail": r.detail} for r in result.remedies],
         "warnings": result.warnings,
         "summary": {

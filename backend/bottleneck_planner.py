@@ -16,6 +16,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+# A勤限定の機種切替(管理者作業)がその日にできず翌朝へ繰り下がったことを示す警告タグ。
+# 警告文の生成と、その件数集計(main.py)の両方でこの定数を使う。
+A_SHIFT_DEFERRAL_TAG = "機種切替(管理者作業)はA勤のみ"
+
 
 @dataclass
 class DemandItem:
@@ -189,7 +193,68 @@ class BottleneckPlanResult:
     mil_lots: list[MilLotCompletion] = field(default_factory=list)  # MILの製番別完成日
     progress: list[ProgressRow] = field(default_factory=list)  # 計画/実績/差/累計の進捗
     remedies: list["Remedy"] = field(default_factory=list)  # 納期遅れの解消提案
+    campaigns: list["Campaign"] = field(default_factory=list)  # 工程×機種の段取り(切替)キャンペーン
     warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Campaign:
+    """ある工程で同一機種を連続稼働日に生産する塊(段取り替えの単位)。"""
+
+    stage_id: str
+    product: str
+    start_day: date
+    end_day: date
+    quantity: float
+    # 開始直前の稼働日に同工程で(別機種の)生産があった=段取り替えを伴う開始。
+    # 直前が非稼働/停止/工程初日なら立上げ(切替ではない)ため False。
+    is_changeover: bool = False
+
+
+def derive_campaigns(
+    cells,
+    working_days: list[date],
+    stage_order: list[str] | None = None,
+) -> list["Campaign"]:
+    """工程×機種の日次配分から、機種キャンペーンと切替(段取り)を導出する。
+
+    キャンペーン = ある工程で同一機種を連続稼働日に生産する塊。稼働日が1日でも飛べば
+    別キャンペーン(=再段取り)とみなす。`is_changeover` は開始直前の稼働日に同工程で
+    生産があった(=別機種からの切替)ときに True。
+    `cells` は `.stage_id/.day/.product/.quantity` を持つオブジェクト列。
+    """
+    idx = {d: i for i, d in enumerate(working_days)}
+    by_sp: dict[str, dict[str, dict[date, float]]] = {}
+    stage_busy_days: dict[str, set[date]] = {}
+    for c in cells:
+        if c.quantity <= 0 or c.day not in idx:
+            continue
+        by_sp.setdefault(c.stage_id, {}).setdefault(c.product, {})
+        by_sp[c.stage_id][c.product][c.day] = by_sp[c.stage_id][c.product].get(c.day, 0.0) + c.quantity
+        stage_busy_days.setdefault(c.stage_id, set()).add(c.day)
+
+    order = stage_order or list(by_sp)
+    campaigns: list[Campaign] = []
+    for stage in order:
+        prods = by_sp.get(stage, {})
+        runs: list[tuple[str, date, date, float]] = []
+        for product, daymap in prods.items():
+            ds = sorted(daymap)
+            run = [ds[0]]
+            for d in ds[1:]:
+                if idx[d] == idx[run[-1]] + 1:
+                    run.append(d)
+                else:
+                    runs.append((product, run[0], run[-1], sum(daymap[x] for x in run)))
+                    run = [d]
+            runs.append((product, run[0], run[-1], sum(daymap[x] for x in run)))
+        runs.sort(key=lambda r: (r[1], r[0]))
+        busy = stage_busy_days.get(stage, set())
+        for product, start, end, qty in runs:
+            pi = idx[start] - 1
+            is_changeover = pi >= 0 and working_days[pi] in busy
+            campaigns.append(Campaign(stage, product, start, end, qty, is_changeover))
+    return campaigns
 
 
 def compute_progress(
@@ -385,7 +450,7 @@ def allocate_bottleneck(
                 if used_fraction > a_shift_fraction:
                     blocked_today.add(product)
                     warnings.append(
-                        f"{product}: 機種切替(管理者作業)はA勤のみのため、"
+                        f"{product}: {A_SHIFT_DEFERRAL_TAG}のため、"
                         f"{day.isoformat()}中の切替を避け翌稼働日の朝に開始します。"
                     )
                     continue
@@ -825,5 +890,17 @@ def plan_bottleneck(
                     f"製番{lot.order_id}({lot.product}): MIL完成予定 {lot.completion_day.isoformat()} が "
                     f"納期 {lot.due_date.isoformat()} を超過します。"
                 )
+
+    # 段取り(切替)キャンペーン: 工程展開があれば全工程、無ければボトルネック工程のみ。
+    if result.stage_allocation:
+        result.campaigns = derive_campaigns(
+            result.stage_allocation, working_days, stage_order=[f.stage_id for f in stage_flows]
+        )
+    else:
+        base_cells = [
+            StageDailyCell(bottleneck_stage, c.day, c.product, c.quantity, c.order_id)
+            for c in allocation
+        ]
+        result.campaigns = derive_campaigns(base_cells, working_days, stage_order=[bottleneck_stage])
 
     return result

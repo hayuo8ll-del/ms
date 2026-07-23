@@ -7,12 +7,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from bottleneck_planner import (  # noqa: E402
     DemandItem,
     EquipmentStop,
+    StageDailyCell,
     StageFlowConfig,
     allocate_bottleneck,
     apply_actuals,
     apply_equipment_stops,
     choose_shift_mode,
     compute_progress,
+    derive_campaigns,
     expand_to_stages,
     mil_completion_by_order,
     plan_bottleneck,
@@ -495,3 +497,64 @@ def test_same_product_lots_do_not_trigger_switch_deferral():
     l2_first = min(c.day for c in alloc if c.order_id == "L2")
     assert l2_first == date(2026, 7, 1)
     assert not any("切替" in w for w in warnings)
+
+
+def _cells(rows):
+    """(stage, 'YYYY-MM-DD', product, qty) 列から StageDailyCell を作る。"""
+    return [StageDailyCell(s, date.fromisoformat(d), p, q, "") for s, d, p, q in rows]
+
+
+def test_derive_campaigns_groups_consecutive_days_and_flags_changeover():
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 10))  # 平日のみ
+    # HAL: Xを7/1,2,3(連続) → 1キャンペーン。Yを7/2,3 は並行(別号機)。
+    # Xが7/6に再開 → 間が空くので別キャンペーン(再段取り)。
+    cells = _cells([
+        ("HAL", "2026-07-01", "X", 90000),
+        ("HAL", "2026-07-02", "X", 60000),
+        ("HAL", "2026-07-02", "Y", 30000),
+        ("HAL", "2026-07-03", "X", 60000),
+        ("HAL", "2026-07-03", "Y", 30000),
+        ("HAL", "2026-07-06", "X", 90000),  # 7/3の次稼働日は7/6(週末跨ぎ)。連続扱い→同キャンペーン
+    ])
+    camps = derive_campaigns(cells, days, stage_order=["HAL"])
+    by_prod = {}
+    for c in camps:
+        by_prod.setdefault(c.product, []).append(c)
+
+    # X: 7/1〜7/6 が連続稼働日(7/4,5は土日)なので1キャンペーン
+    assert len(by_prod["X"]) == 1
+    xc = by_prod["X"][0]
+    assert xc.start_day == date(2026, 7, 1) and xc.end_day == date(2026, 7, 6)
+    # Xは工程初日開始=立上げ(切替ではない)
+    assert xc.is_changeover is False
+
+    # Y: 7/2開始。直前稼働日7/1にHALで別機種Xが動いていた=切替
+    assert len(by_prod["Y"]) == 1
+    yc = by_prod["Y"][0]
+    assert yc.start_day == date(2026, 7, 2)
+    assert yc.is_changeover is True
+
+
+def test_derive_campaigns_gap_starts_new_campaign():
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 10))
+    # Xを7/1,2 → 7/3休み(生産なし) → 7/6再開。間が空くので2キャンペーン。
+    cells = _cells([
+        ("HAL", "2026-07-01", "X", 90000),
+        ("HAL", "2026-07-02", "X", 90000),
+        ("HAL", "2026-07-06", "X", 90000),
+    ])
+    camps = [c for c in derive_campaigns(cells, days, stage_order=["HAL"]) if c.product == "X"]
+    assert len(camps) == 2
+    # 7/6再開は直前稼働日(7/3)が生産なし → 立上げ(切替ではない)
+    resumed = [c for c in camps if c.start_day == date(2026, 7, 6)][0]
+    assert resumed.is_changeover is False
+
+
+def test_plan_bottleneck_populates_campaigns():
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    flows = [StageFlowConfig("ANT", -1), StageFlowConfig("HAL", 0), StageFlowConfig("MIL", 1)]
+    caps = {"16h": {"P": 90000}, "22h": {"P": 120000}}
+    demands = [DemandItem("P", 180000, date(2026, 7, 31), order_id="S1")]
+    result = plan_bottleneck(demands, days, CAPS, stage_flows=flows, product_caps_by_mode=caps)
+    assert result.campaigns
+    assert {c.stage_id for c in result.campaigns} <= {"ANT", "HAL", "MIL"}

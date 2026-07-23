@@ -534,12 +534,20 @@ function renderBnMatrix(data) {
   const agg = new Map();
   const halFirstDay = new Map();
   for (const c of data.stage_allocation) {
-    const key = `${c.product} ${c.stage_id} ${c.day}`;
+    const key = `${c.product} ${c.stage_id} ${c.day}`;
     agg.set(key, (agg.get(key) || 0) + c.quantity);
     if (c.stage_id === "HAL") {
       const cur = halFirstDay.get(c.product);
       if (cur === undefined || c.day < cur) halFirstDay.set(c.product, c.day);
     }
+  }
+  // キャンペーン開始セル(段取り替え)を印付けるための集合
+  const changeoverStart = new Set();
+  const campaignStart = new Set();
+  for (const c of data.campaigns || []) {
+    const k = `${c.product} ${c.stage_id} ${c.start_day}`;
+    campaignStart.add(k);
+    if (c.is_changeover) changeoverStart.add(k);
   }
   const products = [...new Set(data.stage_allocation.map((c) => c.product))].sort((a, b) => {
     const da = halFirstDay.get(a) || "9999";
@@ -558,8 +566,16 @@ function renderBnMatrix(data) {
         .map((stage, si) => {
           const cells = days
             .map((d) => {
-              const q = agg.get(`${product} ${stage} ${d}`);
-              return `<td>${q ? fmtNum(q) : ""}</td>`;
+              const k = `${product} ${stage} ${d}`;
+              const q = agg.get(k);
+              const txt = q ? fmtNum(q) : "";
+              if (changeoverStart.has(k)) {
+                return `<td class="bn-changeover" title="段取り替え: ${stage}で${product}のキャンペーン開始(別機種からの切替)">${txt}</td>`;
+              }
+              if (campaignStart.has(k)) {
+                return `<td class="bn-startup" title="立上げ: ${stage}で${product}のキャンペーン開始">${txt}</td>`;
+              }
+              return `<td>${txt}</td>`;
             })
             .join("");
           const prodCell = si === 0 ? `<td class="bn-c-prod" rowspan="${stages.length}">${product}</td>` : "";
@@ -569,9 +585,28 @@ function renderBnMatrix(data) {
     )
     .join("");
 
-  bnMatrixEl.innerHTML = head + `<tbody>${body}</tbody>`;
+  bnMatrixEl.innerHTML = head + `<tbody>${body}</tbody>` + renderChangeoverSummary(data, stages);
 }
 
+function renderChangeoverSummary(data, stages) {
+  const camps = data.campaigns || [];
+  if (camps.length === 0) return "";
+  const perStage = {};
+  for (const c of camps) {
+    if (!perStage[c.stage_id]) perStage[c.stage_id] = { camp: 0, co: 0 };
+    perStage[c.stage_id].camp += 1;
+    if (c.is_changeover) perStage[c.stage_id].co += 1;
+  }
+  const parts = stages
+    .filter((s) => perStage[s] && perStage[s].camp > 0)
+    .map((s) => `${s} <strong>${perStage[s].co}</strong>回(campaign ${perStage[s].camp})`);
+  if (parts.length === 0) return "";
+  return (
+    `<p class="bn-changeover-note"><span class="bn-changeover-swatch"></span>` +
+    `段取り替え(切替)＝キャンペーン開始セル。工程別 切替回数: ${parts.join(" / ")}。` +
+    `TAL/MILの切替は管理者がA勤に実施（繰下げは警告に表示）。</p>`
+  );
+}
 function renderBnMil(lots) {
   const head =
     `<thead><tr><th>製番</th><th>機種</th><th class="bn-num">数量</th><th>MIL完成</th><th>納期</th><th>判定</th></tr></thead>`;

@@ -191,6 +191,33 @@ def _add_remedies(wb: Workbook, result: BottleneckPlanResult) -> None:
     ws.freeze_panes = "A2"
 
 
+def _add_changeovers(wb: Workbook, result: BottleneckPlanResult, stage_order: list[str]) -> None:
+    """段取り(切替): 工程×機種のキャンペーン(開始〜終了)と切替有無。"""
+    if not result.campaigns:
+        return
+    ws = wb.create_sheet("段取り")
+    ws.append(["工程", "機種", "開始日", "終了日", "日数", "数量", "区分"])
+    _style_header(ws, 1, 7)
+    order = {s: i for i, s in enumerate(stage_order)}
+    camps = sorted(
+        result.campaigns, key=lambda c: (order.get(c.stage_id, 99), c.start_day, c.product)
+    )
+    wd_index = {d: i for i, d in enumerate(result.working_days)}
+    for c in camps:
+        span = wd_index.get(c.end_day, 0) - wd_index.get(c.start_day, 0) + 1
+        ws.append([
+            c.stage_id, c.product, c.start_day, c.end_day, span, c.quantity,
+            "切替(段取り)" if c.is_changeover else "立上げ",
+        ])
+        r = ws.max_row
+        for col in (3, 4):
+            ws.cell(row=r, column=col).number_format = _DATE_FMT
+        if c.is_changeover:
+            ws.cell(row=r, column=7).fill = _LATE_FILL
+    _set_widths(ws, [8, 16, 10, 10, 6, 12, 14])
+    ws.freeze_panes = "A2"
+
+
 def _add_warnings(wb: Workbook, result: BottleneckPlanResult) -> None:
     ws = wb.create_sheet("警告")
     ws.append(["メッセージ"])
@@ -217,6 +244,7 @@ def export_bottleneck_workbook(
     _add_stage_matrix(wb, result, stage_order)
     _add_mil_lots(wb, result)
     _add_progress(wb, result)
+    _add_changeovers(wb, result, stage_order)
     _add_remedies(wb, result)
     _add_warnings(wb, result)
     return wb

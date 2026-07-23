@@ -630,6 +630,34 @@ button#bn-validate:disabled {
   text-align: left;
 }
 
+/* 段取り替え(切替)＝キャンペーン開始セル。左に色帯で示す。 */
+.bn-table td.bn-changeover {
+  border-left: 3px solid var(--danger);
+  font-weight: 600;
+}
+
+.bn-table td.bn-startup {
+  border-left: 3px solid var(--text-dim);
+}
+
+.bn-changeover-note {
+  margin: 8px 2px 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.bn-changeover-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 12px;
+  border-left: 3px solid var(--danger);
+  background: var(--panel-2);
+}
+
 #bn-mil .bn-num {
   text-align: right;
 }

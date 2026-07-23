@@ -144,6 +144,15 @@ directly by FastAPI's `StaticFiles` mount.
   `plan_bottleneck(..., equipment_stops=[...], machine_counts=...)` applies them via
   `allocate_bottleneck(daily_capacity_by_day=...)` (a zero-capacity day produces nothing
   and the next day's restart counts as a changeover).
+  **Changeovers/campaigns** (`Campaign` / `derive_campaigns(cells, working_days,
+  stage_order)` → `result.campaigns`): from the final per-stage×機種×day allocation, groups
+  each 機種 into campaigns = maximal runs of consecutive working days (a skipped working day
+  starts a new campaign = re-setup). `is_changeover` = the working day immediately before the
+  campaign's start had production on that stage (a switch *from* another 機種); a first-day or
+  post-idle start is a 立上げ, not a changeover. `plan_bottleneck` fills `result.campaigns`
+  from `stage_allocation` (all stages) or, without stage expansion, the bottleneck stage.
+  The A-shift-only switch deferrals stay as warnings tagged `A_SHIFT_DEFERRAL_TAG` (module
+  constant, counted for the summary).
 - `backend/thm_ledger_import.py` — converts the real **THM 生産台帳** (`.xlsx`, orders with
   完成品名/完成予定数/完成予定日) into `DemandItem`s for the bottleneck planner. The lot
   identifier (`order_id`) is the **製番 column** (same key as the shop-floor MIL tables;
@@ -194,8 +203,9 @@ directly by FastAPI's `StaticFiles` mount.
   columns = working days — the TA1_生産計画 form) and `製番別MIL` (one row per 製番/出荷ロット
   with MIL completion day, due date, on-time verdict — the THM 短期投入予定表 form; MIL cells
   tinted orange, late lots red), `進捗` (計画/計画累計/実績/実績累計/差/進捗 per working day,
-  negative-progress cells red — the Sheet1 form), `提案` (`suggest_remedies` output when
-  lots are late), plus サマリー and 警告.
+  negative-progress cells red — the Sheet1 form), `段取り` (one row per campaign: 工程/機種/
+  開始日/終了日/日数/数量/区分, changeover rows tinted red — from `result.campaigns`), `提案`
+  (`suggest_remedies` output when lots are late), plus サマリー and 警告.
   `export_bottleneck_workbook(result, demands, stage_order)`.
 - `backend/scheduler.py` — the `Scheduler` class: finite-capacity, multi-machine forward
   scheduling. Orders are sorted by **EDD** (earliest due date). For each order: raw
@@ -252,7 +262,8 @@ directly by FastAPI's `StaticFiles` mount.
   設備停止反映件数 rows when applicable; an optional 「日次実績」 sheet drives the 進捗 sheet),
   `POST /api/bottleneck/plan` (same multipart inputs,
   returns the plan as JSON — shift mode, per-stage×day allocation, per-製番 MIL lots,
-  per-day 進捗 (`progress` + `has_actuals`), 納期遅れ解消の `remedies`, warnings, summary —
+  per-day 進捗 (`progress` + `has_actuals`), `campaigns` (段取り/切替 per stage), 納期遅れ解消の
+  `remedies`, warnings, summary (with 切替回数 / A勤限定切替の翌朝繰下げ counts in `extra`) —
   for on-screen rendering; shares `_build_bottleneck_plan` with the export route),
   `POST /api/bottleneck/validate` (multipart THM 台帳 + FeliCa 実計画; runs
   `felica_calibration` and returns current vs recommended global offset/A-shift error
@@ -308,8 +319,11 @@ directly by FastAPI's `StaticFiles` mount.
   (machine-share deduction with 勤務 half-day bounds, 補正後Cap ceiling, non-bottleneck
   advisory, and end-to-end reduced-capacity days in `plan_bottleneck`), progress
   (`compute_progress`: plan-cumulative only without actuals; 差/進捗 累計 with daily actuals),
-  and remedies (`suggest_remedies`: full-22H escalation, min-22H-days search, all-on-time
-  `ok`; `high_mode_days` raising only the leading days' capacity).
+  remedies (`suggest_remedies`: full-22H escalation, min-22H-days search, all-on-time
+  `ok`; `high_mode_days` raising only the leading days' capacity), and campaigns/changeovers
+  (`derive_campaigns`: consecutive-day grouping, gap → new campaign, `is_changeover` true only
+  when the prior working day ran another 機種 on the stage; `plan_bottleneck` populates
+  `result.campaigns`).
 - `backend/tests/test_thm_ledger_import.py` — covers longest-prefix product resolution
   (incl. slash-less suffix codes), 台帳→demand extraction with an unmapped-row report
   (order_id = 製番, № fallback), future-due / production-line filtering, 「実績」-sheet
@@ -322,9 +336,10 @@ directly by FastAPI's `StaticFiles` mount.
   `POST /api/bottleneck/apply-calibration`: the success path writes the real config then
   restores it in a `finally` (offsets/aShiftFraction updated, caps preserved), plus 422 cases
   (bad stage key, out-of-range fraction, extreme offset).
-- `backend/tests/test_bottleneck_export.py` — asserts the exported workbook has the four
-  expected sheets, the 機種×日 matrix lists every product with all stage rows, and the
-  製番別MIL sheet has one row per lot with the overrun verdict.
+- `backend/tests/test_bottleneck_export.py` — asserts the exported workbook's sheet list
+  (incl. the `段取り` sheet), the 機種×日 matrix lists every product with all stage rows, the
+  製番別MIL sheet has one row per lot with the overrun verdict, and the 段取り sheet has one row
+  per campaign with 立上げ/切替 区分.
 - `backend/tests/test_felica_calibration.py` — covers FeliCa parsing (per-製番 Line-In/
   Completion), `compare_plans` completion-day diff/bias against a synthetic FeliCa, the
   windowed daily-shape MAE (non-overlap tails excluded → smaller than the union version), the
@@ -353,7 +368,9 @@ directly by FastAPI's `StaticFiles` mount.
   (with an optional `ライン` filter) posts to `/api/bottleneck/plan` and renders the
   bottleneck plan on-screen in a dedicated panel (`#bn-panel`) — a KPI row, warnings, the
   **生産計画(機種×日)** matrix (rows = 機種 × 工程 ANT/TAL/HAL/MIL, stage-coloured, sticky
-  first two columns; columns = working days), the **製番別MIL完成予定** table (late lots
+  first two columns; columns = working days; **campaign-start cells marked** — red left border
+  for a 段取り替え/切替, grey for a 立上げ — with a per-stage 切替回数 summary line below, from
+  `campaigns`), the **製番別MIL完成予定** table (late lots
   highlighted) and a **進捗** table (計画/計画累計/実績/実績累計/差/進捗 per day, negative in
   red; shown when the ledger has a 「日次実績」 sheet, else plan-cumulative only) and a
   **納期遅れ 解消の提案** panel (`suggest_remedies`, shown only when lots are late), and a

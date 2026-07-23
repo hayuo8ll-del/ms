@@ -40,7 +40,22 @@ def _reload(wb):
 def test_workbook_has_the_two_shopfloor_sheets():
     result, demands = _make_result()
     wb = _reload(export_bottleneck_workbook(result, demands, STAGE_ORDER))
-    assert wb.sheetnames == ["サマリー", "生産計画(機種×日)", "製番別MIL", "警告"]
+    assert wb.sheetnames == ["サマリー", "生産計画(機種×日)", "製番別MIL", "段取り", "警告"]
+
+
+def test_changeover_sheet_lists_campaigns_with_switch_flag():
+    result, demands = _make_result()
+    wb = _reload(export_bottleneck_workbook(result, demands, STAGE_ORDER))
+    ws = wb["段取り"]
+    assert [ws.cell(row=1, column=c).value for c in range(1, 8)] == [
+        "工程", "機種", "開始日", "終了日", "日数", "数量", "区分"
+    ]
+    kinds = [ws.cell(row=r, column=7).value for r in range(2, ws.max_row + 1)]
+    # 立上げ(工程初日)と切替(別機種からの段取り)の両方が現れる
+    assert "立上げ" in kinds
+    assert "切替(段取り)" in kinds
+    # 行数 = キャンペーン数
+    assert ws.max_row - 1 == len(result.campaigns)
 
 
 def test_stage_matrix_lists_each_product_with_all_stages():
