@@ -188,7 +188,10 @@ directly by FastAPI's `StaticFiles` mount.
 - `backend/felica_calibration.py` — validates a generated plan against the real production
   plan (FeliCa) and calibrates the stage offsets / A-shift fraction. `parse_felica_plan`
   reads the FeliCa workbook (`YYYYMM_CTA{1,2}` sheets; per-製番 `Line-In`=投入/start and
-  `Completion`=完成/≈MIL daily rows, merged across sheets) into `FelicaLot`s.
+  `Completion`=完成/≈MIL daily rows, merged across sheets) into `FelicaLot`s. **Carryover
+  exclusion**: a day carrying **both** a Line-In and a Completion value for the same 製番 is
+  先週までの計画台数 (投入=完成同日はリードタイム0で実生産ではない) and is dropped from both
+  series before computing `line_in_first`/`completion_last` (fully same-day lots vanish).
   `parse_felica_nonworking_days` reads the date-header (row 3) cells whose fill is `gray125`
   (非稼働日) and returns the **weekday** ones (祝日/計画休 beyond weekends, e.g. 海の日 7/20,
   山の日 8/11, お盆 8/14) for the calendar reflect flow.
@@ -371,8 +374,10 @@ directly by FastAPI's `StaticFiles` mount.
   (our-later 機種 completion_bias > 0, our-earlier < 0; empty without `aliases`), `calibrate`
   picking offsets that reduce the error
   toward a known-truth plan, `derive_stage_offsets` computing per-product offsets from the
-  投入→完成 span split by the current ratio, and `parse_felica_nonworking_days` returning only
-  the weekday gray125 date-header cells (weekends excluded).
+  投入→完成 span split by the current ratio, `parse_felica_nonworking_days` returning only
+  the weekday gray125 date-header cells (weekends excluded), and the same-day carryover
+  exclusion (`parse_felica_plan` drops days with both Line-In and Completion: fully-same-day
+  lots → None first/last; partial → only the shared day removed).
 - `backend/tests/test_plan_export.py` — runs the scheduler against the real
   `config/*.json` and asserts the exported workbook has exactly the four expected sheets
   (no utilization sheet), the schedule sheet row count matches the schedule, the matrix

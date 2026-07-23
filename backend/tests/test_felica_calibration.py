@@ -65,6 +65,31 @@ def test_parse_felica_plan_extracts_line_in_and_completion():
     assert lot.lot == 40000
 
 
+def test_parse_felica_excludes_same_day_carryover():
+    """同一日にLine-InとCompletionの両方に台数がある日=先週までの計画台数として除外する。"""
+    buf = _felica_workbook([
+        # 丸ごと同日 → 除外され line_in_first/completion_last が None
+        ("C1", "RC-S103/JW16", 57600, {date(2026, 7, 16): 57600}, {date(2026, 7, 16): 57600}),
+        # 一部同日(7/16は除外、7/21の完成は残る)
+        ("C2", "RC-S127/HCB5", 100000, {date(2026, 7, 16): 100000},
+         {date(2026, 7, 16): 50000, date(2026, 7, 21): 50000}),
+        # 別日(除外なし)
+        ("N1", "RC-SA02F/5", 90000, {date(2026, 7, 16): 90000}, {date(2026, 7, 23): 90000}),
+    ])
+    felica = parse_felica_plan(buf)
+
+    # C1: 丸ごとcarryover → 投入日/完成日ともに無し
+    assert felica["C1"].line_in_first is None
+    assert felica["C1"].completion_last is None
+    # C2: 7/16は両系列から除去、7/21の完成のみ残る
+    assert date(2026, 7, 16) not in felica["C2"].line_in_daily
+    assert date(2026, 7, 16) not in felica["C2"].completion_daily
+    assert felica["C2"].completion_daily == {date(2026, 7, 21): 50000}
+    # N1: 別日なのでそのまま
+    assert felica["N1"].line_in_first == date(2026, 7, 16)
+    assert felica["N1"].completion_last == date(2026, 7, 23)
+
+
 def test_compare_plans_reports_completion_day_diff():
     days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
     flows = [StageFlowConfig("ANT", -1), StageFlowConfig("HAL", 0), StageFlowConfig("MIL", 1)]
@@ -156,9 +181,11 @@ def test_daily_shape_by_product_breakdown():
     # MOT2 は同じ日だが台数を半分に(重複窓で台数ズレ → MAE > 0)
     sasori_co = dict(our_mil["さそり金融"])
     mot_co = {d: q / 2 for d, q in our_mil["MOT2"].items()}
+    # Line-Inは空にする(この検査は完成日次形状のみ対象。同日Line-In+Completionの
+    # carryover除外に引っかからないようにする)。
     buf = _felica_workbook([
-        ("S1", "RC-SA02F/5", 90000, {days[0]: 90000}, sasori_co),
-        ("S2", "RC-S127/HCB5", 90000, {days[0]: 90000}, mot_co),
+        ("S1", "RC-SA02F/5", 90000, {}, sasori_co),
+        ("S2", "RC-S127/HCB5", 90000, {}, mot_co),
     ])
     felica = parse_felica_plan(buf)
 
@@ -192,9 +219,10 @@ def test_timing_by_product_reports_signed_bias():
     # MOT2(S2):     FeliCa完成を our より2稼働日「後」に置く → our早い → bias -2
     fel_s1 = days[ci_s1 - 2]
     fel_s2 = days[ci_s2 + 2]
+    # Line-Inは空(完成日タイミングのみ検査。同日Line-In+Completionのcarryover除外回避)。
     buf = _felica_workbook([
-        ("S1", "RC-SA02F/5", 90000, {days[0]: 90000}, {fel_s1: 90000}),
-        ("S2", "RC-S127/HCB5", 90000, {days[0]: 90000}, {fel_s2: 90000}),
+        ("S1", "RC-SA02F/5", 90000, {}, {fel_s1: 90000}),
+        ("S2", "RC-S127/HCB5", 90000, {}, {fel_s2: 90000}),
     ])
     felica = parse_felica_plan(buf)
 
@@ -211,12 +239,13 @@ def test_derive_stage_offsets_from_span_and_ratio():
     days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
     flows = [StageFlowConfig("ANT", -2), StageFlowConfig("TAL", -1),
              StageFlowConfig("HAL", 0), StageFlowConfig("MIL", 1)]  # 総スパン3, 上流2/下流1
-    # 機種P: 投入7/1→完成7/6 = 3稼働日スパン(7/1,2,3,6)。機種Q: 同日→スパン0。
+    # 機種P: 投入7/1→完成7/6 = 3稼働日スパン(7/1,2,3,6)。
+    # 機種Q(MOT2): 投入=完成が同日(スパン0)=先週までの計画台数(carryover)なので除外される。
     rows = [
         ("S1", "RC-SA02F/5", 90000, {date(2026, 7, 1): 90000}, {date(2026, 7, 6): 90000}),
         ("S2", "RC-SA02F/5", 90000, {date(2026, 7, 2): 90000}, {date(2026, 7, 7): 90000}),  # 3稼働日
-        ("S3", "RC-S127/HCB5", 50000, {date(2026, 7, 1): 50000}, {date(2026, 7, 1): 50000}),  # スパン0
-        ("S4", "RC-S127/HCB5", 50000, {date(2026, 7, 2): 50000}, {date(2026, 7, 2): 50000}),
+        ("S3", "RC-S127/HCB5", 50000, {date(2026, 7, 1): 50000}, {date(2026, 7, 1): 50000}),  # 同日→除外
+        ("S4", "RC-S127/HCB5", 50000, {date(2026, 7, 2): 50000}, {date(2026, 7, 2): 50000}),  # 同日→除外
     ]
     felica = parse_felica_plan(_felica_workbook(rows))
     derived = derive_stage_offsets(felica, days, flows)
@@ -224,9 +253,9 @@ def test_derive_stage_offsets_from_span_and_ratio():
     # さそり金融(RC-SA02F, スパン3) → ANT-2/TAL-1/MIL+1(現状比率どおり)
     assert derived["ANT"]["さそり金融"] == -2
     assert derived["MIL"]["さそり金融"] == 1
-    # MOT2(RC-S127, スパン0) → すべて0
-    assert derived["ANT"]["MOT2"] == 0
-    assert derived["MIL"]["MOT2"] == 0
+    # MOT2(同日Line-In+Completion=carryover)は除外され derived に現れない
+    assert "MOT2" not in derived.get("ANT", {})
+    assert "MOT2" not in derived.get("MIL", {})
 
 
 def test_parse_felica_nonworking_days_reads_gray_weekday_cells():

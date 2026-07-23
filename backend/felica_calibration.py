@@ -110,10 +110,18 @@ def parse_felica_plan(file_obj: BinaryIO) -> dict[str, FelicaLot]:
                 r += 1
 
     for entry in lots.values():
-        if entry.line_in_daily:
-            entry.line_in_first = min(entry.line_in_daily)
-        if entry.completion_daily:
-            entry.completion_last = max(entry.completion_daily)
+        # 先週までの計画台数(carryover)を除外する。同一日にLine-InとCompletionの
+        # 両方に台数がある日は、投入と完成が同日=リードタイム0となり実生産ではありえない
+        # ため、その日は「先週までの計画台数」の転記とみなして両系列から取り除く。
+        shared = [
+            d for d in list(entry.line_in_daily)
+            if entry.line_in_daily.get(d) and entry.completion_daily.get(d)
+        ]
+        for d in shared:
+            entry.line_in_daily.pop(d, None)
+            entry.completion_daily.pop(d, None)
+        entry.line_in_first = min(entry.line_in_daily) if entry.line_in_daily else None
+        entry.completion_last = max(entry.completion_daily) if entry.completion_daily else None
     return lots
 
 
