@@ -132,7 +132,7 @@ def _add_matrix_sheet(wb: Workbook, result: PlanResult, equipment: EquipmentConf
     col = 2
     date_groups: list[tuple[str, int]] = []
     for w_start, _w_end, _name in windows:
-        key = w_start.strftime("%-m/%-d")
+        key = f"{w_start.month}/{w_start.day}"
         if date_groups and date_groups[-1][0] == key:
             date_groups[-1] = (key, date_groups[-1][1] + 1)
         else:

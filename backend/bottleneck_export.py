@@ -98,7 +98,7 @@ def _add_stage_matrix(wb: Workbook, result: BottleneckPlanResult, stage_order: l
             products.append(c.product)
 
     # ヘッダー: 機種 | 工程 | 日付...
-    header = ["機種", "工程"] + [d.strftime("%-m/%-d") for d in days]
+    header = ["機種", "工程"] + [f"{d.month}/{d.day}" for d in days]
     ws.append(header)
     _style_header(ws, 1, len(header))
 
@@ -152,7 +152,7 @@ def _add_progress(wb: Workbook, result: BottleneckPlanResult) -> None:
     days = [p.day for p in result.progress]
     has_actual = any(p.actual is not None for p in result.progress)
 
-    header = ["指標"] + [d.strftime("%-m/%-d") for d in days]
+    header = ["指標"] + [f"{d.month}/{d.day}" for d in days]
     ws.append(header)
     _style_header(ws, 1, len(header))
 
