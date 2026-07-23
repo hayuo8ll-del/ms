@@ -60,8 +60,11 @@ directly by FastAPI's `StaticFiles` mount.
   feed (機種の台数による調整); TAL/MIL batching is front-loaded per lot in `expand_to_stages`
   so cumulative upstream input never starves the next stage and the lot's completion day is
   preserved), `machineCounts` (per-machine share approximation for stop
-  deductions), `aShiftFraction`, `productAliases` (RC-code → 呼称) and
-  `productDailyCapsByMode` (機種別キャパ). Swapping capacities/aliases needs only this file.
+  deductions), `aShiftFraction`, `productAliases` (RC-code → 呼称),
+  `productDailyCapsByMode` (機種別キャパ) and `nonWorkingDays` (ISO dates — weekday
+  非稼働日/祝日/計画休 that `working_days_in_range` excludes on top of weekends; populated from
+  the FeliCa 短期投入予定表's grey cells via `/api/bottleneck/apply-calendar`). Swapping
+  capacities/aliases needs only this file.
 - `config/changeover_matrix.json` — per-stage, per-product-pair changeover minutes, plus
   `aShiftOnlyTransitions` (some product transitions on some stages may only start during
   the day shift).
@@ -78,8 +81,11 @@ directly by FastAPI's `StaticFiles` mount.
   *contents* needs no code change at all. `save_bottleneck_calibration(offsets,
   a_shift_fraction, path=None)` writes calibration results back into
   `config/bottleneck_planning.json` (updates `stageFlows[].leadOffsetDays` by stageId +
-  `aShiftFraction`, preserves every other field; `path` overridable for tests) — the only
-  code path that *writes* the bottleneck config, used by `/api/bottleneck/apply-calibration`.
+  `aShiftFraction`, preserves every other field; `path` overridable for tests) — used by
+  `/api/bottleneck/apply-calibration`. `save_nonworking_days(days, path=None)` writes the
+  FeliCa-derived 非稼働日 list into `nonWorkingDays` (sorted ISO, other fields preserved),
+  used by `/api/bottleneck/apply-calendar`. These two are the only code paths that *write*
+  the bottleneck config.
 - `backend/shift_calendar.py` — `ShiftCalendar`: turns a named shift pattern into a list
   of concrete datetime windows (handles overnight-wrapping shifts like `20:30`→`05:30`)
   and answers "when can a task next start", "does a duration fit in one window"
@@ -176,6 +182,9 @@ directly by FastAPI's `StaticFiles` mount.
   plan (FeliCa) and calibrates the stage offsets / A-shift fraction. `parse_felica_plan`
   reads the FeliCa workbook (`YYYYMM_CTA{1,2}` sheets; per-製番 `Line-In`=投入/start and
   `Completion`=完成/≈MIL daily rows, merged across sheets) into `FelicaLot`s.
+  `parse_felica_nonworking_days` reads the date-header (row 3) cells whose fill is `gray125`
+  (非稼働日) and returns the **weekday** ones (祝日/計画休 beyond weekends, e.g. 海の日 7/20,
+  山の日 8/11, お盆 8/14) for the calendar reflect flow.
   `compare_plans(result, felica, working_days, aliases=None)` → `ComparisonReport`: per-製番
   completion-day and ANT-start-day differences (in working-day indices) vs FeliCa → matched
   count, MAE and bias for both, plus **windowed** daily-shape MAE (MIL vs Completion, ANT vs
@@ -286,7 +295,11 @@ directly by FastAPI's `StaticFiles` mount.
   `config_loader.save_bottleneck_calibration` to write `stageFlows[].leadOffsetDays` +
   `aShiftFraction` back into `config/bottleneck_planning.json` — preserving inputUnit / caps /
   aliases / comment — so the next 立案・照合 picks them up; the one-click reflect of the
-  calibration recommendation), `POST /api/import` (multipart
+  calibration recommendation),
+  `POST /api/bottleneck/apply-calendar` (multipart `felica_file`; reads the FeliCa grey
+  非稼働日 via `parse_felica_nonworking_days` and writes `nonWorkingDays` into config via
+  `save_nonworking_days`, so later plans exclude 祝日/計画休 from working days),
+  `POST /api/import` (multipart
   `.xlsx` upload; 422 with a list of `{sheet, row, message}` on validation failure,
   otherwise overwrites `config/*.json` and returns import counts), and
   `GET /api/import/template` (downloads the current config as a pre-filled `.xlsx`).
@@ -329,13 +342,14 @@ directly by FastAPI's `StaticFiles` mount.
   (order_id = 製番, № fallback), future-due / production-line filtering, 「実績」-sheet
   parsing (duplicate summing, missing-sheet default), 日次実績 parsing (per-day summing across
   stages, missing-sheet default), 設備停止マスタ parsing (有効=Y
-  filter, missing-sheet default), `load_bottleneck_planning` config reading, and
+  filter, missing-sheet default), `load_bottleneck_planning` config reading,
   `save_bottleneck_calibration` (offset/A-shift write-back on a tmp config, other fields
-  preserved).
+  preserved), and `save_nonworking_days` (nonWorkingDays write-back, sorted, other fields kept).
 - `backend/tests/test_apply_calibration_api.py` — TestClient coverage of
-  `POST /api/bottleneck/apply-calibration`: the success path writes the real config then
-  restores it in a `finally` (offsets/aShiftFraction updated, caps preserved), plus 422 cases
-  (bad stage key, out-of-range fraction, extreme offset).
+  `POST /api/bottleneck/apply-calibration` (success path writes the real config then restores
+  it in a `finally`; 422 cases: bad stage key, out-of-range fraction, extreme offset) and
+  `POST /api/bottleneck/apply-calendar` (a synthetic gray125 FeliCa writes `nonWorkingDays`,
+  config restored in `finally`; bad-file → 400).
 - `backend/tests/test_bottleneck_export.py` — asserts the exported workbook's sheet list
   (incl. the `段取り` sheet), the 機種×日 matrix lists every product with all stage rows, the
   製番別MIL sheet has one row per lot with the overrun verdict, and the 段取り sheet has one row
@@ -347,8 +361,9 @@ directly by FastAPI's `StaticFiles` mount.
   `aliases`; empty when `aliases` omitted), the per-機種 `timing_by_product` signed bias
   (our-later 機種 completion_bias > 0, our-earlier < 0; empty without `aliases`), `calibrate`
   picking offsets that reduce the error
-  toward a known-truth plan, and `derive_stage_offsets` computing per-product offsets from the
-  投入→完成 span split by the current ratio.
+  toward a known-truth plan, `derive_stage_offsets` computing per-product offsets from the
+  投入→完成 span split by the current ratio, and `parse_felica_nonworking_days` returning only
+  the weekday gray125 date-header cells (weekends excluded).
 - `backend/tests/test_plan_export.py` — runs the scheduler against the real
   `config/*.json` and asserts the exported workbook has exactly the four expected sheets
   (no utilization sheet), the schedule sheet row count matches the schedule, the matrix
@@ -385,7 +400,10 @@ directly by FastAPI's `StaticFiles` mount.
   into `config/bottleneck_planning.json` in one click (hidden — with a "既に較正済み" note —
   when config already equals the calibration optimum), plus a
   **「この計画をExcel出力」** button that re-posts the stored file to
-  `/api/bottleneck/export`. The discrete-scheduler view and this bottleneck view coexist on
+  `/api/bottleneck/export`, and a **「非稼働日カレンダー取込(FeliCa)」** button
+  (`#bn-apply-calendar`) that uploads a FeliCa workbook to `/api/bottleneck/apply-calendar`
+  (writes the grey 非稼働日 into config) and re-plans from the stored ledger so 祝日/計画休
+  drop out of the matrix columns. The discrete-scheduler view and this bottleneck view coexist on
   the page. The
   date×shift matrix (`renderShiftMatrix`)
   fetches the active shift pattern from `GET /api/equipment`
@@ -399,6 +417,8 @@ directly by FastAPI's `StaticFiles` mount.
 - Master data lives in `config/*.json` with no persistence layer / no order-intake
   integration yet.
 - The shift calendar assumes the same shift pattern applies to every machine (no
-  per-machine or per-day calendar overrides, no holidays).
+  per-machine or per-day calendar overrides). Non-working days (祝日/計画休) are supported for
+  the bottleneck planner via `config.nonWorkingDays` (populated from FeliCa's grey cells), but
+  the discrete `scheduler.py` still only skips weekends.
 - Changeover time is charged only against the stage it occurs on; it does not model
   shared setup crews/tooling across machines.

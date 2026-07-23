@@ -7,7 +7,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from openpyxl import Workbook  # noqa: E402
 
-from config_loader import load_bottleneck_planning, save_bottleneck_calibration  # noqa: E402
+from config_loader import (  # noqa: E402
+    load_bottleneck_planning,
+    save_bottleneck_calibration,
+    save_nonworking_days,
+)
 from thm_ledger_import import (  # noqa: E402
     parse_actuals,
     parse_daily_actuals,
@@ -209,3 +213,21 @@ def test_save_bottleneck_calibration_updates_offsets_and_preserves_rest(tmp_path
     assert flows["TAL"]["inputUnit"] == 40000
     assert flows["MIL"]["inputUnit"] == 1920
     assert data["productDailyCapsByMode"]["16h"]["さそり金融"] == 80000
+
+
+def test_save_and_load_nonworking_days(tmp_path):
+    """FeliCa由来の非稼働日を書き込み→再読込できる(他フィールド保持・昇順)。"""
+    import json
+    from datetime import date
+
+    cfg_path = tmp_path / "bottleneck_planning.json"
+    cfg_path.write_text(
+        json.dumps({"aShiftFraction": 0.4, "productAliases": {"RC-S100": "さそり金融"}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    iso = save_nonworking_days([date(2026, 8, 14), date(2026, 7, 20), date(2026, 8, 11)], path=cfg_path)
+    assert iso == ["2026-07-20", "2026-08-11", "2026-08-14"]
+    data = json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert data["nonWorkingDays"] == ["2026-07-20", "2026-08-11", "2026-08-14"]
+    assert data["aShiftFraction"] == 0.4
+    assert data["productAliases"]["RC-S100"] == "さそり金融"

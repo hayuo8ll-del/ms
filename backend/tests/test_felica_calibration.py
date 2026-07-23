@@ -6,12 +6,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from openpyxl import Workbook  # noqa: E402
+from openpyxl.styles import PatternFill  # noqa: E402
 
 from bottleneck_planner import DemandItem, StageFlowConfig, plan_bottleneck, working_days_in_range  # noqa: E402
 from felica_calibration import (  # noqa: E402
     calibrate,
     compare_plans,
     derive_stage_offsets,
+    parse_felica_nonworking_days,
     parse_felica_plan,
 )
 
@@ -225,3 +227,30 @@ def test_derive_stage_offsets_from_span_and_ratio():
     # MOT2(RC-S127, スパン0) → すべて0
     assert derived["ANT"]["MOT2"] == 0
     assert derived["MIL"]["MOT2"] == 0
+
+
+def test_parse_felica_nonworking_days_reads_gray_weekday_cells():
+    """行3の日付ヘッダーで gray125 塗り=非稼働日。週末は除外、平日の非稼働日だけ返す。"""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "202607_CTA1"
+    gray = PatternFill(patternType="gray125")
+    solid = PatternFill(patternType="solid", fgColor="FFFFFF")
+    # col9以降に7/1..7/6を置く。7/4(土)7/5(日)=灰(週末), 7/2(木)=灰(祝日相当), 他=塗り
+    header = [
+        (date(2026, 7, 1), solid),
+        (date(2026, 7, 2), gray),   # 平日の非稼働日 → 返る
+        (date(2026, 7, 3), solid),
+        (date(2026, 7, 4), gray),   # 土曜(週末) → 返らない
+        (date(2026, 7, 5), gray),   # 日曜(週末) → 返らない
+        (date(2026, 7, 6), solid),
+    ]
+    for i, (d, fill) in enumerate(header):
+        cell = ws.cell(row=3, column=9 + i, value=d)
+        cell.fill = fill
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    days = parse_felica_nonworking_days(buf)
+    assert days == [date(2026, 7, 2)]  # 平日の灰のみ、週末は除外

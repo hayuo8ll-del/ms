@@ -33,6 +33,8 @@
     <div class="bn-head">
       <div class="bn-title">ボトルネック計画 <span class="bn-sub">HAL基準・日次フロー（機種×日／製番別MIL）</span></div>
       <div class="bn-head-actions">
+        <input type="file" id="felica-calendar-file" accept=".xlsx" hidden />
+        <button id="bn-apply-calendar" type="button" title="FeliCa短期投入予定表の灰色(非稼働日=祝日/計画休)を読み取り、計画カレンダーに反映します(config に保存し、以降の立案・出力で稼働日から除外)">非稼働日カレンダー取込(FeliCa)</button>
         <input type="file" id="felica-file" accept=".xlsx" hidden />
         <button id="bn-validate" type="button" title="実計画(FeliCa)と製番単位で照合し、完成日/投入日の予実差と、誤差最小の推奨オフセット/A勤割合を出します">実計画と照合(精度検証)</button>
         <button id="bn-export" type="button">この計画をExcel出力</button>

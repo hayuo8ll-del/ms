@@ -24,6 +24,8 @@ const bnProgressEl = document.getElementById("bn-progress");
 const bnRemediesEl = document.getElementById("bn-remedies");
 const bnRemedyListEl = document.getElementById("bn-remedy-list");
 const bnValidateButton = document.getElementById("bn-validate");
+const bnApplyCalendarButton = document.getElementById("bn-apply-calendar");
+const felicaCalendarFileInput = document.getElementById("felica-calendar-file");
 const felicaFileInput = document.getElementById("felica-file");
 const bnValidationEl = document.getElementById("bn-validation");
 const bnValidationBodyEl = document.getElementById("bn-validation-body");
@@ -450,6 +452,55 @@ async function loadBottleneckPlan() {
   }
 }
 
+async function applyCalendar() {
+  const felica = felicaCalendarFileInput.files[0];
+  if (!felica) return;
+  errorBanner.hidden = true;
+  bnApplyCalendarButton.disabled = true;
+  bnApplyCalendarButton.textContent = "取込中...";
+  try {
+    const formData = new FormData();
+    formData.append("felica_file", felica);
+    const res = await fetch("/api/bottleneck/apply-calendar", { method: "POST", body: formData });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(typeof data.detail === "string" ? data.detail : `APIエラー: ${res.status}`);
+    }
+    const listed = data.non_working_days.map(fmtMd).join(", ") || "なし";
+    // 台帳が読み込み済みなら、非稼働日を反映した計画へ再立案
+    if (lastLedgerFile) {
+      await replanFromStoredLedger();
+    }
+    errorBanner.hidden = false;
+    errorBanner.style.whiteSpace = "pre-wrap";
+    errorBanner.textContent =
+      `非稼働日(祝日/計画休) ${data.count}日を config に反映しました: ${listed}\n` +
+      (lastLedgerFile ? "計画を再立案しました(これらの日は稼働日から除外)。" : "台帳を取り込むと計画に反映されます。");
+  } catch (err) {
+    errorBanner.hidden = false;
+    errorBanner.textContent = `非稼働日カレンダーの取込に失敗しました:\n${err.message}`;
+  } finally {
+    bnApplyCalendarButton.disabled = false;
+    bnApplyCalendarButton.textContent = "非稼働日カレンダー取込(FeliCa)";
+    felicaCalendarFileInput.value = "";
+  }
+}
+
+// 保存済みの台帳ファイルから計画を再立案する(非稼働日反映後などに使う)。
+async function replanFromStoredLedger() {
+  const formData = new FormData();
+  formData.append("file", lastLedgerFile);
+  if (startDateInput.value) formData.append("start_date", startDateInput.value);
+  if (bnLinesInput.value.trim()) formData.append("lines", bnLinesInput.value.trim());
+  const res = await fetch("/api/bottleneck/plan", { method: "POST", body: formData });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(typeof data.detail === "string" ? data.detail : `APIエラー: ${res.status}`);
+  }
+  renderBottleneckPlan(data);
+  bnPanelEl.hidden = false;
+}
+
 function fmtNum(n) {
   return Math.round(n).toLocaleString();
 }
@@ -806,4 +857,6 @@ bnExportButton.addEventListener("click", exportBottleneckPlan);
 bnValidateButton.addEventListener("click", () => felicaFileInput.click());
 felicaFileInput.addEventListener("change", validateAgainstFelica);
 bnApplyButton.addEventListener("click", applyCalibration);
+bnApplyCalendarButton.addEventListener("click", () => felicaCalendarFileInput.click());
+felicaCalendarFileInput.addEventListener("change", applyCalendar);
 runPlan();

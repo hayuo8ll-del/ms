@@ -59,3 +59,52 @@ def test_apply_calibration_rejects_extreme_offset():
         json={"offsets": {"ANT": -99, "TAL": -2, "HAL": 0, "MIL": 2}, "a_shift_fraction": 0.5},
     )
     assert resp.status_code == 422
+
+
+def _felica_calendar_bytes():
+    """gray125(非稼働日)塗りの日付ヘッダーを持つ最小FeliCaブックのbytesを返す。"""
+    import io
+    from datetime import date
+
+    from openpyxl import Workbook
+    from openpyxl.styles import PatternFill
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "202608_CTA1"
+    gray = PatternFill(patternType="gray125")
+    solid = PatternFill(patternType="solid", fgColor="FFFFFF")
+    header = [(date(2026, 8, 10), solid), (date(2026, 8, 11), gray), (date(2026, 8, 12), solid)]
+    for i, (d, fill) in enumerate(header):
+        c = ws.cell(row=3, column=9 + i, value=d)
+        c.fill = fill
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_apply_calendar_writes_nonworking_days_then_restores():
+    original = CFG.read_bytes()
+    try:
+        resp = client.post(
+            "/api/bottleneck/apply-calendar",
+            files={"felica_file": ("f.xlsx", _felica_calendar_bytes(),
+                                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["applied"] is True
+        assert body["non_working_days"] == ["2026-08-11"]  # 平日の灰のみ
+        data = json.loads(CFG.read_text(encoding="utf-8"))
+        assert data["nonWorkingDays"] == ["2026-08-11"]
+        assert "productDailyCapsByMode" in data  # 既存フィールド保持
+    finally:
+        CFG.write_bytes(original)
+
+
+def test_apply_calendar_rejects_bad_file():
+    resp = client.post(
+        "/api/bottleneck/apply-calendar",
+        files={"felica_file": ("bad.xlsx", b"not-a-workbook", "application/octet-stream")},
+    )
+    assert resp.status_code == 400

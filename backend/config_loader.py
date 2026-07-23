@@ -74,6 +74,7 @@ class BottleneckPlanningConfig:
     a_shift_fraction: float
     product_aliases: dict[str, str]
     product_daily_caps_by_mode: dict[str, dict[str, float]]
+    non_working_days: list[date]  # 平日の非稼働日(祝日/計画休); 週末は別途除外
 
     @property
     def stage_order(self) -> list[str]:
@@ -119,7 +120,27 @@ def load_bottleneck_planning() -> BottleneckPlanningConfig:
         product_daily_caps_by_mode=data.get("productDailyCapsByMode") or {
             mode: dict(caps) for mode, caps in PRODUCT_DAILY_CAPS_BY_MODE.items()
         },
+        non_working_days=[date.fromisoformat(d) for d in data.get("nonWorkingDays", [])],
     )
+
+
+def save_nonworking_days(days: list[date], path: Path | None = None) -> list[str]:
+    """FeliCa由来の非稼働日(祝日/計画休)を bottleneck_planning.json に書き戻す。
+
+    `nonWorkingDays` を昇順ISO文字列で上書きし、他フィールドは保持する
+    (テスト用に `path` 差し替え可)。書き込んだ日付一覧(ISO)を返す。
+    """
+    path = path or (CONFIG_DIR / "bottleneck_planning.json")
+    data: dict = {}
+    if path.exists():
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    iso = sorted({d.isoformat() for d in days})
+    data["nonWorkingDays"] = iso
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    return iso
 
 
 def save_bottleneck_calibration(

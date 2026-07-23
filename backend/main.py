@@ -31,9 +31,10 @@ from config_loader import (
     load_equipment_config,
     load_orders_data,
     save_bottleneck_calibration,
+    save_nonworking_days,
 )
 from excel_import import ImportValidationError, WorkbookReadError, export_workbook, parse_workbook, save_config
-from felica_calibration import calibrate, compare_plans, parse_felica_plan
+from felica_calibration import calibrate, compare_plans, parse_felica_nonworking_days, parse_felica_plan
 from plan_export import export_plan_workbook
 from scheduler import Scheduler
 from thm_ledger_import import (
@@ -153,7 +154,8 @@ async def _build_bottleneck_plan(
     if not demands:
         raise HTTPException(status_code=422, detail="対象となる受注が台帳から見つかりませんでした(期間・ライン・実績反映の条件を確認してください)。")
 
-    working_days = working_days_in_range(plan_start, plan_end)
+    holidays = {d for d in cfg.non_working_days if plan_start <= d <= plan_end}
+    working_days = working_days_in_range(plan_start, plan_end, holidays=holidays)
     plan_kwargs = dict(
         stage_flows=cfg.stage_flows,
         a_shift_only_switch=True,
@@ -188,6 +190,8 @@ async def _build_bottleneck_plan(
     a_shift_deferrals = sum(1 for w in result.warnings if A_SHIFT_DEFERRAL_TAG in w)
     if a_shift_deferrals:
         extra_summary.append(("A勤限定切替の翌朝繰下げ", a_shift_deferrals))
+    if holidays:
+        extra_summary.append(("非稼働日(祝日/計画休)反映", len(holidays)))
     return result, demands, extra_summary, cfg, plan_start
 
 
@@ -348,6 +352,22 @@ async def apply_bottleneck_calibration(req: CalibrationApply):
         raise HTTPException(status_code=422, detail="A勤割合は 0〜1(0除く) の範囲で指定してください。")
     saved = save_bottleneck_calibration(req.offsets, req.a_shift_fraction)
     return {"applied": True, **saved}
+
+
+@app.post("/api/bottleneck/apply-calendar")
+async def apply_bottleneck_calendar(felica_file: UploadFile = File(...)):
+    """FeliCa短期投入予定表の灰色(非稼働日)を計画カレンダーに反映する。
+
+    アップロードされたFeliCaブックの日付ヘッダーで gray125 塗り=平日の非稼働日
+    (祝日/計画休)を読み取り、`config/bottleneck_planning.json` の `nonWorkingDays` に
+    書き戻す。以降の立案・出力・照合はこれらの日を稼働日から除外する。
+    """
+    try:
+        days = parse_felica_nonworking_days(io.BytesIO(await felica_file.read()))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"FeliCaファイルを読み込めませんでした: {exc}") from exc
+    saved = save_nonworking_days(days)
+    return {"applied": True, "non_working_days": saved, "count": len(saved)}
 
 
 @app.post("/api/bottleneck/export")

@@ -41,6 +41,29 @@ def _as_date(value: object) -> date | None:
     return None
 
 
+def parse_felica_nonworking_days(file_obj: BinaryIO) -> list[date]:
+    """FeliCa短期投入予定表の日付ヘッダー(行3)で灰色(gray125)塗り=非稼働日を読む。
+
+    現場のFeliCa表では稼働日=塗り、非稼働日(週末・祝日・計画休)=gray125塗り。週末は
+    `working_days_in_range` が既に除外するため、ここでは**平日の非稼働日(祝日/計画休)**
+    だけを返す(例: 海の日 7/20, 山の日 8/11, お盆 8/14)。全 `*_CTA*` シートをまたいで
+    集約し昇順で返す。config の `nonWorkingDays` に反映して計画カレンダーに使う。
+    """
+    wb = load_workbook(file_obj)  # 塗り(スタイル)を読むため data_only は使わない
+    days: set[date] = set()
+    for sn in wb.sheetnames:
+        ws = wb[sn]
+        for c in range(9, ws.max_column + 1):
+            cell = ws.cell(row=3, column=c)
+            d = _as_date(cell.value)
+            if d is None or d.weekday() >= 5:  # 週末は built-in で除外済み
+                continue
+            fill = cell.fill
+            if fill is not None and fill.patternType == "gray125":
+                days.add(d)
+    return sorted(days)
+
+
 def parse_felica_plan(file_obj: BinaryIO) -> dict[str, FelicaLot]:
     """FeliCa実計画を製番別に読む(全 `*_CTA*` シートをまたいで合算)。"""
     wb = load_workbook(file_obj, data_only=True)
