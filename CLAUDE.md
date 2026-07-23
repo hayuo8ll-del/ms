@@ -75,7 +75,11 @@ directly by FastAPI's `StaticFiles` mount.
   (`ScheduledOp`, `PlanWarning`, `MachineUtilization`, `PlanResult`).
 - `backend/config_loader.py` — reads `config/*.json` into those dataclasses. This is the
   only place that needs to change if the config file *shapes* change; swapping the JSON
-  *contents* needs no code change at all.
+  *contents* needs no code change at all. `save_bottleneck_calibration(offsets,
+  a_shift_fraction, path=None)` writes calibration results back into
+  `config/bottleneck_planning.json` (updates `stageFlows[].leadOffsetDays` by stageId +
+  `aShiftFraction`, preserves every other field; `path` overridable for tests) — the only
+  code path that *writes* the bottleneck config, used by `/api/bottleneck/apply-calibration`.
 - `backend/shift_calendar.py` — `ShiftCalendar`: turns a named shift pattern into a list
   of concrete datetime windows (handles overnight-wrapping shifts like `20:30`→`05:30`)
   and answers "when can a task next start", "does a duration fit in one window"
@@ -242,7 +246,14 @@ directly by FastAPI's `StaticFiles` mount.
   for on-screen rendering; shares `_build_bottleneck_plan` with the export route),
   `POST /api/bottleneck/validate` (multipart THM 台帳 + FeliCa 実計画; runs
   `felica_calibration` and returns current vs recommended global offset/A-shift error
-  metrics plus per-product `derived_offsets_by_product` as JSON), `POST /api/import` (multipart
+  metrics plus per-product `derived_offsets_by_product` as JSON),
+  `POST /api/bottleneck/apply-calibration` (JSON `{offsets, a_shift_fraction}` — typically the
+  validate route's `recommended_offsets`/`recommended_a_shift_fraction`; validates the keys
+  against the current stageFlows and the ranges (offset −15..15, fraction 0..1), then calls
+  `config_loader.save_bottleneck_calibration` to write `stageFlows[].leadOffsetDays` +
+  `aShiftFraction` back into `config/bottleneck_planning.json` — preserving inputUnit / caps /
+  aliases / comment — so the next 立案・照合 picks them up; the one-click reflect of the
+  calibration recommendation), `POST /api/import` (multipart
   `.xlsx` upload; 422 with a list of `{sheet, row, message}` on validation failure,
   otherwise overwrites `config/*.json` and returns import counts), and
   `GET /api/import/template` (downloads the current config as a pre-filled `.xlsx`).
@@ -282,7 +293,13 @@ directly by FastAPI's `StaticFiles` mount.
   (order_id = 製番, № fallback), future-due / production-line filtering, 「実績」-sheet
   parsing (duplicate summing, missing-sheet default), 日次実績 parsing (per-day summing across
   stages, missing-sheet default), 設備停止マスタ parsing (有効=Y
-  filter, missing-sheet default), and `load_bottleneck_planning` config reading.
+  filter, missing-sheet default), `load_bottleneck_planning` config reading, and
+  `save_bottleneck_calibration` (offset/A-shift write-back on a tmp config, other fields
+  preserved).
+- `backend/tests/test_apply_calibration_api.py` — TestClient coverage of
+  `POST /api/bottleneck/apply-calibration`: the success path writes the real config then
+  restores it in a `finally` (offsets/aShiftFraction updated, caps preserved), plus 422 cases
+  (bad stage key, out-of-range fraction, extreme offset).
 - `backend/tests/test_bottleneck_export.py` — asserts the exported workbook has the four
   expected sheets, the 機種×日 matrix lists every product with all stage rows, and the
   製番別MIL sheet has one row per lot with the overrun verdict.
@@ -317,7 +334,11 @@ directly by FastAPI's `StaticFiles` mount.
   **実計画(FeliCa)との照合** panel — the **「実計画と照合(精度検証)」** button uploads a FeliCa
   workbook (with the stored ledger) to `/api/bottleneck/validate` and shows current vs
   recommended offset/A-shift error (完成日/投入日 MAE・バイアス) and a per-機種 実リード由来
-  オフセット table (for `leadOffsetByProduct`), plus a
+  オフセット table (for `leadOffsetByProduct`); when the recommendation differs from the
+  current config a **「推奨値をconfigに反映」** button (`#bn-apply-calibration`) posts the
+  recommended offsets/A-shift fraction to `/api/bottleneck/apply-calibration` to write them
+  into `config/bottleneck_planning.json` in one click (hidden — with a "既に較正済み" note —
+  when config already equals the calibration optimum), plus a
   **「この計画をExcel出力」** button that re-posts the stored file to
   `/api/bottleneck/export`. The discrete-scheduler view and this bottleneck view coexist on
   the page. The

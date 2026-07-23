@@ -29,6 +29,7 @@ from config_loader import (
     load_changeover_config,
     load_equipment_config,
     load_orders_data,
+    save_bottleneck_calibration,
 )
 from excel_import import ImportValidationError, WorkbookReadError, export_workbook, parse_workbook, save_config
 from felica_calibration import calibrate, compare_plans, derive_stage_offsets, parse_felica_plan
@@ -46,6 +47,11 @@ app = FastAPI(title="生産計画自動立案API")
 
 class PlanRequest(BaseModel):
     start_date: date | None = None
+
+
+class CalibrationApply(BaseModel):
+    offsets: dict[str, int]
+    a_shift_fraction: float
 
 
 @app.get("/api/equipment")
@@ -290,6 +296,28 @@ async def validate_bottleneck_plan(
         "recommended_a_shift_fraction": cal.recommended_a_shift_fraction,
         "derived_offsets_by_product": derived,
     }
+
+
+@app.post("/api/bottleneck/apply-calibration")
+async def apply_bottleneck_calibration(req: CalibrationApply):
+    """照合(/validate)で得た推奨オフセット/A勤割合を config に反映する。
+
+    validate が返す `recommended_offsets` / `recommended_a_shift_fraction` を受け取り、
+    `config/bottleneck_planning.json` の stageFlows オフセットと aShiftFraction を書き換える
+    (機種別キャパ・入力単位・エイリアス等は保持)。次回以降の立案・照合から有効になる。
+    """
+    valid_stages = {f.stage_id for f in load_bottleneck_planning().stage_flows}
+    if not req.offsets or any(s not in valid_stages for s in req.offsets):
+        raise HTTPException(
+            status_code=422,
+            detail=f"工程オフセットのキーが不正です(有効: {'/'.join(sorted(valid_stages))})。",
+        )
+    if any(not (-15 <= v <= 15) for v in req.offsets.values()):
+        raise HTTPException(status_code=422, detail="工程オフセットは -15〜15 稼働日の範囲で指定してください。")
+    if not 0.0 < req.a_shift_fraction <= 1.0:
+        raise HTTPException(status_code=422, detail="A勤割合は 0〜1(0除く) の範囲で指定してください。")
+    saved = save_bottleneck_calibration(req.offsets, req.a_shift_fraction)
+    return {"applied": True, **saved}
 
 
 @app.post("/api/bottleneck/export")

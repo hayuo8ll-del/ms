@@ -122,6 +122,35 @@ def load_bottleneck_planning() -> BottleneckPlanningConfig:
     )
 
 
+def save_bottleneck_calibration(
+    offsets: dict[str, int],
+    a_shift_fraction: float,
+    path: Path | None = None,
+) -> dict:
+    """較正で得た工程オフセット/A勤割合を bottleneck_planning.json に書き戻す。
+
+    `stageFlows[].leadOffsetDays` を stageId 一致で更新し、`aShiftFraction` を上書きする。
+    その他のフィールド(inputUnit / productDailyCapsByMode / productAliases / コメント等)は
+    保持する。テスト用に書き込み先 `path` を差し替えられる(既定は config/ の実ファイル)。
+    更新後の {offsets, aShiftFraction} を返す。
+    """
+    path = path or (CONFIG_DIR / "bottleneck_planning.json")
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    for flow in data.get("stageFlows", []):
+        sid = flow.get("stageId")
+        if sid in offsets:
+            flow["leadOffsetDays"] = int(offsets[sid])
+    data["aShiftFraction"] = float(a_shift_fraction)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    return {
+        "offsets": {fl["stageId"]: fl["leadOffsetDays"] for fl in data.get("stageFlows", [])},
+        "a_shift_fraction": data["aShiftFraction"],
+    }
+
+
 def load_orders_data() -> OrdersData:
     data = _load_json("orders_sample.json")
     orders = [

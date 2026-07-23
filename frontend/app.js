@@ -27,11 +27,15 @@ const bnValidateButton = document.getElementById("bn-validate");
 const felicaFileInput = document.getElementById("felica-file");
 const bnValidationEl = document.getElementById("bn-validation");
 const bnValidationBodyEl = document.getElementById("bn-validation-body");
+const bnApplyButton = document.getElementById("bn-apply-calibration");
+const bnApplyResultEl = document.getElementById("bn-apply-result");
 const bnExportButton = document.getElementById("bn-export");
 const bnLinesInput = document.getElementById("bn-lines");
 
 // 直近に取り込んだ台帳ファイル(画面表示 → Excel出力で再利用)
 let lastLedgerFile = null;
+// 直近の照合結果(推奨値のconfig反映で再利用)
+let lastValidation = null;
 
 const BN_STAGE_COLOR = { ANT: "var(--accent-a)", TAL: "var(--accent-b)", HAL: "var(--danger)", MIL: "var(--accent-c)" };
 
@@ -664,13 +668,17 @@ async function validateAgainstFelica() {
   }
 }
 
+function offStr(o) {
+  return `ANT ${o.ANT} / TAL ${o.TAL} / HAL ${o.HAL} / MIL ${o.MIL}`;
+}
+
 function renderValidation(d) {
-  const offStr = (o) => `ANT ${o.ANT} / TAL ${o.TAL} / HAL ${o.HAL} / MIL ${o.MIL}`;
+  lastValidation = d;
   const row = (label, cur, rec) =>
     `<tr><td>${label}</td><td class="bn-num">${cur}</td><td class="bn-num">${rec}</td></tr>`;
   const better = (c, r) => (r < c ? ' class="bn-improved"' : "");
   bnValidationBodyEl.innerHTML =
-    `<p class="bn-validation-note">FeliCa実計画の${d.felica_lots}製番のうち一致した${d.current.matched}製番で照合（単位=稼働日）。config への反映は手動です。</p>` +
+    `<p class="bn-validation-note">FeliCa実計画の${d.felica_lots}製番のうち一致した${d.current.matched}製番で照合（単位=稼働日）。推奨較正後の値は下の「推奨値をconfigに反映」で書き戻せます。</p>` +
     `<table class="bn-vtable"><thead><tr><th>指標</th><th>現状</th><th>推奨較正後</th></tr></thead><tbody>` +
     `<tr><td>完成日 MAE</td><td class="bn-num">${d.current.completion_mae}</td><td class="bn-num"${better(d.current.completion_mae, d.recommended.completion_mae)}>${d.recommended.completion_mae}</td></tr>` +
     `<tr><td>完成日 バイアス(our−実)</td><td class="bn-num">${d.current.completion_bias}</td><td class="bn-num">${d.recommended.completion_bias}</td></tr>` +
@@ -679,6 +687,40 @@ function renderValidation(d) {
     `<tr><td>A勤割合</td><td class="bn-num">${d.current_a_shift_fraction}</td><td class="bn-num">${d.recommended_a_shift_fraction}</td></tr>` +
     `</tbody></table>` +
     renderDerivedOffsets(d.derived_offsets_by_product);
+
+  // 推奨値が現状と異なるときだけ「configに反映」ボタンを出す
+  const differs =
+    offStr(d.current_offsets) !== offStr(d.recommended_offsets) ||
+    d.current_a_shift_fraction !== d.recommended_a_shift_fraction;
+  bnApplyResultEl.textContent = differs ? "" : "現状の config が較正の最適値と一致しています（反映不要）。";
+  bnApplyButton.hidden = !differs;
+}
+
+async function applyCalibration() {
+  if (!lastValidation) return;
+  bnApplyButton.disabled = true;
+  bnApplyButton.textContent = "反映中...";
+  try {
+    const res = await fetch("/api/bottleneck/apply-calibration", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        offsets: lastValidation.recommended_offsets,
+        a_shift_fraction: lastValidation.recommended_a_shift_fraction,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(typeof data.detail === "string" ? data.detail : `APIエラー: ${res.status}`);
+    }
+    bnApplyResultEl.textContent = `config に反映しました（オフセット ${offStr(data.offsets)} / A勤割合 ${data.a_shift_fraction}）。次回の立案・照合から有効です。`;
+    bnApplyButton.hidden = true;
+  } catch (err) {
+    bnApplyResultEl.textContent = `反映に失敗しました: ${err.message}`;
+  } finally {
+    bnApplyButton.disabled = false;
+    bnApplyButton.textContent = "推奨値をconfigに反映";
+  }
 }
 
 function renderDerivedOffsets(derived) {
@@ -708,4 +750,5 @@ ledgerFileInput.addEventListener("change", loadBottleneckPlan);
 bnExportButton.addEventListener("click", exportBottleneckPlan);
 bnValidateButton.addEventListener("click", () => felicaFileInput.click());
 felicaFileInput.addEventListener("change", validateAgainstFelica);
+bnApplyButton.addEventListener("click", applyCalibration);
 runPlan();

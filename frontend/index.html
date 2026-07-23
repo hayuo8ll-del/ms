@@ -42,6 +42,10 @@
     <div class="bn-validation" id="bn-validation" hidden>
       <div class="bn-validation-title">実計画(FeliCa)との照合</div>
       <div id="bn-validation-body"></div>
+      <div class="bn-validation-actions">
+        <button id="bn-apply-calibration" type="button" hidden title="推奨較正オフセット/A勤割合を config/bottleneck_planning.json に書き戻します。次回以降の立案・照合から有効になります。">推奨値をconfigに反映</button>
+        <span id="bn-apply-result" class="bn-apply-result"></span>
+      </div>
     </div>
     <div class="bn-remedies" id="bn-remedies" hidden>
       <div class="bn-remedies-title">納期遅れ 解消の提案</div>

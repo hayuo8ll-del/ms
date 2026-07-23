@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from openpyxl import Workbook  # noqa: E402
 
-from config_loader import load_bottleneck_planning  # noqa: E402
+from config_loader import load_bottleneck_planning, save_bottleneck_calibration  # noqa: E402
 from thm_ledger_import import (  # noqa: E402
     parse_actuals,
     parse_daily_actuals,
@@ -170,3 +170,42 @@ def test_load_bottleneck_planning_reads_config_file():
     assert cfg.product_daily_caps_by_mode["16h"]["Lite-S(Mies)"] == 30720
     assert cfg.product_aliases["RC-SA02F"] == "さそり金融"
     assert cfg.machine_counts["HAL"] == 5
+
+
+def test_save_bottleneck_calibration_updates_offsets_and_preserves_rest(tmp_path):
+    import json
+
+    cfg_path = tmp_path / "bottleneck_planning.json"
+    cfg_path.write_text(
+        json.dumps(
+            {
+                "lineDailyCapacities": {"16h": 90000, "22h": 120000},
+                "bottleneckStage": "HAL",
+                "stageFlows": [
+                    {"stageId": "ANT", "leadOffsetDays": -2},
+                    {"stageId": "TAL", "leadOffsetDays": -1, "inputUnit": 40000},
+                    {"stageId": "HAL", "leadOffsetDays": 0, "inputUnit": 10000},
+                    {"stageId": "MIL", "leadOffsetDays": 1, "inputUnit": 1920},
+                ],
+                "aShiftFraction": 0.5,
+                "productDailyCapsByMode": {"16h": {"さそり金融": 80000}},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    saved = save_bottleneck_calibration({"ANT": -1, "TAL": -2, "HAL": 0, "MIL": 2}, 0.4, path=cfg_path)
+    assert saved["offsets"] == {"ANT": -1, "TAL": -2, "HAL": 0, "MIL": 2}
+    assert saved["a_shift_fraction"] == 0.4
+
+    data = json.loads(cfg_path.read_text(encoding="utf-8"))
+    flows = {f["stageId"]: f for f in data["stageFlows"]}
+    # オフセット/A勤割合が更新される
+    assert flows["ANT"]["leadOffsetDays"] == -1
+    assert flows["MIL"]["leadOffsetDays"] == 2
+    assert data["aShiftFraction"] == 0.4
+    # inputUnit・機種別キャパ等は保持される
+    assert flows["TAL"]["inputUnit"] == 40000
+    assert flows["MIL"]["inputUnit"] == 1920
+    assert data["productDailyCapsByMode"]["16h"]["さそり金融"] == 80000
