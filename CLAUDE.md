@@ -4,18 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current State
 
-This repository (`ms`) is in an early bootstrap stage. It contains almost no
-application code yet — only a GitHub Actions workflow that anticipates code
-that has not been written.
+This repository (`ms`) is in an early bootstrap stage. It contains a minimal
+Python backend scaffold plus the GitHub Actions workflow that exercises it.
 
 Tracked files:
 
 - `CLAUDE.md` — this guidance file.
 - `.github/workflows/scheduler-test.yml` — a CI workflow triggered on every
   `push` and `pull_request`.
+- `backend/scheduler.py` — the scheduler scaffold and entry point run by CI.
 
-There is no application source, dependency manifest, or test suite committed
-yet.
+There is no dependency manifest (`requirements.txt`) or test suite committed
+yet; the scaffold uses only the Python standard library.
 
 ## CI Workflow and Expected Layout
 
@@ -30,33 +30,36 @@ though those files do not exist yet. On each `push` and `pull_request` it:
    (the step is skipped when the file is absent).
 4. From the `backend/` directory, runs `python3 scheduler.py`.
 
-This implies the intended structure is a Python backend:
+The current structure is a Python backend:
 
 ```
 backend/
   scheduler.py        # entry point the workflow executes
-  requirements.txt    # optional; installed only if present
+  requirements.txt    # optional; installed only if present (not present yet)
 ```
 
-**Important:** The workflow currently fails, because `backend/scheduler.py`
-does not exist. The first backend commit should create `backend/scheduler.py`
-(and `backend/requirements.txt` if any third-party packages are needed) so
-that `cd backend && python3 scheduler.py` runs cleanly. Until then, expect
-red CI on every push and pull request.
+The workflow passes as long as `cd backend && python3 scheduler.py` exits
+cleanly (status `0`). Because CI invokes the entry point with no arguments and
+waits for it to finish, **`scheduler.py` must not block forever in its default
+mode** — it runs any pending tasks once and exits. The long-running loop lives
+behind the `--daemon` flag, which CI does not use. Add `backend/requirements.txt`
+only when a third-party dependency is actually introduced.
 
 ## Development Workflow
 
-- **Language / runtime:** Python 3 (per the CI workflow).
-- **Run locally (once `backend/scheduler.py` exists):**
+- **Language / runtime:** Python 3 (per the CI workflow; standard library only).
+- **Run locally:**
   ```bash
   cd backend
   pip install -r requirements.txt   # only if requirements.txt is present
-  python3 scheduler.py
+  python3 scheduler.py              # run pending tasks once and exit (CI mode)
+  python3 scheduler.py --daemon     # run continuously; Ctrl+C to stop
+  python3 scheduler.py --help       # list flags (--interval, --log-level, ...)
   ```
 - **Build / lint / test:** No build, lint, or test commands are defined yet.
   The workflow's only check is that `python3 scheduler.py` runs to completion,
-  so keep that entry point runnable in CI. When a real test suite is added,
-  update both this file and the workflow to run it.
+  so keep that entry point runnable and non-blocking in CI. When a real test
+  suite is added, update both this file and the workflow to run it.
 
 ## Instructions for Future Sessions
 
