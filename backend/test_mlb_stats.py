@@ -19,6 +19,7 @@ from mlb_stats import (
     _pitcher_game_line,
     format_html,
     format_report,
+    photo_url,
     to_japanese,
     to_japanese_team,
 )
@@ -235,15 +236,75 @@ class ReadabilityMarkupTests(unittest.TestCase):
         self.assertIn('<td class="key" data-label="防御率">2.85</td>', page)
         self.assertIn('<td class="key" data-label="奪三振">150</td>', page)
 
-    def test_recent_table_marks_the_player_line(self) -> None:
+    def test_recent_cards_highlight_the_player_line(self) -> None:
         page = format_html(RECENT_SAMPLE)
-        self.assertIn('data-label="個人成績"', page)
-        self.assertIn('<td class="key" data-label="個人成績">', page)
+        self.assertIn('class="pline"', page)
+        self.assertIn("4打数1安打 打点1", page)
 
     def test_page_has_phone_card_layout(self) -> None:
         page = format_html(SAMPLE)
         self.assertIn("@media (max-width: 700px)", page)
         self.assertIn("content:attr(data-label)", page)
+
+
+class PhotoTests(unittest.TestCase):
+    def test_photo_url_uses_player_id(self) -> None:
+        url = photo_url(660271)
+        self.assertIn("/people/660271/headshot/", url)
+        self.assertTrue(url.startswith("https://img.mlbstatic.com/"))
+
+    def test_photo_url_empty_without_id(self) -> None:
+        self.assertEqual(photo_url(None), "")
+        self.assertEqual(photo_url(0), "")
+
+    def test_page_renders_headshots_when_ids_present(self) -> None:
+        data = {
+            "date": "2026-07-25",
+            "generated_at": "2026-07-25 04:00 UTC",
+            "season": 2026,
+            "hitters": [
+                {
+                    "id": 660271,
+                    "name": "大谷翔平",
+                    "team": "ドジャース",
+                    "stat": {"avg": ".310", "homeRuns": 35},
+                }
+            ],
+            "pitchers": [],
+            "recent": [
+                {
+                    "id": 808967,
+                    "name": "山本由伸",
+                    "date": "2026-07-24",
+                    "opponent": "パドレス",
+                    "home": True,
+                    "team_score": 5,
+                    "opp_score": 3,
+                    "result": "勝",
+                    "line": "7.0回 1失点 9奪三振",
+                }
+            ],
+        }
+        page = format_html(data)
+        self.assertIn("/people/660271/headshot/", page)  # small photo in table
+        self.assertIn("/people/808967/headshot/", page)  # large photo on card
+        # Broken images fall back to the player's initial.
+        self.assertIn('onerror="this.remove()"', page)
+        self.assertIn("<b>大</b>", page)
+        self.assertIn("<b>山</b>", page)
+
+    def test_missing_id_still_renders_initial_without_img(self) -> None:
+        data = {
+            "date": "2026-07-25",
+            "generated_at": "",
+            "season": 2026,
+            "hitters": [{"name": "鈴木誠也", "team": "カブス", "stat": {"avg": ".280"}}],
+            "pitchers": [],
+            "recent": [],
+        }
+        page = format_html(data)
+        self.assertIn("<b>鈴</b>", page)
+        self.assertNotIn("img.mlbstatic.com", page)
 
 
 class GameLineTests(unittest.TestCase):
@@ -279,9 +340,14 @@ class RecentSectionTests(unittest.TestCase):
     def test_html_includes_recent_section(self) -> None:
         page = format_html(RECENT_SAMPLE)
         self.assertIn("直近試合の結果", page)
-        self.assertIn('class="recent"', page)
+        self.assertIn('class="pcard"', page)  # photo cards, not a table
         self.assertIn("大谷翔平", page)
         self.assertIn("敗 2-4", page)  # team_score-opp_score
+
+    def test_recent_cards_colour_win_and_loss(self) -> None:
+        page = format_html(RECENT_SAMPLE)
+        self.assertIn('class="badge win"', page)
+        self.assertIn('class="badge lose"', page)
 
     def test_recent_only_data_is_not_treated_as_empty(self) -> None:
         report = format_report(RECENT_SAMPLE)
