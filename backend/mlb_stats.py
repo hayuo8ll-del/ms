@@ -293,7 +293,12 @@ def collect_stats(season: int, timeout: float = 20.0) -> dict[str, Any]:
             continue
 
         name = to_japanese(player["name"])
-        base = {"name": name, "team": to_japanese_team(stats["team"])}
+        # The player id is carried through so the page can build a headshot URL.
+        base = {
+            "id": player["id"],
+            "name": name,
+            "team": to_japanese_team(stats["team"]),
+        }
         if stats["hitting"]:
             hitters.append({**base, "stat": stats["hitting"]})
         if stats["pitching"]:
@@ -301,7 +306,9 @@ def collect_stats(season: int, timeout: float = 20.0) -> dict[str, Any]:
 
         last_game = stats.get("last_game")
         if last_game:
-            entry = _build_recent_entry(name, last_game, schedule_cache, timeout)
+            entry = _build_recent_entry(
+                player["id"], name, last_game, schedule_cache, timeout
+            )
             if entry:
                 recent.append(entry)
 
@@ -320,6 +327,7 @@ def collect_stats(season: int, timeout: float = 20.0) -> dict[str, Any]:
 
 
 def _build_recent_entry(
+    player_id: int,
     name: str,
     last_game: dict[str, Any],
     schedule_cache: dict[tuple[int, str], dict[str, Any] | None],
@@ -342,6 +350,7 @@ def _build_recent_entry(
     result = result or {}
     opponent = result.get("opponent") or last_game.get("opponent") or ""
     return {
+        "id": player_id,
         "name": name,
         "date": date,
         "opponent": to_japanese_team(opponent),
@@ -563,69 +572,140 @@ def format_report(data: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 _PAGE_CSS = """
-:root { color-scheme: light dark; --bg:#ffffff; --fg:#1a1a1a; --muted:#666;
-  --border:#e2e2e2; --head:#f5f5f5; --stripe:#fafafa; --accent:#0b5cff; }
-@media (prefers-color-scheme: dark) {
-  :root { --bg:#0f1115; --fg:#e6e6e6; --muted:#9aa0aa; --border:#2a2f3a;
-    --head:#1a1e26; --stripe:#151922; --accent:#5b9bff; } }
-* { box-sizing: border-box; }
-body { margin:0; padding:1.5rem 1rem 3rem; background:var(--bg); color:var(--fg);
+:root{
+  color-scheme:dark;
+  --bg:#080b12; --surface:#111826; --surface2:#0d1420; --line:#1f2a3a;
+  --fg:#e9eef7; --muted:#8b98ad; --accent:#38bdf8; --accent2:#a78bfa;
+  --win:#34d399; --lose:#fb7185;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; padding:0 0 3rem; background:var(--bg); color:var(--fg); line-height:1.6;
   font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN",
-  "Noto Sans JP","Yu Gothic",Meiryo,sans-serif; line-height:1.6; }
-main { max-width:1000px; margin:0 auto; }
-h1 { font-size:1.5rem; margin:0 0 .25rem; }
-h2 { font-size:1.2rem; margin:2rem 0 .5rem; }
-.meta { color:var(--muted); font-size:.9rem; margin:.1rem 0; }
-.table-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch;
-  border:1px solid var(--border); border-radius:8px; }
-table { border-collapse:collapse; width:100%; min-width:640px; font-size:.95rem; }
-th, td { padding:.5rem .7rem; text-align:right; white-space:nowrap;
-  border-bottom:1px solid var(--border); }
-th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align:left; }
-thead th { background:var(--head); position:sticky; top:0; }
-tbody tr:nth-child(even) { background:var(--stripe); }
-tbody tr:last-child td { border-bottom:none; }
-table.recent { min-width:520px; }
-table.recent th, table.recent td { text-align:left; }
-table.recent td:last-child { white-space:normal; }
-/* Headline numbers (打率/本塁打, 防御率/奪三振) stand out from the rest. */
-td.key { font-weight:700; color:var(--accent); }
-.empty { padding:1rem; color:var(--muted); }
-footer { margin-top:2.5rem; color:var(--muted); font-size:.85rem; }
-footer a { color:var(--accent); }
+    "Noto Sans JP","Yu Gothic",Meiryo,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+main{max-width:1040px;margin:0 auto;padding:0 1rem}
+.hero{
+  padding:2.2rem 1rem 1.7rem; margin-bottom:.6rem; border-bottom:1px solid var(--line);
+  background:
+    radial-gradient(90rem 26rem at 12% -45%, rgba(56,189,248,.20), transparent 60%),
+    radial-gradient(70rem 24rem at 92% -35%, rgba(167,139,250,.18), transparent 60%),
+    linear-gradient(180deg,#0d1626,var(--bg));
+}
+.hero-inner{max-width:1040px;margin:0 auto}
+.eyebrow{
+  display:inline-block; font-size:.72rem; letter-spacing:.18em; font-weight:700;
+  color:#7dd3fc; border:1px solid rgba(125,211,252,.35);
+  padding:.18rem .6rem; border-radius:999px; margin-bottom:.7rem;
+}
+h1{
+  margin:0; font-size:clamp(1.5rem,4.6vw,2.2rem); line-height:1.25; letter-spacing:-.02em;
+  background:linear-gradient(90deg,#fff,#9ad9ff 72%);
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+}
+.meta{margin:.55rem 0 0;color:var(--muted);font-size:.86rem}
+h2{font-size:1.06rem; margin:2.2rem 0 .8rem; display:flex; align-items:center; gap:.55rem}
+h2::before{
+  content:""; width:.28rem; height:1.05em; border-radius:99px;
+  background:linear-gradient(180deg,var(--accent),var(--accent2));
+}
+.avatar{
+  position:relative; display:inline-grid; place-items:center; flex:none;
+  border-radius:50%; overflow:hidden; border:1px solid var(--line);
+  background:linear-gradient(145deg,#1b2537,#0f1826);
+}
+.avatar b{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);font-weight:700}
+.avatar img{position:relative;z-index:1;width:100%;height:100%;object-fit:cover;display:block}
+.avatar.lg{width:64px;height:64px;font-size:1.25rem}
+.avatar.sm{width:30px;height:30px;font-size:.8rem}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:.75rem}
+.pcard{
+  display:flex; align-items:center; gap:.8rem; padding:.8rem .9rem; border-radius:14px;
+  background:linear-gradient(180deg,var(--surface),var(--surface2)); border:1px solid var(--line);
+}
+.pbody{min-width:0;flex:1}
+.pname{font-weight:700;font-size:1.02rem}
+.pmeta{color:var(--muted);font-size:.8rem;margin-top:.05rem}
+.pline{margin-top:.3rem;color:var(--accent);font-weight:700;font-size:.94rem;overflow-wrap:anywhere}
+.badge{
+  flex:none; align-self:flex-start; font-size:.78rem; font-weight:700; white-space:nowrap;
+  padding:.2rem .55rem; border-radius:999px; border:1px solid var(--line); color:var(--muted);
+}
+.badge.win{color:var(--win);border-color:rgba(52,211,153,.42);background:rgba(52,211,153,.10)}
+.badge.lose{color:var(--lose);border-color:rgba(251,113,133,.42);background:rgba(251,113,133,.10)}
+.table-wrap{
+  overflow-x:auto; -webkit-overflow-scrolling:touch;
+  border:1px solid var(--line); border-radius:14px; background:var(--surface2);
+}
+table{border-collapse:collapse;width:100%;min-width:640px;font-size:.94rem}
+th,td{padding:.6rem .75rem;text-align:right;white-space:nowrap;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
+thead th{background:#0f1725;color:var(--muted);font-size:.8rem;position:sticky;top:0}
+tbody tr:hover{background:rgba(56,189,248,.05)}
+tbody tr:last-child td{border-bottom:none}
+td.key{font-weight:700;color:var(--accent)}
+.who{display:flex;align-items:center;gap:.5rem}
+.empty{padding:1rem;color:var(--muted)}
+footer{margin:2.6rem auto 0;max-width:1040px;padding:0 1rem;color:var(--muted);font-size:.82rem}
+footer a{color:var(--accent)}
 
-/* Phone layout: turn each row into a card so nothing scrolls sideways.
-   Every td carries data-label, which becomes the row label here. */
-@media (max-width: 700px) {
-  body { padding:1.25rem .75rem 2.5rem; }
-  .table-wrap { border:none; border-radius:0; overflow:visible; }
-  table, table.recent { min-width:0; display:block; }
-  thead { display:none; }
-  tbody, tr, td { display:block; width:100%; }
-  tbody tr, tbody tr:nth-child(even) { background:var(--stripe); }
-  tbody tr {
-    border:1px solid var(--border); border-radius:10px;
-    margin:0 0 .7rem; padding:.6rem .8rem;
+/* Phone: each row becomes a card so nothing scrolls sideways. */
+@media (max-width: 700px){
+  main{padding:0 .75rem}
+  .cards{grid-template-columns:1fr}
+  .table-wrap{border:none;border-radius:0;overflow:visible;background:transparent}
+  table{min-width:0;display:block}
+  thead{display:none}
+  tbody,tr,td{display:block;width:100%}
+  tbody tr,tbody tr:hover{
+    background:linear-gradient(180deg,var(--surface),var(--surface2));
+    border:1px solid var(--line); border-radius:14px; margin:0 0 .7rem; padding:.7rem .85rem;
   }
-  td {
-    display:flex; justify-content:space-between; align-items:baseline;
-    gap:1rem; border:none; padding:.22rem 0; text-align:right;
-    white-space:normal;
+  td{
+    display:flex; justify-content:space-between; align-items:baseline; gap:1rem;
+    border:none; padding:.24rem 0; text-align:right; white-space:normal;
   }
-  td::before {
-    content:attr(data-label); color:var(--muted);
-    font-size:.85rem; text-align:left; flex:none;
+  td::before{content:attr(data-label);color:var(--muted);font-size:.82rem;text-align:left;flex:none}
+  td:first-child{
+    font-size:1.05rem; font-weight:700; text-align:left;
+    border-bottom:1px solid var(--line); margin-bottom:.45rem; padding-bottom:.5rem;
   }
-  /* First cell (player name) becomes the card title. */
-  td:first-child {
-    font-size:1.1rem; font-weight:700; text-align:left;
-    border-bottom:1px solid var(--border);
-    margin-bottom:.4rem; padding-bottom:.4rem;
-  }
-  td:first-child::before { content:none; }
-  td.key { font-size:1.05rem; }
+  td:first-child::before{content:none}
+  td.key{font-size:1.02rem}
 }
 """.strip()
+
+# MLB's public headshot CDN. The ``d_people:generic...`` segment is a default
+# image, so an id without a portrait yields a silhouette rather than a 404.
+PHOTO_URL = (
+    "https://img.mlbstatic.com/mlb-photos/image/upload/"
+    "d_people:generic:headshot:67:current.png/w_240,q_auto:best/"
+    "v1/people/{id}/headshot/67/current"
+)
+
+
+def photo_url(player_id: Any) -> str:
+    """Headshot URL for ``player_id`` (empty string when the id is missing)."""
+    return PHOTO_URL.format(id=player_id) if player_id else ""
+
+
+def _avatar(row: dict[str, Any], size: str) -> str:
+    """Circular headshot with the player's initial behind it as a fallback.
+
+    The photo is hotlinked from MLB's CDN, so it can fail (offline, blocked,
+    URL change). ``onerror`` removes the broken image, revealing the initial.
+    """
+    initial = _esc((str(row.get("name") or "?"))[0])
+    url = photo_url(row.get("id"))
+    img = ""
+    if url:
+        img = (
+            f'<img src="{_esc(url)}" alt="" loading="lazy" '
+            'referrerpolicy="no-referrer" onerror="this.remove()">'
+        )
+    return f'<span class="avatar {size}"><b>{initial}</b>{img}</span>'
+
 
 _HITTER_HEADERS = ["選手", "チーム", "試合", "打率", "本塁打", "打点", "OPS", "出塁率"]
 _HITTER_KEYS = ["gamesPlayed", "avg", "homeRuns", "rbi", "ops", "obp"]
@@ -650,9 +730,10 @@ def _html_table(
     body = []
     for row in rows:
         stat = row["stat"]
+        who = f'<span class="who">{_avatar(row, "sm")}{_esc(row["name"])}</span>'
         # data-label drives the phone card layout (see the media query in the CSS).
         cells = [
-            f'<td data-label="{_esc(headers[0])}">{_esc(row["name"])}</td>',
+            f'<td data-label="{_esc(headers[0])}">{who}</td>',
             f'<td data-label="{_esc(headers[1])}">{_esc(row["team"])}</td>',
         ]
         for header, key in zip(headers[2:], keys):
@@ -670,32 +751,31 @@ def _html_table(
     )
 
 
-_RECENT_HEADERS = ["選手", "試合日", "対戦", "チーム結果", "個人成績"]
-
-
-def _recent_html_table(recent: list[dict[str, Any]]) -> str:
-    head = "".join(f"<th>{_esc(h)}</th>" for h in _RECENT_HEADERS)
-    body = []
+def _recent_cards(recent: list[dict[str, Any]]) -> str:
+    """Latest game per player as photo cards (the page's headline section)."""
+    cards = []
     for r in recent:
-        values = [
-            _esc(r["name"]),
-            _esc(_short_date(r.get("date"))),
-            _esc(_matchup(r)),
-            _esc(_team_result(r)),
-            _esc(r.get("line")),
-        ]
-        cells = []
-        for i, (header, value) in enumerate(zip(_RECENT_HEADERS, values)):
-            # The player's own line (last column) is the headline here.
-            cls = ' class="key"' if i == len(values) - 1 else ""
-            cells.append(f'<td{cls} data-label="{_esc(header)}">{value}</td>')
-        body.append("<tr>" + "".join(cells) + "</tr>")
+        result = _team_result(r)
+        if result.startswith("勝"):
+            badge = "badge win"
+        elif result.startswith("敗"):
+            badge = "badge lose"
+        else:
+            badge = "badge"
+        cards.append(
+            '<article class="pcard">'
+            f'{_avatar(r, "lg")}'
+            '<div class="pbody">'
+            f'<div class="pname">{_esc(r["name"])}</div>'
+            f'<div class="pmeta">{_esc(_short_date(r.get("date")))}　{_esc(_matchup(r))}</div>'
+            f'<div class="pline">{_esc(r.get("line"))}</div>'
+            "</div>"
+            f'<span class="{badge}">{_esc(result)}</span>'
+            "</article>"
+        )
     return (
         "<h2>直近試合の結果</h2>\n"
-        '<div class="table-wrap"><table class="recent">\n'
-        f"<thead><tr>{head}</tr></thead>\n"
-        "<tbody>\n" + "\n".join(body) + "\n</tbody>\n"
-        "</table></div>"
+        '<div class="cards">\n' + "\n".join(cards) + "\n</div>"
     )
 
 
@@ -703,8 +783,9 @@ def format_html(data: dict[str, Any]) -> str:
     """Render structured stats (from :func:`collect_stats`) as a standalone
     HTML page for the GitHub Pages web app.
 
-    Pure function (no network); the returned page is fully self-contained
-    (inline CSS, responsive, light/dark aware) so it can be published as-is.
+    Pure function (no network at render time). The page is self-contained
+    apart from the hotlinked headshots, which degrade to the player's initial
+    when unavailable.
     """
     season = data.get("season", "?")
     hitters = data.get("hitters", [])
@@ -712,39 +793,27 @@ def format_html(data: dict[str, Any]) -> str:
     recent = data.get("recent", [])
     updated = _esc(data.get("generated_at", data.get("date", "")))
 
-    parts = [
-        f"<h1>日本人メジャーリーガー成績 ({_esc(season)}シーズン)</h1>",
-        f'<p class="meta">最終更新: {updated}</p>',
-        f'<p class="meta">データ提供: MLB Stats API — 野手 {len(hitters)}名 / 投手 {len(pitchers)}名</p>',
-    ]
-
+    body = []
     if not hitters and not pitchers and not recent:
-        parts.append(
+        body.append(
             '<p class="empty">現時点で出場成績のある日本人選手は見つかりませんでした'
             "(オフシーズン、または今シーズンの試合前の可能性があります)。</p>"
         )
     else:
         if recent:
-            parts.append(_recent_html_table(recent))
+            body.append(_recent_cards(recent))
         if hitters:
-            parts.append(
+            body.append(
                 _html_table(
                     "野手", _HITTER_HEADERS, _HITTER_KEYS, hitters, _HITTER_KEY_STATS
                 )
             )
         if pitchers:
-            parts.append(
+            body.append(
                 _html_table(
                     "投手", _PITCHER_HEADERS, _PITCHER_KEYS, pitchers, _PITCHER_KEY_STATS
                 )
             )
-
-    parts.append(
-        "<footer>データ提供: "
-        '<a href="https://statsapi.mlb.com" rel="noopener">MLB Stats API</a>'
-        "(無料・公開)。GitHub Actions により毎日自動更新。</footer>"
-    )
-    body = "\n".join(parts)
 
     return (
         "<!doctype html>\n"
@@ -753,7 +822,16 @@ def format_html(data: dict[str, Any]) -> str:
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f"<title>日本人メジャーリーガー成績 ({_esc(season)})</title>\n"
         f"<style>\n{_PAGE_CSS}\n</style>\n"
-        "</head>\n<body>\n<main>\n"
-        f"{body}\n"
-        "</main>\n</body>\n</html>\n"
+        "</head>\n<body>\n"
+        '<header class="hero"><div class="hero-inner">\n'
+        '<span class="eyebrow">MLB JAPANESE PLAYERS</span>\n'
+        "<h1>日本人メジャーリーガー成績</h1>\n"
+        f'<p class="meta">{_esc(season)}シーズン ・ 最終更新: {updated}</p>\n'
+        f'<p class="meta">野手 {len(hitters)}名 / 投手 {len(pitchers)}名</p>\n'
+        "</div></header>\n"
+        "<main>\n" + "\n".join(body) + "\n</main>\n"
+        "<footer>データ提供: "
+        '<a href="https://statsapi.mlb.com" rel="noopener">MLB Stats API</a>'
+        "・写真: MLB。GitHub Actions により毎日自動更新。</footer>\n"
+        "</body>\n</html>\n"
     )
