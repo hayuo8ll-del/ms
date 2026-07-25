@@ -50,12 +50,59 @@ JAPANESE_NAMES: dict[str, str] = {
     "Shinnosuke Ogasawara": "小笠原慎之介",
     "Kenta Maeda": "前田健太",
     "Naoyuki Uwasawa": "上沢直之",
+    "Kazuma Okamoto": "岡本和真",
+    "Munetaka Murakami": "村上宗隆",
+    "Tatsuya Imai": "今井達也",
+}
+
+# Full MLB club name -> short Japanese nickname. Shortening the team column is
+# the single biggest readability win on a phone, where it is otherwise the
+# widest column. Unknown clubs fall back to the English name.
+TEAM_NAMES: dict[str, str] = {
+    "Arizona Diamondbacks": "ダイヤモンドバックス",
+    "Atlanta Braves": "ブレーブス",
+    "Baltimore Orioles": "オリオールズ",
+    "Boston Red Sox": "レッドソックス",
+    "Chicago Cubs": "カブス",
+    "Chicago White Sox": "ホワイトソックス",
+    "Cincinnati Reds": "レッズ",
+    "Cleveland Guardians": "ガーディアンズ",
+    "Colorado Rockies": "ロッキーズ",
+    "Detroit Tigers": "タイガース",
+    "Houston Astros": "アストロズ",
+    "Kansas City Royals": "ロイヤルズ",
+    "Los Angeles Angels": "エンゼルス",
+    "Los Angeles Dodgers": "ドジャース",
+    "Miami Marlins": "マーリンズ",
+    "Milwaukee Brewers": "ブルワーズ",
+    "Minnesota Twins": "ツインズ",
+    "New York Mets": "メッツ",
+    "New York Yankees": "ヤンキース",
+    "Philadelphia Phillies": "フィリーズ",
+    "Pittsburgh Pirates": "パイレーツ",
+    "San Diego Padres": "パドレス",
+    "San Francisco Giants": "ジャイアンツ",
+    "Seattle Mariners": "マリナーズ",
+    "St. Louis Cardinals": "カージナルス",
+    "Tampa Bay Rays": "レイズ",
+    "Texas Rangers": "レンジャーズ",
+    "Toronto Blue Jays": "ブルージェイズ",
+    "Washington Nationals": "ナショナルズ",
+    # The Athletics have appeared under several names since leaving Oakland.
+    "Athletics": "アスレチックス",
+    "Oakland Athletics": "アスレチックス",
+    "Sacramento Athletics": "アスレチックス",
 }
 
 
 def to_japanese(name: str) -> str:
     """Return the Japanese display name for ``name`` (English fallback)."""
     return JAPANESE_NAMES.get(name, name)
+
+
+def to_japanese_team(name: str) -> str:
+    """Return the short Japanese club name for ``name`` (English fallback)."""
+    return TEAM_NAMES.get(name, name)
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +293,7 @@ def collect_stats(season: int, timeout: float = 20.0) -> dict[str, Any]:
             continue
 
         name = to_japanese(player["name"])
-        base = {"name": name, "team": stats["team"]}
+        base = {"name": name, "team": to_japanese_team(stats["team"])}
         if stats["hitting"]:
             hitters.append({**base, "stat": stats["hitting"]})
         if stats["pitching"]:
@@ -293,10 +340,11 @@ def _build_recent_entry(
         result = schedule_cache[key]
 
     result = result or {}
+    opponent = result.get("opponent") or last_game.get("opponent") or ""
     return {
         "name": name,
         "date": date,
-        "opponent": result.get("opponent") or last_game.get("opponent") or "",
+        "opponent": to_japanese_team(opponent),
         "home": last_game.get("home"),
         "team_score": result.get("team_score"),
         "opp_score": result.get("opp_score"),
@@ -395,6 +443,12 @@ def _team_result(entry: dict[str, Any]) -> str:
     result = _cell(entry.get("result")) if entry.get("result") else ""
     ts, os_ = entry.get("team_score"), entry.get("opp_score")
     if ts is not None and os_ is not None:
+        if not result:
+            # The schedule endpoint omits isWinner for some games; the scores
+            # still tell us who won, so don't show a bare "3-4".
+            team, opp = _to_float(ts), _to_float(os_)
+            if team >= 0 and opp >= 0 and team != opp:
+                result = "勝" if team > opp else "敗"
         return f"{result} {ts}-{os_}".strip()
     return result or "-"
 
@@ -534,9 +588,43 @@ tbody tr:last-child td { border-bottom:none; }
 table.recent { min-width:520px; }
 table.recent th, table.recent td { text-align:left; }
 table.recent td:last-child { white-space:normal; }
+/* Headline numbers (打率/本塁打, 防御率/奪三振) stand out from the rest. */
+td.key { font-weight:700; color:var(--accent); }
 .empty { padding:1rem; color:var(--muted); }
 footer { margin-top:2.5rem; color:var(--muted); font-size:.85rem; }
 footer a { color:var(--accent); }
+
+/* Phone layout: turn each row into a card so nothing scrolls sideways.
+   Every td carries data-label, which becomes the row label here. */
+@media (max-width: 700px) {
+  body { padding:1.25rem .75rem 2.5rem; }
+  .table-wrap { border:none; border-radius:0; overflow:visible; }
+  table, table.recent { min-width:0; display:block; }
+  thead { display:none; }
+  tbody, tr, td { display:block; width:100%; }
+  tbody tr, tbody tr:nth-child(even) { background:var(--stripe); }
+  tbody tr {
+    border:1px solid var(--border); border-radius:10px;
+    margin:0 0 .7rem; padding:.6rem .8rem;
+  }
+  td {
+    display:flex; justify-content:space-between; align-items:baseline;
+    gap:1rem; border:none; padding:.22rem 0; text-align:right;
+    white-space:normal;
+  }
+  td::before {
+    content:attr(data-label); color:var(--muted);
+    font-size:.85rem; text-align:left; flex:none;
+  }
+  /* First cell (player name) becomes the card title. */
+  td:first-child {
+    font-size:1.1rem; font-weight:700; text-align:left;
+    border-bottom:1px solid var(--border);
+    margin-bottom:.4rem; padding-bottom:.4rem;
+  }
+  td:first-child::before { content:none; }
+  td.key { font-size:1.05rem; }
+}
 """.strip()
 
 _HITTER_HEADERS = ["選手", "チーム", "試合", "打率", "本塁打", "打点", "OPS", "出塁率"]
@@ -546,14 +634,32 @@ _PITCHER_HEADERS = [
 ]
 _PITCHER_KEYS = ["gamesPlayed", "era", "wins", "losses", "strikeOuts", "whip", "inningsPitched"]
 
+# Stats highlighted (bold + accent) as the headline numbers for each table.
+_HITTER_KEY_STATS = {"avg", "homeRuns"}
+_PITCHER_KEY_STATS = {"era", "strikeOuts"}
 
-def _html_table(title: str, headers: list[str], keys: list[str], rows: list[dict[str, Any]]) -> str:
+
+def _html_table(
+    title: str,
+    headers: list[str],
+    keys: list[str],
+    rows: list[dict[str, Any]],
+    key_stats: set[str],
+) -> str:
     head = "".join(f"<th>{_esc(h)}</th>" for h in headers)
     body = []
     for row in rows:
         stat = row["stat"]
-        cells = [f"<td>{_esc(row['name'])}</td>", f"<td>{_esc(row['team'])}</td>"]
-        cells += [f"<td>{_esc(stat.get(k))}</td>" for k in keys]
+        # data-label drives the phone card layout (see the media query in the CSS).
+        cells = [
+            f'<td data-label="{_esc(headers[0])}">{_esc(row["name"])}</td>',
+            f'<td data-label="{_esc(headers[1])}">{_esc(row["team"])}</td>',
+        ]
+        for header, key in zip(headers[2:], keys):
+            cls = ' class="key"' if key in key_stats else ""
+            cells.append(
+                f'<td{cls} data-label="{_esc(header)}">{_esc(stat.get(key))}</td>'
+            )
         body.append("<tr>" + "".join(cells) + "</tr>")
     return (
         f"<h2>{_esc(title)}</h2>\n"
@@ -571,13 +677,18 @@ def _recent_html_table(recent: list[dict[str, Any]]) -> str:
     head = "".join(f"<th>{_esc(h)}</th>" for h in _RECENT_HEADERS)
     body = []
     for r in recent:
-        cells = [
-            f"<td>{_esc(r['name'])}</td>",
-            f"<td>{_esc(_short_date(r.get('date')))}</td>",
-            f"<td>{_esc(_matchup(r))}</td>",
-            f"<td>{_esc(_team_result(r))}</td>",
-            f"<td>{_esc(r.get('line'))}</td>",
+        values = [
+            _esc(r["name"]),
+            _esc(_short_date(r.get("date"))),
+            _esc(_matchup(r)),
+            _esc(_team_result(r)),
+            _esc(r.get("line")),
         ]
+        cells = []
+        for i, (header, value) in enumerate(zip(_RECENT_HEADERS, values)):
+            # The player's own line (last column) is the headline here.
+            cls = ' class="key"' if i == len(values) - 1 else ""
+            cells.append(f'<td{cls} data-label="{_esc(header)}">{value}</td>')
         body.append("<tr>" + "".join(cells) + "</tr>")
     return (
         "<h2>直近試合の結果</h2>\n"
@@ -616,9 +727,17 @@ def format_html(data: dict[str, Any]) -> str:
         if recent:
             parts.append(_recent_html_table(recent))
         if hitters:
-            parts.append(_html_table("野手", _HITTER_HEADERS, _HITTER_KEYS, hitters))
+            parts.append(
+                _html_table(
+                    "野手", _HITTER_HEADERS, _HITTER_KEYS, hitters, _HITTER_KEY_STATS
+                )
+            )
         if pitchers:
-            parts.append(_html_table("投手", _PITCHER_HEADERS, _PITCHER_KEYS, pitchers))
+            parts.append(
+                _html_table(
+                    "投手", _PITCHER_HEADERS, _PITCHER_KEYS, pitchers, _PITCHER_KEY_STATS
+                )
+            )
 
     parts.append(
         "<footer>データ提供: "

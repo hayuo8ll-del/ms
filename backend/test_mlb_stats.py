@@ -20,6 +20,7 @@ from mlb_stats import (
     format_html,
     format_report,
     to_japanese,
+    to_japanese_team,
 )
 
 # A fixture mimicking the "recent games" structure produced by collect_stats.
@@ -196,8 +197,53 @@ class JapaneseNameTests(unittest.TestCase):
         self.assertEqual(to_japanese("Shohei Ohtani"), "大谷翔平")
         self.assertEqual(to_japanese("Yoshinobu Yamamoto"), "山本由伸")
 
+    def test_recently_added_names(self) -> None:
+        self.assertEqual(to_japanese("Kazuma Okamoto"), "岡本和真")
+        self.assertEqual(to_japanese("Munetaka Murakami"), "村上宗隆")
+        self.assertEqual(to_japanese("Tatsuya Imai"), "今井達也")
+
     def test_unknown_name_falls_back_to_english(self) -> None:
         self.assertEqual(to_japanese("John Newcomer"), "John Newcomer")
+
+
+class JapaneseTeamTests(unittest.TestCase):
+    def test_known_teams_are_shortened(self) -> None:
+        self.assertEqual(to_japanese_team("Los Angeles Dodgers"), "ドジャース")
+        self.assertEqual(to_japanese_team("San Diego Padres"), "パドレス")
+        self.assertEqual(to_japanese_team("St. Louis Cardinals"), "カージナルス")
+
+    def test_unknown_team_falls_back_to_english(self) -> None:
+        self.assertEqual(to_japanese_team("Some New Club"), "Some New Club")
+
+
+class ReadabilityMarkupTests(unittest.TestCase):
+    """The phone card layout and stat emphasis depend on this markup."""
+
+    def test_cells_carry_data_labels(self) -> None:
+        page = format_html(SAMPLE)
+        # data-label drives the per-row card layout under the media query.
+        self.assertIn('data-label="選手"', page)
+        self.assertIn('data-label="本塁打"', page)
+        self.assertIn('data-label="防御率"', page)
+
+    def test_headline_stats_are_marked(self) -> None:
+        page = format_html(SAMPLE)
+        self.assertIn('class="key"', page)
+        # 打率 / 本塁打 for hitters, 防御率 / 奪三振 for pitchers.
+        self.assertIn('<td class="key" data-label="打率">.310</td>', page)
+        self.assertIn('<td class="key" data-label="本塁打">35</td>', page)
+        self.assertIn('<td class="key" data-label="防御率">2.85</td>', page)
+        self.assertIn('<td class="key" data-label="奪三振">150</td>', page)
+
+    def test_recent_table_marks_the_player_line(self) -> None:
+        page = format_html(RECENT_SAMPLE)
+        self.assertIn('data-label="個人成績"', page)
+        self.assertIn('<td class="key" data-label="個人成績">', page)
+
+    def test_page_has_phone_card_layout(self) -> None:
+        page = format_html(SAMPLE)
+        self.assertIn("@media (max-width: 700px)", page)
+        self.assertIn("content:attr(data-label)", page)
 
 
 class GameLineTests(unittest.TestCase):
@@ -240,6 +286,65 @@ class RecentSectionTests(unittest.TestCase):
     def test_recent_only_data_is_not_treated_as_empty(self) -> None:
         report = format_report(RECENT_SAMPLE)
         self.assertNotIn("見つかりませんでした", report)
+
+    def test_win_loss_derived_from_score_when_api_omits_it(self) -> None:
+        """The schedule endpoint sometimes omits isWinner; scores still tell us."""
+        data = {
+            "date": "2026-07-25",
+            "generated_at": "2026-07-25 04:00 UTC",
+            "season": 2026,
+            "hitters": [],
+            "pitchers": [],
+            "recent": [
+                {
+                    "name": "岡本和真",
+                    "date": "2026-07-24",
+                    "opponent": "レッドソックス",
+                    "home": False,
+                    "team_score": 3,
+                    "opp_score": 4,
+                    "result": "",
+                    "line": "4打数2安打",
+                },
+                {
+                    "name": "村上宗隆",
+                    "date": "2026-07-24",
+                    "opponent": "アストロズ",
+                    "home": True,
+                    "team_score": 6,
+                    "opp_score": 5,
+                    "result": "",
+                    "line": "2打数1安打",
+                },
+            ],
+        }
+        report = format_report(data)
+        self.assertIn("敗 3-4", report)
+        self.assertIn("勝 6-5", report)
+
+    def test_tie_score_shows_no_win_loss_mark(self) -> None:
+        entry = {
+            "name": "X",
+            "date": "2026-07-24",
+            "opponent": "Y",
+            "home": True,
+            "team_score": 2,
+            "opp_score": 2,
+            "result": "",
+            "line": "-",
+        }
+        data = {
+            "date": "2026-07-25",
+            "generated_at": "",
+            "season": 2026,
+            "hitters": [],
+            "pitchers": [],
+            "recent": [entry],
+        }
+        report = format_report(data)
+        self.assertIn("2-2", report)
+        self.assertNotIn("勝 2-2", report)
+        self.assertNotIn("敗 2-2", report)
 
 
 if __name__ == "__main__":
