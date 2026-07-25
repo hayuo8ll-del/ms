@@ -1,0 +1,54 @@
+name: MLB Daily Report
+
+# Fetches Japanese MLB players' season + latest-game stats once a day and
+# commits both the Markdown report (backend/reports/) and the web page
+# (mlb/index.html) back to the branch. GitHub Pages serves this repository from
+# the main branch ("Deploy from a branch"), so the committed mlb/index.html is
+# published at https://hayuo8ll-del.github.io/ms/mlb/ — living alongside the
+# existing site at /ms/ without disturbing it.
+#
+# NOTE: keep the repository's Pages source set to "Deploy from a branch"
+# (main / root). Do NOT switch it to "GitHub Actions" — that would take over the
+# single Pages deployment and remove the existing /ms/ site.
+on:
+  schedule:
+    # 13:00 UTC ≈ 22:00 JST — after the previous day's US games have settled.
+    # Adjust the minute/hour here to change when the report is refreshed.
+    - cron: '0 13 * * *'
+  workflow_dispatch:
+
+# Only contents: write is needed — we commit the report and page to the branch.
+permissions:
+  contents: write
+
+concurrency:
+  group: mlb-daily
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Generate MLB report and web page
+        working-directory: backend
+        run: python3 scheduler.py --mlb-report
+
+      - name: Commit and push report + page
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/reports mlb
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Update Japanese MLB stats ($(date -u +%Y-%m-%d))"
+            git push
+          fi

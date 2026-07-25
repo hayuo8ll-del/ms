@@ -34,3 +34,29 @@ Single-page app; screens are rendered by swapping `#screen`'s innerHTML from JS.
 - State is a single object persisted to `localStorage` under `natsuyasumi_v1`, with a separate profile per grade (`g1`/`g5`). When adding profile fields, extend `freshProfile()` **and** `migrate()` so existing saves upgrade cleanly.
 - `manifest.webmanifest` + `sw.js` provide the PWA/offline layer; `sw.js` uses a cache-first strategy and lists all app assets in `ASSETS` — **update that list AND bump the `CACHE` version string when adding or renaming files**.
 - `icons/` holds `icon.svg` plus a PNG set (96/192/512, `icon-512-maskable.png`, `apple-touch-icon.png`). The PNGs are rasterized from the SVG via Chromium (see git history for the one-off script); regenerate them if the SVG changes.
+
+## Second app: Japanese MLB daily stats (`backend/` + `mlb/`)
+
+A separate, self-contained feature lives alongside the study PWA. It fetches
+active Japanese MLB players' stats daily and publishes a page **without
+touching the study app**.
+
+- **Data source:** public MLB Stats API (`statsapi.mlb.com`, no key), via
+  `urllib` — standard library only, no `requirements.txt`.
+- **`backend/mlb_stats.py`** — network layer (`fetch_japanese_players`,
+  `fetch_player_stats`, `fetch_game_result`, `collect_stats`; auto-detects
+  players by `birthCountry == "Japan"`, pulls season totals + each player's
+  latest game and the team's win/loss & score) and a pure formatting layer
+  (`format_report` → Markdown, `format_html` → standalone HTML). Player names
+  are shown in Japanese via `JAPANESE_NAMES`/`to_japanese` (English fallback).
+- **`backend/scheduler.py`** — run `python3 scheduler.py --mlb-report` to write
+  `backend/reports/{date}.md` + `latest.md` and the web page `mlb/index.html`.
+  The default no-arg invocation stays offline (heartbeat only) so
+  `scheduler-test.yml` keeps passing.
+- **Tests:** `cd backend && python3 -m unittest` (offline formatter tests).
+- **Publishing:** `.github/workflows/mlb-daily.yml` (daily cron + manual) runs
+  the report and commits `backend/reports/` and `mlb/index.html` to `main`.
+  Pages serves `main` via **"Deploy from a branch"**, so the page appears at
+  `https://hayuo8ll-del.github.io/ms/mlb/`. **Do not switch the Pages source to
+  "GitHub Actions"** — the study app at `/ms/` is published the same way and
+  would be replaced.
