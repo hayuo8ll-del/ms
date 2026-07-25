@@ -20,6 +20,7 @@ from mlb_stats import (
     format_html,
     format_report,
     photo_url,
+    spot_url,
     to_japanese,
     to_japanese_team,
 )
@@ -257,6 +258,28 @@ class PhotoTests(unittest.TestCase):
         self.assertEqual(photo_url(None), "")
         self.assertEqual(photo_url(0), "")
 
+    def test_spot_url_uses_player_id(self) -> None:
+        url = spot_url(660271)
+        self.assertIn("/people/660271/spots/", url)
+
+    def test_avatar_falls_back_from_spot_to_headshot(self) -> None:
+        """Photos degrade spot -> headshot -> initial, never a broken image."""
+        data = {
+            "date": "2026-07-25",
+            "generated_at": "",
+            "season": 2026,
+            "hitters": [
+                {"id": 660271, "name": "大谷翔平", "team": "ドジャース", "stat": {}}
+            ],
+            "pitchers": [],
+            "recent": [],
+        }
+        page = format_html(data)
+        self.assertIn("midfield.mlbstatic.com/v1/people/660271/spots/", page)
+        self.assertIn('data-fallback="https://img.mlbstatic.com', page)
+        self.assertIn("this.remove()", page)
+        self.assertIn("<b>大</b>", page)
+
     def test_page_renders_headshots_when_ids_present(self) -> None:
         data = {
             "date": "2026-07-25",
@@ -286,10 +309,11 @@ class PhotoTests(unittest.TestCase):
             ],
         }
         page = format_html(data)
-        self.assertIn("/people/660271/headshot/", page)  # small photo in table
-        self.assertIn("/people/808967/headshot/", page)  # large photo on card
+        self.assertIn("/people/660271/spots/", page)  # small photo in table
+        self.assertIn("/people/808967/spots/", page)  # large photo on card
+        self.assertIn("/people/660271/headshot/", page)  # kept as the fallback
         # Broken images fall back to the player's initial.
-        self.assertIn('onerror="this.remove()"', page)
+        self.assertIn("this.remove()", page)
         self.assertIn("<b>大</b>", page)
         self.assertIn("<b>山</b>", page)
 

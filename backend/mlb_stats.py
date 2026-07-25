@@ -691,24 +691,39 @@ PHOTO_URL = (
 )
 
 
+# MLB's circular "spot" portrait: cropped square and framed for a round avatar,
+# unlike the headshot above, which is a cut-out whose subject deliberately
+# overflows a grey disc and therefore sits badly inside a circular frame.
+SPOT_URL = "https://midfield.mlbstatic.com/v1/people/{id}/spots/120"
+
+
 def photo_url(player_id: Any) -> str:
     """Headshot URL for ``player_id`` (empty string when the id is missing)."""
     return PHOTO_URL.format(id=player_id) if player_id else ""
 
 
-def _avatar(row: dict[str, Any], size: str) -> str:
-    """Circular headshot with the player's initial behind it as a fallback.
+def spot_url(player_id: Any) -> str:
+    """Circular-avatar portrait URL (empty string when the id is missing)."""
+    return SPOT_URL.format(id=player_id) if player_id else ""
 
-    The photo is hotlinked from MLB's CDN, so it can fail (offline, blocked,
-    URL change). ``onerror`` removes the broken image, revealing the initial.
+
+def _avatar(row: dict[str, Any], size: str) -> str:
+    """Circular portrait with the player's initial behind it as a fallback.
+
+    Photos are hotlinked from MLB, so each step can fail. The image degrades in
+    order: circular spot portrait -> cut-out headshot -> the player's initial,
+    which is why ``onerror`` swaps in the fallback before giving up.
     """
     initial = _esc((str(row.get("name") or "?"))[0])
-    url = photo_url(row.get("id"))
+    primary = spot_url(row.get("id"))
+    fallback = photo_url(row.get("id"))
     img = ""
-    if url:
+    if primary:
         img = (
-            f'<img src="{_esc(url)}" alt="" loading="lazy" '
-            'referrerpolicy="no-referrer" onerror="this.remove()">'
+            f'<img src="{_esc(primary)}" data-fallback="{_esc(fallback)}" alt="" '
+            'loading="lazy" referrerpolicy="no-referrer" '
+            "onerror=\"var f=this.dataset.fallback;"
+            "if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}\">"
         )
     return f'<span class="avatar {size}"><b>{initial}</b>{img}</span>'
 
