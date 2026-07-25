@@ -1,0 +1,76 @@
+name: Deploy Pages
+
+# Single entry point for publishing this repository's GitHub Pages site.
+# The site bundles BOTH apps that live in this repo:
+#   /ms/      -> なつやすみ スタディ (static PWA at the repository root)
+#   /ms/mlb/  -> Japanese MLB daily stats page (mlb/index.html)
+#
+# The repository's Pages source is set to "GitHub Actions", which means nothing
+# is published unless a workflow deploys it — this workflow is that publisher.
+#
+# It is also callable from other workflows (workflow_call). mlb-daily.yml uses
+# that: commits pushed with GITHUB_TOKEN do NOT trigger `on: push`, so the daily
+# job has to invoke this workflow explicitly to get its changes published.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never run two Pages deployments at once; let an in-flight one finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Always publish the tip of main. When called from another workflow the
+          # default checkout ref is the caller's triggering SHA, which would miss
+          # commits that workflow just pushed (e.g. the daily mlb/index.html).
+          ref: main
+
+      - name: Stage site contents
+        run: |
+          mkdir -p _site
+          # Publish the web assets only. backend/ (Python), scripts/ (build-time
+          # tooling) and .github/ are not part of the site; sw.js caches none of
+          # them, so excluding them cannot affect the study app.
+          # tar (not cp) so dotfiles such as .nojekyll are carried over.
+          tar -cf - \
+            --exclude='./.git' \
+            --exclude='./.github' \
+            --exclude='./backend' \
+            --exclude='./scripts' \
+            --exclude='./_site' \
+            . | tar -xf - -C _site
+          echo "--- staged files ---"
+          ls -a _site
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
