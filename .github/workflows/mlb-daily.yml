@@ -1,0 +1,72 @@
+name: MLB Daily Report
+
+# Fetches Japanese MLB players' season stats once a day, commits the generated
+# Markdown report under backend/reports/, and publishes an HTML page to GitHub
+# Pages. Also runnable on demand via the "Run workflow" button.
+#
+# One-time setup: in the repository Settings -> Pages, set "Source" to
+# "GitHub Actions" so the deploy job below can publish the site.
+on:
+  schedule:
+    # 13:00 UTC ≈ 22:00 JST — after the previous day's US games have settled.
+    # Adjust the minute/hour here to change when the report is refreshed.
+    - cron: '0 13 * * *'
+  workflow_dispatch:
+
+# contents: write  -> commit the Markdown report back to the repo.
+# pages: write + id-token: write -> deploy the generated page to GitHub Pages.
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: mlb-daily
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Generate MLB report and web page
+        working-directory: backend
+        run: python3 scheduler.py --mlb-report
+
+      - name: Commit and push Markdown report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/reports
+          if git diff --cached --quiet; then
+            echo "No report changes to commit."
+          else
+            git commit -m "Update Japanese MLB player stats report ($(date -u +%Y-%m-%d))"
+            git push
+          fi
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: backend/site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
