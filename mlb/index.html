@@ -30,61 +30,95 @@ tbody tr:last-child td { border-bottom:none; }
 table.recent { min-width:520px; }
 table.recent th, table.recent td { text-align:left; }
 table.recent td:last-child { white-space:normal; }
+/* Headline numbers (打率/本塁打, 防御率/奪三振) stand out from the rest. */
+td.key { font-weight:700; color:var(--accent); }
 .empty { padding:1rem; color:var(--muted); }
 footer { margin-top:2.5rem; color:var(--muted); font-size:.85rem; }
 footer a { color:var(--accent); }
+
+/* Phone layout: turn each row into a card so nothing scrolls sideways.
+   Every td carries data-label, which becomes the row label here. */
+@media (max-width: 700px) {
+  body { padding:1.25rem .75rem 2.5rem; }
+  .table-wrap { border:none; border-radius:0; overflow:visible; }
+  table, table.recent { min-width:0; display:block; }
+  thead { display:none; }
+  tbody, tr, td { display:block; width:100%; }
+  tbody tr, tbody tr:nth-child(even) { background:var(--stripe); }
+  tbody tr {
+    border:1px solid var(--border); border-radius:10px;
+    margin:0 0 .7rem; padding:.6rem .8rem;
+  }
+  td {
+    display:flex; justify-content:space-between; align-items:baseline;
+    gap:1rem; border:none; padding:.22rem 0; text-align:right;
+    white-space:normal;
+  }
+  td::before {
+    content:attr(data-label); color:var(--muted);
+    font-size:.85rem; text-align:left; flex:none;
+  }
+  /* First cell (player name) becomes the card title. */
+  td:first-child {
+    font-size:1.1rem; font-weight:700; text-align:left;
+    border-bottom:1px solid var(--border);
+    margin-bottom:.4rem; padding-bottom:.4rem;
+  }
+  td:first-child::before { content:none; }
+  td.key { font-size:1.05rem; }
+}
 </style>
 </head>
 <body>
 <main>
 <h1>日本人メジャーリーガー成績 (2026シーズン)</h1>
-<p class="meta">最終更新: 2026-07-25 01:48 UTC</p>
+<p class="meta">最終更新: 2026-07-25 03:56 UTC</p>
 <p class="meta">データ提供: MLB Stats API — 野手 6名 / 投手 9名</p>
 <h2>直近試合の結果</h2>
 <div class="table-wrap"><table class="recent">
 <thead><tr><th>選手</th><th>試合日</th><th>対戦</th><th>チーム結果</th><th>個人成績</th></tr></thead>
 <tbody>
-<tr><td>Kazuma Okamoto</td><td>07/24</td><td>@ Boston Red Sox</td><td>3-4</td><td>4打数2安打 本塁打1 打点3</td></tr>
-<tr><td>吉田正尚</td><td>07/24</td><td>vs Toronto Blue Jays</td><td>4-3</td><td>1打数0安打 四球2</td></tr>
-<tr><td>Munetaka Murakami</td><td>07/24</td><td>vs Houston Astros</td><td>5-6</td><td>2打数0安打 四球1</td></tr>
-<tr><td>佐々木朗希</td><td>07/24</td><td>@ New York Mets</td><td>勝 4-2</td><td>7.0回 1失点 9奪三振</td></tr>
-<tr><td>鈴木誠也</td><td>07/24</td><td>@ Pittsburgh Pirates</td><td>勝 3-2</td><td>4打数0安打 打点1 四球1</td></tr>
-<tr><td>大谷翔平</td><td>07/24</td><td>@ New York Mets</td><td>勝 4-2</td><td>4打数2安打 打点1</td></tr>
-<tr><td>菅野智之</td><td>07/24</td><td>@ Milwaukee Brewers</td><td>勝 5-2</td><td>5.1回 2失点 5奪三振</td></tr>
-<tr><td>松井裕樹</td><td>07/23</td><td>@ Atlanta Braves</td><td>敗 5-6</td><td>1.1回 0失点 1奪三振</td></tr>
-<tr><td>Tatsuya Imai</td><td>07/21</td><td>vs Miami Marlins</td><td>勝 5-3</td><td>6.0回 1失点 8奪三振</td></tr>
-<tr><td>今永昇太</td><td>07/19</td><td>vs Minnesota Twins</td><td>勝 10-1</td><td>7.0回 0失点 4奪三振</td></tr>
-<tr><td>山本由伸</td><td>07/19</td><td>@ New York Yankees</td><td>勝 8-2</td><td>9.0回 2失点 7奪三振</td></tr>
-<tr><td>千賀滉大</td><td>07/18</td><td>@ Philadelphia Phillies</td><td>敗 1-6</td><td>1.1回 2失点 2奪三振</td></tr>
-<tr><td>Rikuu Nishida</td><td>06/07</td><td>@ Philadelphia Phillies</td><td>敗 5-9</td><td>2打数1安打</td></tr>
-<tr><td>菊池雄星</td><td>04/29</td><td>@ Chicago White Sox</td><td>敗 2-3</td><td>2.0回 0失点 1奪三振</td></tr>
+<tr><td data-label="選手">岡本和真</td><td data-label="試合日">07/24</td><td data-label="対戦">@ レッドソックス</td><td data-label="チーム結果">敗 4-6</td><td class="key" data-label="個人成績">5打数2安打 本塁打1 打点3</td></tr>
+<tr><td data-label="選手">吉田正尚</td><td data-label="試合日">07/24</td><td data-label="対戦">vs ブルージェイズ</td><td data-label="チーム結果">勝 6-4</td><td class="key" data-label="個人成績">2打数0安打 四球2</td></tr>
+<tr><td data-label="選手">村上宗隆</td><td data-label="試合日">07/24</td><td data-label="対戦">vs アストロズ</td><td data-label="チーム結果">敗 5-9</td><td class="key" data-label="個人成績">4打数1安打 四球1</td></tr>
+<tr><td data-label="選手">佐々木朗希</td><td data-label="試合日">07/24</td><td data-label="対戦">@ メッツ</td><td data-label="チーム結果">勝 4-2</td><td class="key" data-label="個人成績">7.0回 1失点 9奪三振</td></tr>
+<tr><td data-label="選手">鈴木誠也</td><td data-label="試合日">07/24</td><td data-label="対戦">@ パイレーツ</td><td data-label="チーム結果">勝 3-2</td><td class="key" data-label="個人成績">4打数0安打 打点1 四球1</td></tr>
+<tr><td data-label="選手">大谷翔平</td><td data-label="試合日">07/24</td><td data-label="対戦">@ メッツ</td><td data-label="チーム結果">勝 4-2</td><td class="key" data-label="個人成績">4打数2安打 打点1</td></tr>
+<tr><td data-label="選手">菅野智之</td><td data-label="試合日">07/24</td><td data-label="対戦">@ ブルワーズ</td><td data-label="チーム結果">勝 5-2</td><td class="key" data-label="個人成績">5.1回 2失点 5奪三振</td></tr>
+<tr><td data-label="選手">松井裕樹</td><td data-label="試合日">07/23</td><td data-label="対戦">@ ブレーブス</td><td data-label="チーム結果">敗 5-6</td><td class="key" data-label="個人成績">1.1回 0失点 1奪三振</td></tr>
+<tr><td data-label="選手">今井達也</td><td data-label="試合日">07/21</td><td data-label="対戦">vs マーリンズ</td><td data-label="チーム結果">勝 5-3</td><td class="key" data-label="個人成績">6.0回 1失点 8奪三振</td></tr>
+<tr><td data-label="選手">今永昇太</td><td data-label="試合日">07/19</td><td data-label="対戦">vs ツインズ</td><td data-label="チーム結果">勝 10-1</td><td class="key" data-label="個人成績">7.0回 0失点 4奪三振</td></tr>
+<tr><td data-label="選手">山本由伸</td><td data-label="試合日">07/19</td><td data-label="対戦">@ ヤンキース</td><td data-label="チーム結果">勝 8-2</td><td class="key" data-label="個人成績">9.0回 2失点 7奪三振</td></tr>
+<tr><td data-label="選手">千賀滉大</td><td data-label="試合日">07/18</td><td data-label="対戦">@ フィリーズ</td><td data-label="チーム結果">敗 1-6</td><td class="key" data-label="個人成績">1.1回 2失点 2奪三振</td></tr>
+<tr><td data-label="選手">Rikuu Nishida</td><td data-label="試合日">06/07</td><td data-label="対戦">@ フィリーズ</td><td data-label="チーム結果">敗 5-9</td><td class="key" data-label="個人成績">2打数1安打</td></tr>
+<tr><td data-label="選手">菊池雄星</td><td data-label="試合日">04/29</td><td data-label="対戦">@ ホワイトソックス</td><td data-label="チーム結果">敗 2-3</td><td class="key" data-label="個人成績">2.0回 0失点 1奪三振</td></tr>
 </tbody>
 </table></div>
 <h2>野手</h2>
 <div class="table-wrap"><table>
 <thead><tr><th>選手</th><th>チーム</th><th>試合</th><th>打率</th><th>本塁打</th><th>打点</th><th>OPS</th><th>出塁率</th></tr></thead>
 <tbody>
-<tr><td>Kazuma Okamoto</td><td>Toronto Blue Jays</td><td>101</td><td>.227</td><td>23</td><td>65</td><td>.761</td><td>.309</td></tr>
-<tr><td>大谷翔平</td><td>Los Angeles Dodgers</td><td>99</td><td>.286</td><td>22</td><td>61</td><td>.919</td><td>.392</td></tr>
-<tr><td>Munetaka Murakami</td><td>Chicago White Sox</td><td>67</td><td>.228</td><td>20</td><td>42</td><td>.892</td><td>.375</td></tr>
-<tr><td>鈴木誠也</td><td>Chicago Cubs</td><td>87</td><td>.267</td><td>17</td><td>54</td><td>.828</td><td>.356</td></tr>
-<tr><td>吉田正尚</td><td>Boston Red Sox</td><td>68</td><td>.266</td><td>4</td><td>19</td><td>.739</td><td>.347</td></tr>
-<tr><td>Rikuu Nishida</td><td>Charlotte Knights</td><td>12</td><td>.241</td><td>0</td><td>2</td><td>.482</td><td>.241</td></tr>
+<tr><td data-label="選手">岡本和真</td><td data-label="チーム">ブルージェイズ</td><td data-label="試合">101</td><td class="key" data-label="打率">.227</td><td class="key" data-label="本塁打">23</td><td data-label="打点">65</td><td data-label="OPS">.759</td><td data-label="出塁率">.308</td></tr>
+<tr><td data-label="選手">大谷翔平</td><td data-label="チーム">ドジャース</td><td data-label="試合">99</td><td class="key" data-label="打率">.286</td><td class="key" data-label="本塁打">22</td><td data-label="打点">61</td><td data-label="OPS">.919</td><td data-label="出塁率">.392</td></tr>
+<tr><td data-label="選手">村上宗隆</td><td data-label="チーム">ホワイトソックス</td><td data-label="試合">67</td><td class="key" data-label="打率">.231</td><td class="key" data-label="本塁打">20</td><td data-label="打点">42</td><td data-label="OPS">.897</td><td data-label="出塁率">.376</td></tr>
+<tr><td data-label="選手">鈴木誠也</td><td data-label="チーム">カブス</td><td data-label="試合">87</td><td class="key" data-label="打率">.267</td><td class="key" data-label="本塁打">17</td><td data-label="打点">54</td><td data-label="OPS">.828</td><td data-label="出塁率">.356</td></tr>
+<tr><td data-label="選手">吉田正尚</td><td data-label="チーム">レッドソックス</td><td data-label="試合">68</td><td class="key" data-label="打率">.265</td><td class="key" data-label="本塁打">4</td><td data-label="打点">19</td><td data-label="OPS">.735</td><td data-label="出塁率">.345</td></tr>
+<tr><td data-label="選手">Rikuu Nishida</td><td data-label="チーム">Charlotte Knights</td><td data-label="試合">12</td><td class="key" data-label="打率">.241</td><td class="key" data-label="本塁打">0</td><td data-label="打点">2</td><td data-label="OPS">.482</td><td data-label="出塁率">.241</td></tr>
 </tbody>
 </table></div>
 <h2>投手</h2>
 <div class="table-wrap"><table>
 <thead><tr><th>選手</th><th>チーム</th><th>登板</th><th>防御率</th><th>勝</th><th>敗</th><th>奪三振</th><th>WHIP</th><th>投球回</th></tr></thead>
 <tbody>
-<tr><td>山本由伸</td><td>Los Angeles Dodgers</td><td>18</td><td>2.78</td><td>10</td><td>6</td><td>113</td><td>0.88</td><td>119.2</td></tr>
-<tr><td>今永昇太</td><td>Chicago Cubs</td><td>20</td><td>3.91</td><td>6</td><td>8</td><td>109</td><td>1.11</td><td>115.0</td></tr>
-<tr><td>大谷翔平</td><td>Los Angeles Dodgers</td><td>14</td><td>1.79</td><td>8</td><td>2</td><td>95</td><td>0.95</td><td>85.2</td></tr>
-<tr><td>佐々木朗希</td><td>Los Angeles Dodgers</td><td>18</td><td>4.71</td><td>4</td><td>5</td><td>94</td><td>1.29</td><td>93.2</td></tr>
-<tr><td>Tatsuya Imai</td><td>Houston Astros</td><td>14</td><td>5.59</td><td>6</td><td>4</td><td>71</td><td>1.47</td><td>58.0</td></tr>
-<tr><td>菅野智之</td><td>Colorado Rockies</td><td>18</td><td>4.69</td><td>10</td><td>4</td><td>56</td><td>1.29</td><td>96.0</td></tr>
-<tr><td>千賀滉大</td><td>New York Mets</td><td>12</td><td>8.85</td><td>0</td><td>7</td><td>49</td><td>1.84</td><td>40.2</td></tr>
-<tr><td>松井裕樹</td><td>San Diego Padres</td><td>28</td><td>2.68</td><td>1</td><td>1</td><td>40</td><td>1.27</td><td>37.0</td></tr>
-<tr><td>菊池雄星</td><td>Los Angeles Angels</td><td>7</td><td>5.81</td><td>0</td><td>3</td><td>33</td><td>1.58</td><td>31.0</td></tr>
+<tr><td data-label="選手">山本由伸</td><td data-label="チーム">ドジャース</td><td data-label="登板">18</td><td class="key" data-label="防御率">2.78</td><td data-label="勝">10</td><td data-label="敗">6</td><td class="key" data-label="奪三振">113</td><td data-label="WHIP">0.88</td><td data-label="投球回">119.2</td></tr>
+<tr><td data-label="選手">今永昇太</td><td data-label="チーム">カブス</td><td data-label="登板">20</td><td class="key" data-label="防御率">3.91</td><td data-label="勝">6</td><td data-label="敗">8</td><td class="key" data-label="奪三振">109</td><td data-label="WHIP">1.11</td><td data-label="投球回">115.0</td></tr>
+<tr><td data-label="選手">大谷翔平</td><td data-label="チーム">ドジャース</td><td data-label="登板">14</td><td class="key" data-label="防御率">1.79</td><td data-label="勝">8</td><td data-label="敗">2</td><td class="key" data-label="奪三振">95</td><td data-label="WHIP">0.95</td><td data-label="投球回">85.2</td></tr>
+<tr><td data-label="選手">佐々木朗希</td><td data-label="チーム">ドジャース</td><td data-label="登板">18</td><td class="key" data-label="防御率">4.71</td><td data-label="勝">4</td><td data-label="敗">5</td><td class="key" data-label="奪三振">94</td><td data-label="WHIP">1.29</td><td data-label="投球回">93.2</td></tr>
+<tr><td data-label="選手">今井達也</td><td data-label="チーム">アストロズ</td><td data-label="登板">14</td><td class="key" data-label="防御率">5.59</td><td data-label="勝">6</td><td data-label="敗">4</td><td class="key" data-label="奪三振">71</td><td data-label="WHIP">1.47</td><td data-label="投球回">58.0</td></tr>
+<tr><td data-label="選手">菅野智之</td><td data-label="チーム">ロッキーズ</td><td data-label="登板">18</td><td class="key" data-label="防御率">4.69</td><td data-label="勝">10</td><td data-label="敗">4</td><td class="key" data-label="奪三振">56</td><td data-label="WHIP">1.29</td><td data-label="投球回">96.0</td></tr>
+<tr><td data-label="選手">千賀滉大</td><td data-label="チーム">メッツ</td><td data-label="登板">12</td><td class="key" data-label="防御率">8.85</td><td data-label="勝">0</td><td data-label="敗">7</td><td class="key" data-label="奪三振">49</td><td data-label="WHIP">1.84</td><td data-label="投球回">40.2</td></tr>
+<tr><td data-label="選手">松井裕樹</td><td data-label="チーム">パドレス</td><td data-label="登板">28</td><td class="key" data-label="防御率">2.68</td><td data-label="勝">1</td><td data-label="敗">1</td><td class="key" data-label="奪三振">40</td><td data-label="WHIP">1.27</td><td data-label="投球回">37.0</td></tr>
+<tr><td data-label="選手">菊池雄星</td><td data-label="チーム">エンゼルス</td><td data-label="登板">7</td><td class="key" data-label="防御率">5.81</td><td data-label="勝">0</td><td data-label="敗">3</td><td class="key" data-label="奪三振">33</td><td data-label="WHIP">1.58</td><td data-label="投球回">31.0</td></tr>
 </tbody>
 </table></div>
 <footer>データ提供: <a href="https://statsapi.mlb.com" rel="noopener">MLB Stats API</a>(無料・公開)。GitHub Actions により毎日自動更新。</footer>
