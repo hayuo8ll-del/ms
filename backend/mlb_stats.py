@@ -612,11 +612,17 @@ h2::before{
 }
 .avatar{
   position:relative; display:inline-grid; place-items:center; flex:none;
-  border-radius:50%; overflow:hidden; border:1px solid var(--line);
+  border-radius:50%; overflow:hidden; isolation:isolate; border:1px solid var(--line);
   background:linear-gradient(145deg,#1b2537,#0f1826);
 }
 .avatar b{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);font-weight:700}
-.avatar img{position:relative;z-index:1;width:100%;height:100%;object-fit:cover;display:block}
+/* border-radius on the image itself, not just the frame: iOS Safari does not
+   clip a positioned child to the parent's rounded corners, which let the
+   headshot spill outside the circle. */
+.avatar img{
+  position:relative; z-index:1; width:100%; height:100%; display:block;
+  object-fit:cover; border-radius:50%;
+}
 .avatar.lg{width:64px;height:64px;font-size:1.25rem}
 .avatar.sm{width:30px;height:30px;font-size:.8rem}
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:.75rem}
