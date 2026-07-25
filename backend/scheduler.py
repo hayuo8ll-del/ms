@@ -22,9 +22,12 @@ import logging
 import sched
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable
 
 logger = logging.getLogger("scheduler")
+
+DEFAULT_REPORT_DIR = Path(__file__).resolve().parent / "reports"
 
 
 @dataclass
@@ -66,6 +69,27 @@ def heartbeat() -> None:
     logger.info("scheduler heartbeat")
 
 
+def mlb_report_task(season: int, output_dir: Path) -> Path:
+    """Fetch Japanese MLB players' stats and write a daily Markdown report.
+
+    Imported lazily so the default (offline) code path — the one CI runs —
+    never touches the network layer. Writes ``{YYYY-MM-DD}.md`` plus a
+    ``latest.md`` pointer into ``output_dir`` and returns the dated path.
+    """
+    from mlb_stats import collect_stats, format_report
+
+    logger.info("collecting Japanese MLB player stats for season %s", season)
+    data = collect_stats(season)
+    report = format_report(data)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    dated_path = output_dir / f"{data['date']}.md"
+    dated_path.write_text(report, encoding="utf-8")
+    (output_dir / "latest.md").write_text(report, encoding="utf-8")
+    logger.info("wrote MLB report to %s", dated_path)
+    return dated_path
+
+
 def run_daemon(scheduler: Scheduler, interval: float) -> None:
     """Run ``heartbeat`` forever, roughly every ``interval`` seconds."""
     logger.info("starting scheduler daemon (interval=%ss); press Ctrl+C to stop", interval)
@@ -96,6 +120,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="INFO",
         help="logging level, e.g. DEBUG, INFO, WARNING (default: INFO)",
     )
+    parser.add_argument(
+        "--mlb-report",
+        action="store_true",
+        help="fetch Japanese MLB players' stats and write a daily report "
+        "(requires network access; used by the mlb-daily workflow)",
+    )
+    parser.add_argument(
+        "--season",
+        type=int,
+        default=None,
+        help="MLB season year for --mlb-report (default: current year)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=str(DEFAULT_REPORT_DIR),
+        help="directory for --mlb-report output (default: backend/reports)",
+    )
     return parser
 
 
@@ -107,6 +148,15 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     scheduler = Scheduler()
+
+    if args.mlb_report:
+        from mlb_stats import default_season
+
+        season = args.season if args.season is not None else default_season()
+        scheduler.every(0, mlb_report_task, season, Path(args.output_dir))
+        scheduler.run()
+        logger.info("scheduler run complete")
+        return 0
 
     if args.daemon:
         run_daemon(scheduler, args.interval)
