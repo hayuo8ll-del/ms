@@ -1,6 +1,6 @@
 # 日本人メジャーリーガー成績 (2026シーズン)
 
-最終更新: 2026-07-25 01:12 UTC
+最終更新: 2026-07-25 01:25 UTC
 
 データ提供: MLB Stats API — 野手 6名 / 投手 9名
 
@@ -11,8 +11,8 @@
 | Kazuma Okamoto | Toronto Blue Jays | 101 | .225 | 22 | 62 | .749 | .307 |
 | Shohei Ohtani | Los Angeles Dodgers | 99 | .287 | 22 | 61 | .922 | .393 |
 | Munetaka Murakami | Chicago White Sox | 67 | .228 | 20 | 42 | .892 | .375 |
-| Seiya Suzuki | Chicago Cubs | 87 | .267 | 17 | 53 | .827 | .355 |
-| Masataka Yoshida | Boston Red Sox | 68 | .266 | 4 | 19 | .736 | .344 |
+| Seiya Suzuki | Chicago Cubs | 87 | .267 | 17 | 54 | .828 | .356 |
+| Masataka Yoshida | Boston Red Sox | 68 | .266 | 4 | 19 | .739 | .347 |
 | Rikuu Nishida | Charlotte Knights | 12 | .241 | 0 | 2 | .482 | .241 |
 
 ## 投手
