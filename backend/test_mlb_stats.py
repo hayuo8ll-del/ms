@@ -293,6 +293,15 @@ class PhotoTests(unittest.TestCase):
         self.assertIn("<b>大</b>", page)
         self.assertIn("<b>山</b>", page)
 
+    def test_headshot_is_clipped_on_the_image_itself(self) -> None:
+        """iOS Safari does not clip a positioned child to the parent's radius,
+        so the image must carry its own border-radius or it spills out."""
+        page = format_html(SAMPLE)
+        css = page.split("<style>", 1)[1].split("</style>", 1)[0]
+        img_rule = css.split(".avatar img{", 1)[1].split("}", 1)[0]
+        self.assertIn("border-radius:50%", img_rule)
+        self.assertIn("object-fit:cover", img_rule)
+
     def test_missing_id_still_renders_initial_without_img(self) -> None:
         data = {
             "date": "2026-07-25",
