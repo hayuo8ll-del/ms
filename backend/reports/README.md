@@ -11,15 +11,14 @@
 ## Web ページ(GitHub Pages)
 
 同じワークフローが HTML 版のページ(リポジトリ直下の `mlb/index.html`)も生成し、
-`main` ブランチにコミットします。GitHub Pages は `main` ブランチ配信
-(「Deploy from a branch」)なので、そのまま次の URL で公開されます:
+`main` ブランチにコミットしたうえで、`.github/workflows/pages.yml` を呼び出して
+サイトを再公開します。公開先は次の URL です:
 
 **https://hayuo8ll-del.github.io/ms/mlb/**
 
 リポジトリ直下の `/ms/`(なつやすみ スタディ)とは別ページとして共存します。
-
-> ⚠️ Pages の Source は **「Deploy from a branch」(main / root)** のままに
-> してください。「GitHub Actions」に切り替えると `/ms/` のサイトが消えます。
+`pages.yml` が学習ツールと MLB ページを1つのサイトとしてまとめて公開するため、
+Pages の Source は **「GitHub Actions」** のままで構いません(設定変更は不要)。
 
 手元で生成する場合(ネットワークアクセスが必要):
 

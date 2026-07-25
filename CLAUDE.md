@@ -54,9 +54,30 @@ touching the study app**.
   The default no-arg invocation stays offline (heartbeat only) so
   `scheduler-test.yml` keeps passing.
 - **Tests:** `cd backend && python3 -m unittest` (offline formatter tests).
-- **Publishing:** `.github/workflows/mlb-daily.yml` (daily cron + manual) runs
-  the report and commits `backend/reports/` and `mlb/index.html` to `main`.
-  Pages serves `main` via **"Deploy from a branch"**, so the page appears at
-  `https://hayuo8ll-del.github.io/ms/mlb/`. **Do not switch the Pages source to
-  "GitHub Actions"** — the study app at `/ms/` is published the same way and
-  would be replaced.
+- **Daily job:** `.github/workflows/mlb-daily.yml` (daily cron + manual) runs
+  the report, commits `backend/reports/` and `mlb/index.html` to `main`, then
+  calls `pages.yml` to republish the site.
+
+## Publishing (GitHub Pages)
+
+The repository's Pages source is **"GitHub Actions"**, so nothing goes live
+unless a workflow deploys it. **`.github/workflows/pages.yml` is the single
+publisher** for the whole site and serves both apps from one deployment:
+
+| URL | Content |
+| --- | --- |
+| `https://hayuo8ll-del.github.io/ms/` | なつやすみ スタディ (repo root) |
+| `https://hayuo8ll-del.github.io/ms/mlb/` | Japanese MLB stats (`mlb/`) |
+
+- It stages `_site` from the repo root with `tar`, excluding `.github/`,
+  `backend/` and `scripts/` (none are referenced by the site; `sw.js` caches
+  only `index.html`, `css/`, `js/`, `icons/`, `manifest.webmanifest`). Keep
+  the root `.nojekyll` — it must reach `_site`.
+- It checks out **`ref: main`** explicitly. Do not drop that: when called from
+  another workflow the default ref is the *caller's* SHA, which would miss the
+  commit that workflow just pushed.
+- `pages.yml` triggers on push to `main`, manual dispatch, and `workflow_call`.
+  `mlb-daily.yml` must keep calling it, because commits pushed with
+  `GITHUB_TOKEN` never fire `on: push`.
+- Adding a new page? Put it in a folder under the repo root and it publishes
+  automatically — no workflow change needed.
