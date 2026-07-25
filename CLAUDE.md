@@ -14,11 +14,13 @@ Tracked files:
 - `.github/workflows/scheduler-test.yml` — CI workflow triggered on every
   `push` and `pull_request`.
 - `.github/workflows/mlb-daily.yml` — scheduled (daily cron) + manual workflow
-  that generates and commits the Japanese MLB stats report.
+  that generates & commits the report and publishes the web page to GitHub Pages.
 - `backend/scheduler.py` — the scheduler scaffold and entry point run by CI.
-- `backend/mlb_stats.py` — MLB Stats API client + report formatter.
-- `backend/test_mlb_stats.py` — offline unit tests for the report formatter.
+- `backend/mlb_stats.py` — MLB Stats API client + Markdown/HTML formatters.
+- `backend/test_mlb_stats.py` — offline unit tests for the formatters.
 - `backend/reports/` — generated Markdown reports (`YYYY-MM-DD.md`, `latest.md`).
+- `backend/site/` — generated `index.html` for GitHub Pages (built by CI, **not
+  committed**; see `.gitignore`).
 
 Everything uses only the Python standard library, so there is still no
 dependency manifest (`requirements.txt`).
@@ -41,9 +43,10 @@ The current structure is a Python backend:
 ```
 backend/
   scheduler.py        # entry point the workflow executes
-  mlb_stats.py        # MLB Stats API client + Japanese-language report formatter
-  test_mlb_stats.py   # offline unit tests for the formatter
-  reports/            # generated reports: YYYY-MM-DD.md and latest.md
+  mlb_stats.py        # MLB Stats API client + Markdown/HTML report formatters
+  test_mlb_stats.py   # offline unit tests for the formatters
+  reports/            # generated reports: YYYY-MM-DD.md and latest.md (committed)
+  site/               # generated index.html for GitHub Pages (CI-built, gitignored)
   requirements.txt    # optional; installed only if present (not present yet)
 ```
 
@@ -67,13 +70,29 @@ players and writes a daily Markdown report.
   - *Network layer* (`fetch_japanese_players`, `fetch_player_stats`,
     `collect_stats`) — live HTTP; auto-detects players via `birthCountry ==
     "Japan"`. Runs where outbound HTTPS is available (GitHub Actions).
-  - *Formatting layer* (`format_report`, pure function) — turns collected data
-    into a Japanese Markdown report; covered by offline tests.
+  - *Formatting layer* (pure functions) — `format_report` produces the Japanese
+    Markdown report; `format_html` produces a self-contained HTML page (inline
+    CSS, responsive, light/dark) for the web app. Both are covered by offline
+    tests and reuse the same structured data from `collect_stats`.
 - **Run it:** `python3 scheduler.py --mlb-report` (optionally `--season YYYY`,
-  `--output-dir DIR`). Writes `backend/reports/{YYYY-MM-DD}.md` and `latest.md`.
-- **Automation:** `.github/workflows/mlb-daily.yml` runs the report daily
-  (cron `0 13 * * *` ≈ 22:00 JST) and on manual `workflow_dispatch`, then
-  commits the report back to the repo (`permissions: contents: write`).
+  `--output-dir DIR`, `--site-dir DIR`). Writes `backend/reports/{YYYY-MM-DD}.md`
+  and `latest.md` (committed history) plus `backend/site/index.html` (the page
+  published to Pages).
+- **Automation:** `.github/workflows/mlb-daily.yml` runs daily (cron
+  `0 13 * * *` ≈ 22:00 JST) and on manual `workflow_dispatch`. The `build` job
+  generates the report, commits the Markdown back to the repo
+  (`contents: write`), and uploads `backend/site` as a Pages artifact; the
+  `deploy` job publishes it to GitHub Pages (`pages: write`, `id-token: write`).
+
+### Web app (GitHub Pages)
+
+The daily HTML page is served at `https://hayuo8ll-del.github.io/ms/`. HTML is
+**not committed** — it is built by CI and published as a Pages artifact, so
+`backend/site/` is gitignored.
+
+**One-time setup (cannot be done in code):** in the repository **Settings →
+Pages**, set **Source** to **"GitHub Actions"**. Until this is set, the `deploy`
+job cannot publish. Pages deploys run from the default branch after merge.
 
 ## Development Workflow
 
@@ -84,8 +103,8 @@ players and writes a daily Markdown report.
   pip install -r requirements.txt   # only if requirements.txt is present
   python3 scheduler.py              # run pending tasks once and exit (CI mode)
   python3 scheduler.py --daemon     # run continuously; Ctrl+C to stop
-  python3 scheduler.py --mlb-report # generate the Japanese MLB stats report
-  python3 scheduler.py --help       # list flags (--interval, --log-level, ...)
+  python3 scheduler.py --mlb-report # generate the report + web page (index.html)
+  python3 scheduler.py --help       # list flags (--site-dir, --season, ...)
   ```
 - **Test:** offline unit tests for the report formatter use the standard
   library `unittest` (no network, no extra deps):

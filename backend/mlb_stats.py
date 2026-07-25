@@ -18,6 +18,7 @@ stays unnecessary.
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import urllib.error
@@ -167,10 +168,15 @@ def _to_float(value: Any) -> float:
 
 
 def _cell(value: Any) -> str:
-    """Render a stat value for a Markdown table cell."""
+    """Render a stat value for a table cell (Markdown or HTML)."""
     if value is None or value == "":
         return "-"
     return str(value)
+
+
+def _esc(value: Any) -> str:
+    """HTML-escape a value for safe inclusion in the generated page."""
+    return html.escape(_cell(value))
 
 
 def _hitters_table(hitters: list[dict[str, Any]]) -> list[str]:
@@ -252,3 +258,109 @@ def format_report(data: dict[str, Any]) -> str:
         lines.append("")
 
     return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# HTML formatting layer (pure function — powers the GitHub Pages web app)
+# ---------------------------------------------------------------------------
+
+_PAGE_CSS = """
+:root { color-scheme: light dark; --bg:#ffffff; --fg:#1a1a1a; --muted:#666;
+  --border:#e2e2e2; --head:#f5f5f5; --stripe:#fafafa; --accent:#0b5cff; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#0f1115; --fg:#e6e6e6; --muted:#9aa0aa; --border:#2a2f3a;
+    --head:#1a1e26; --stripe:#151922; --accent:#5b9bff; } }
+* { box-sizing: border-box; }
+body { margin:0; padding:1.5rem 1rem 3rem; background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN",
+  "Noto Sans JP","Yu Gothic",Meiryo,sans-serif; line-height:1.6; }
+main { max-width:1000px; margin:0 auto; }
+h1 { font-size:1.5rem; margin:0 0 .25rem; }
+h2 { font-size:1.2rem; margin:2rem 0 .5rem; }
+.meta { color:var(--muted); font-size:.9rem; margin:.1rem 0; }
+.table-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch;
+  border:1px solid var(--border); border-radius:8px; }
+table { border-collapse:collapse; width:100%; min-width:640px; font-size:.95rem; }
+th, td { padding:.5rem .7rem; text-align:right; white-space:nowrap;
+  border-bottom:1px solid var(--border); }
+th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align:left; }
+thead th { background:var(--head); position:sticky; top:0; }
+tbody tr:nth-child(even) { background:var(--stripe); }
+tbody tr:last-child td { border-bottom:none; }
+.empty { padding:1rem; color:var(--muted); }
+footer { margin-top:2.5rem; color:var(--muted); font-size:.85rem; }
+footer a { color:var(--accent); }
+""".strip()
+
+_HITTER_HEADERS = ["選手", "チーム", "試合", "打率", "本塁打", "打点", "OPS", "出塁率"]
+_HITTER_KEYS = ["gamesPlayed", "avg", "homeRuns", "rbi", "ops", "obp"]
+_PITCHER_HEADERS = [
+    "選手", "チーム", "登板", "防御率", "勝", "敗", "奪三振", "WHIP", "投球回",
+]
+_PITCHER_KEYS = ["gamesPlayed", "era", "wins", "losses", "strikeOuts", "whip", "inningsPitched"]
+
+
+def _html_table(title: str, headers: list[str], keys: list[str], rows: list[dict[str, Any]]) -> str:
+    head = "".join(f"<th>{_esc(h)}</th>" for h in headers)
+    body = []
+    for row in rows:
+        stat = row["stat"]
+        cells = [f"<td>{_esc(row['name'])}</td>", f"<td>{_esc(row['team'])}</td>"]
+        cells += [f"<td>{_esc(stat.get(k))}</td>" for k in keys]
+        body.append("<tr>" + "".join(cells) + "</tr>")
+    return (
+        f"<h2>{_esc(title)}</h2>\n"
+        '<div class="table-wrap"><table>\n'
+        f"<thead><tr>{head}</tr></thead>\n"
+        "<tbody>\n" + "\n".join(body) + "\n</tbody>\n"
+        "</table></div>"
+    )
+
+
+def format_html(data: dict[str, Any]) -> str:
+    """Render structured stats (from :func:`collect_stats`) as a standalone
+    HTML page for the GitHub Pages web app.
+
+    Pure function (no network); the returned page is fully self-contained
+    (inline CSS, responsive, light/dark aware) so it can be published as-is.
+    """
+    season = data.get("season", "?")
+    hitters = data.get("hitters", [])
+    pitchers = data.get("pitchers", [])
+    updated = _esc(data.get("generated_at", data.get("date", "")))
+
+    parts = [
+        f"<h1>日本人メジャーリーガー成績 ({_esc(season)}シーズン)</h1>",
+        f'<p class="meta">最終更新: {updated}</p>',
+        f'<p class="meta">データ提供: MLB Stats API — 野手 {len(hitters)}名 / 投手 {len(pitchers)}名</p>',
+    ]
+
+    if not hitters and not pitchers:
+        parts.append(
+            '<p class="empty">現時点で出場成績のある日本人選手は見つかりませんでした'
+            "(オフシーズン、または今シーズンの試合前の可能性があります)。</p>"
+        )
+    else:
+        if hitters:
+            parts.append(_html_table("野手", _HITTER_HEADERS, _HITTER_KEYS, hitters))
+        if pitchers:
+            parts.append(_html_table("投手", _PITCHER_HEADERS, _PITCHER_KEYS, pitchers))
+
+    parts.append(
+        "<footer>データ提供: "
+        '<a href="https://statsapi.mlb.com" rel="noopener">MLB Stats API</a>'
+        "(無料・公開)。GitHub Actions により毎日自動更新。</footer>"
+    )
+    body = "\n".join(parts)
+
+    return (
+        "<!doctype html>\n"
+        '<html lang="ja">\n<head>\n'
+        '<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        f"<title>日本人メジャーリーガー成績 ({_esc(season)})</title>\n"
+        f"<style>\n{_PAGE_CSS}\n</style>\n"
+        "</head>\n<body>\n<main>\n"
+        f"{body}\n"
+        "</main>\n</body>\n</html>\n"
+    )

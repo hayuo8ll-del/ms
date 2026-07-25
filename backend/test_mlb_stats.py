@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import unittest
 
-from mlb_stats import format_report
+from mlb_stats import format_html, format_report
 
 # A small fixture mimicking the structure produced by ``collect_stats``.
 SAMPLE = {
@@ -106,6 +106,51 @@ class FormatReportTests(unittest.TestCase):
         }
         report = format_report(data)
         self.assertIn("見つかりませんでした", report)
+
+
+class FormatHtmlTests(unittest.TestCase):
+    def test_is_standalone_html_document(self) -> None:
+        page = format_html(SAMPLE)
+        self.assertTrue(page.lstrip().startswith("<!doctype html"))
+        self.assertIn('<html lang="ja">', page)
+        self.assertIn("<style>", page)  # self-contained, no external CSS
+        self.assertIn("<table", page)
+
+    def test_includes_players_and_stats(self) -> None:
+        page = format_html(SAMPLE)
+        self.assertIn("Shohei Ohtani", page)
+        self.assertIn("Yoshinobu Yamamoto", page)
+        self.assertIn("野手", page)
+        self.assertIn("投手", page)
+        self.assertIn("35", page)  # Ohtani home runs
+        self.assertIn("2.85", page)  # Yamamoto ERA
+
+    def test_escapes_html_in_names(self) -> None:
+        data = {
+            "date": "2026-07-25",
+            "generated_at": "2026-07-25 04:00 UTC",
+            "season": 2026,
+            "hitters": [
+                {"name": "<script>", "team": "T & U", "stat": {"homeRuns": 1}}
+            ],
+            "pitchers": [],
+        }
+        page = format_html(data)
+        self.assertNotIn("<script>", page)
+        self.assertIn("&lt;script&gt;", page)
+        self.assertIn("T &amp; U", page)
+
+    def test_empty_data_does_not_raise(self) -> None:
+        data = {
+            "date": "2026-01-15",
+            "generated_at": "2026-01-15 04:00 UTC",
+            "season": 2026,
+            "hitters": [],
+            "pitchers": [],
+        }
+        page = format_html(data)
+        self.assertIn("見つかりませんでした", page)
+        self.assertTrue(page.lstrip().startswith("<!doctype html"))
 
 
 if __name__ == "__main__":

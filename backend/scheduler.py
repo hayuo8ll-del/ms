@@ -28,6 +28,7 @@ from typing import Callable
 logger = logging.getLogger("scheduler")
 
 DEFAULT_REPORT_DIR = Path(__file__).resolve().parent / "reports"
+DEFAULT_SITE_DIR = Path(__file__).resolve().parent / "site"
 
 
 @dataclass
@@ -69,14 +70,16 @@ def heartbeat() -> None:
     logger.info("scheduler heartbeat")
 
 
-def mlb_report_task(season: int, output_dir: Path) -> Path:
-    """Fetch Japanese MLB players' stats and write a daily Markdown report.
+def mlb_report_task(season: int, output_dir: Path, site_dir: Path | None = None) -> Path:
+    """Fetch Japanese MLB players' stats and write the daily report.
 
     Imported lazily so the default (offline) code path — the one CI runs —
     never touches the network layer. Writes ``{YYYY-MM-DD}.md`` plus a
-    ``latest.md`` pointer into ``output_dir`` and returns the dated path.
+    ``latest.md`` pointer into ``output_dir`` (committed history). When
+    ``site_dir`` is given, also writes ``index.html`` there — the standalone
+    page published to GitHub Pages. Returns the dated Markdown path.
     """
-    from mlb_stats import collect_stats, format_report
+    from mlb_stats import collect_stats, format_html, format_report
 
     logger.info("collecting Japanese MLB player stats for season %s", season)
     data = collect_stats(season)
@@ -87,6 +90,13 @@ def mlb_report_task(season: int, output_dir: Path) -> Path:
     dated_path.write_text(report, encoding="utf-8")
     (output_dir / "latest.md").write_text(report, encoding="utf-8")
     logger.info("wrote MLB report to %s", dated_path)
+
+    if site_dir is not None:
+        site_dir.mkdir(parents=True, exist_ok=True)
+        index_path = site_dir / "index.html"
+        index_path.write_text(format_html(data), encoding="utf-8")
+        logger.info("wrote MLB web page to %s", index_path)
+
     return dated_path
 
 
@@ -135,7 +145,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-dir",
         default=str(DEFAULT_REPORT_DIR),
-        help="directory for --mlb-report output (default: backend/reports)",
+        help="directory for --mlb-report Markdown output (default: backend/reports)",
+    )
+    parser.add_argument(
+        "--site-dir",
+        default=str(DEFAULT_SITE_DIR),
+        help="directory for the generated index.html web page published to "
+        "GitHub Pages (default: backend/site)",
     )
     return parser
 
@@ -153,7 +169,9 @@ def main(argv: list[str] | None = None) -> int:
         from mlb_stats import default_season
 
         season = args.season if args.season is not None else default_season()
-        scheduler.every(0, mlb_report_task, season, Path(args.output_dir))
+        scheduler.every(
+            0, mlb_report_task, season, Path(args.output_dir), Path(args.site_dir)
+        )
         scheduler.run()
         logger.info("scheduler run complete")
         return 0

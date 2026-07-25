@@ -17,5 +17,8 @@ env/
 .mypy_cache/
 .ruff_cache/
 
+# Generated GitHub Pages output (built and published by CI, not committed)
+backend/site/
+
 # OS / editor
 .DS_Store
