@@ -21,6 +21,7 @@ from mlb_stats import (
     _pitcher_game_line,
     format_html,
     format_report,
+    now_stamp,
     photo_url,
     spot_url,
     to_japanese,
@@ -516,3 +517,22 @@ class LiveRefreshTests(unittest.TestCase):
         page = format_html(data)
         self.assertEqual(self._config(page)["players"], [])
         self.assertIn("鈴木誠也", snapshot(page))
+
+
+class TimestampTests(unittest.TestCase):
+    """Timestamps are shown in Japan time on both the snapshot and live paths."""
+
+    def test_now_stamp_is_jst(self) -> None:
+        stamp = now_stamp()
+        self.assertRegex(stamp, r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2} JST$")
+
+    def test_now_stamp_matches_utc_plus_nine(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        expected = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y-%m-%d %H:%M")
+        self.assertTrue(now_stamp().startswith(expected[:13]), now_stamp())
+
+    def test_refresh_script_stamps_jst(self) -> None:
+        page = format_html(SAMPLE)
+        self.assertIn('" JST"', page)
+        self.assertNotIn('" UTC"', page)

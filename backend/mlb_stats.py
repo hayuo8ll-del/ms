@@ -23,12 +23,15 @@ import json
 import logging
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 logger = logging.getLogger("scheduler.mlb")
 
 API_BASE = "https://statsapi.mlb.com/api/v1"
+# The page is read in Japan, so timestamps are shown in JST. Japan has no DST,
+# so a fixed +09:00 offset is exact all year.
+JST = timezone(timedelta(hours=9))
 USER_AGENT = "ms-scheduler/1.0 (+https://github.com/hayuo8ll-del/ms)"
 
 # English (MLB API ``fullName``) -> Japanese display name. The MLB Stats API
@@ -317,8 +320,8 @@ def collect_stats(season: int, timeout: float = 20.0) -> dict[str, Any]:
     recent.sort(key=lambda r: r.get("date") or "", reverse=True)
 
     return {
-        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        "date": datetime.now(JST).strftime("%Y-%m-%d"),
+        "generated_at": now_stamp(),
         "season": season,
         "hitters": hitters,
         "pitchers": pitchers,
@@ -365,6 +368,11 @@ def _build_recent_entry(
 # ---------------------------------------------------------------------------
 # Formatting layer (pure functions, no network — covered by offline tests)
 # ---------------------------------------------------------------------------
+
+
+def now_stamp() -> str:
+    """Current time as a JST display string, e.g. ``2026-07-26 11:39 JST``."""
+    return datetime.now(JST).strftime("%Y-%m-%d %H:%M JST")
 
 
 def default_season() -> int:
@@ -1008,10 +1016,12 @@ _PAGE_JS = r"""
   }
 
   function stamp() {
-    var d = new Date();
+    /* JST is UTC+9 all year, so derive it from UTC instead of the device
+       clock: the time shown stays Japanese even on a phone set elsewhere. */
+    var d = new Date(Date.now() + 9 * 3600 * 1000);
     function z(n) { return (n < 10 ? "0" : "") + n; }
     return d.getUTCFullYear() + "-" + z(d.getUTCMonth() + 1) + "-" + z(d.getUTCDate()) +
-      " " + z(d.getUTCHours()) + ":" + z(d.getUTCMinutes()) + " UTC";
+      " " + z(d.getUTCHours()) + ":" + z(d.getUTCMinutes()) + " JST";
   }
 
   function refresh() {
