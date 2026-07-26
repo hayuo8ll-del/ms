@@ -58,6 +58,26 @@ touching the study app**.
   the report, commits `backend/reports/` and `mlb/index.html` to `main`, then
   calls `pages.yml` to republish the site.
 
+### Live refresh (the page updates when opened)
+
+`mlb/index.html` is a **snapshot plus a refresh script**, not a static page:
+
+- `format_html` embeds `<script id="mlb-config">` (season, player ids +
+  Japanese names, `TEAM_NAMES`) and `_PAGE_JS`. On load the script re-fetches
+  each player from the MLB API, re-derives the same structure `collect_stats`
+  produces, and replaces `<main id="app">`.
+- The server-rendered snapshot stays visible until fresh data arrives, so a
+  blocked API, an offline phone or an API change degrades to the snapshot
+  rather than an empty page. It also keeps the page useful offline.
+- `_PAGE_JS` duplicates the rendering in JavaScript. **Change the two together**
+  — `_recent_cards`/`_html_table` and `renderCards`/`renderTable` must emit the
+  same markup, or a refresh will silently restyle the page.
+- Player ids come from the daily build, so a newly arrived Japanese player
+  appears after the next daily run, not instantly.
+- `sw.js` cooperates: it ignores cross-origin requests (otherwise the MLB API
+  responses get cached and the page freezes on stale numbers) and uses
+  network-first for `/mlb/`. Bump `CACHE` when changing it.
+
 ## Publishing (GitHub Pages)
 
 The repository's Pages source is **"GitHub Actions"**, so nothing goes live

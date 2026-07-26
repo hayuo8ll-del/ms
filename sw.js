@@ -1,5 +1,5 @@
 /* Service Worker：オフラインでも動かす */
-const CACHE = "natsu-study-v10";
+const CACHE = "natsu-study-v11";
 const ASSETS = [
   "./",
   "./index.html",
@@ -29,9 +29,29 @@ self.addEventListener("activate", (e) => {
   );
 });
 
-/* cache-first：まずキャッシュ、なければネット取得してキャッシュ */
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
+
+  const url = new URL(e.request.url);
+
+  /* 他サイトへのリクエスト（MLBの成績API・選手写真）は素通しする。
+     ここでキャッシュすると /mlb/ が古い成績を出し続けてしまう。 */
+  if (url.origin !== self.location.origin) return;
+
+  /* /mlb/ は開くたびに更新されるページなので network-first。
+     オフラインのときだけキャッシュを使う。 */
+  if (url.pathname.includes("/mlb/")) {
+    e.respondWith(
+      fetch(e.request).then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
+        return res;
+      }).catch(() => caches.match(e.request).then((hit) => hit || caches.match("./index.html")))
+    );
+    return;
+  }
+
+  /* 学習アプリ本体は従来どおり cache-first：まずキャッシュ、なければネット取得 */
   e.respondWith(
     caches.match(e.request).then((hit) => hit ||
       fetch(e.request).then((res) => {
