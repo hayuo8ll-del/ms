@@ -286,6 +286,7 @@ def collect_stats(season: int, timeout: float = 20.0) -> dict[str, Any]:
     hitters: list[dict[str, Any]] = []
     pitchers: list[dict[str, Any]] = []
     recent: list[dict[str, Any]] = []
+    roster: list[dict[str, Any]] = []
     schedule_cache: dict[tuple[int, str], dict[str, Any] | None] = {}
 
     for player in players:
@@ -308,6 +309,7 @@ def collect_stats(season: int, timeout: float = 20.0) -> dict[str, Any]:
             pitchers.append({**base, "stat": stats["pitching"]})
 
         last_game = stats.get("last_game")
+        entry = None
         if last_game:
             entry = _build_recent_entry(
                 player["id"], name, last_game, schedule_cache, timeout
@@ -315,9 +317,21 @@ def collect_stats(season: int, timeout: float = 20.0) -> dict[str, Any]:
             if entry:
                 recent.append(entry)
 
+        # One record per player, so the page can show today's line and the
+        # season totals together instead of in separate tables.
+        roster.append({
+            **base,
+            "hitting": stats["hitting"],
+            "pitching": stats["pitching"],
+            **{k: v for k, v in (entry or {}).items() if k not in base},
+        })
+
     hitters.sort(key=lambda h: _to_float(h["stat"].get("homeRuns")), reverse=True)
     pitchers.sort(key=lambda p: _to_float(p["stat"].get("strikeOuts")), reverse=True)
     recent.sort(key=lambda r: r.get("date") or "", reverse=True)
+    # Most recent game first; a player with no game log has no date, so the
+    # empty string sinks them to the bottom.
+    roster.sort(key=lambda p: p.get("date") or "", reverse=True)
 
     return {
         "date": datetime.now(JST).strftime("%Y-%m-%d"),
@@ -326,6 +340,7 @@ def collect_stats(season: int, timeout: float = 20.0) -> dict[str, Any]:
         "hitters": hitters,
         "pitchers": pitchers,
         "recent": recent,
+        "players": roster,
     }
 
 
@@ -633,7 +648,7 @@ h2::before{
 }
 .avatar.lg{width:64px;height:64px;font-size:1.25rem}
 .avatar.sm{width:30px;height:30px;font-size:.8rem}
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:.75rem}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:.75rem}
 .pcard{
   display:flex; align-items:center; gap:.8rem; padding:.8rem .9rem; border-radius:14px;
   background:linear-gradient(180deg,var(--surface),var(--surface2)); border:1px solid var(--line);
@@ -648,45 +663,27 @@ h2::before{
 }
 .badge.win{color:var(--win);border-color:rgba(52,211,153,.42);background:rgba(52,211,153,.10)}
 .badge.lose{color:var(--lose);border-color:rgba(251,113,133,.42);background:rgba(251,113,133,.10)}
-.table-wrap{
-  overflow-x:auto; -webkit-overflow-scrolling:touch;
-  border:1px solid var(--line); border-radius:14px; background:var(--surface2);
+.pteam{font-weight:400;font-size:.82rem;color:var(--muted);margin-left:.4rem}
+/* Season totals sit inside the card, under today's line. */
+.season{margin-top:.6rem;padding-top:.55rem;border-top:1px solid var(--line);display:grid;gap:.4rem}
+.srow{display:flex;flex-wrap:wrap;align-items:baseline;gap:.5rem}
+.slabel{
+  flex:none; font-size:.7rem; color:var(--muted);
+  border:1px solid var(--line); border-radius:999px; padding:.05rem .45rem;
 }
-table{border-collapse:collapse;width:100%;min-width:640px;font-size:.94rem}
-th,td{padding:.6rem .75rem;text-align:right;white-space:nowrap;border-bottom:1px solid var(--line)}
-th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
-thead th{background:#0f1725;color:var(--muted);font-size:.8rem;position:sticky;top:0}
-tbody tr:hover{background:rgba(56,189,248,.05)}
-tbody tr:last-child td{border-bottom:none}
-td.key{font-weight:700;color:var(--accent)}
-.who{display:flex;align-items:center;gap:.5rem}
+.stat{display:flex;align-items:baseline;gap:.22rem;font-size:.88rem}
+.stat i{font-style:normal;color:var(--muted);font-size:.7rem}
+.stat b{font-weight:700}
+.stat.key b{color:var(--accent)}
 .empty{padding:1rem;color:var(--muted)}
 footer{margin:2.6rem auto 0;max-width:1040px;padding:0 1rem;color:var(--muted);font-size:.82rem}
 footer a{color:var(--accent)}
 
-/* Phone: each row becomes a card so nothing scrolls sideways. */
+/* Phone: one card per row. */
 @media (max-width: 700px){
   main{padding:0 .75rem}
   .cards{grid-template-columns:1fr}
-  .table-wrap{border:none;border-radius:0;overflow:visible;background:transparent}
-  table{min-width:0;display:block}
-  thead{display:none}
-  tbody,tr,td{display:block;width:100%}
-  tbody tr,tbody tr:hover{
-    background:linear-gradient(180deg,var(--surface),var(--surface2));
-    border:1px solid var(--line); border-radius:14px; margin:0 0 .7rem; padding:.7rem .85rem;
-  }
-  td{
-    display:flex; justify-content:space-between; align-items:baseline; gap:1rem;
-    border:none; padding:.24rem 0; text-align:right; white-space:normal;
-  }
-  td::before{content:attr(data-label);color:var(--muted);font-size:.82rem;text-align:left;flex:none}
-  td:first-child{
-    font-size:1.05rem; font-weight:700; text-align:left;
-    border-bottom:1px solid var(--line); margin-bottom:.45rem; padding-bottom:.5rem;
-  }
-  td:first-child::before{content:none}
-  td.key{font-size:1.02rem}
+  .pcard{align-items:flex-start}
 }
 """.strip()
 
@@ -736,76 +733,73 @@ def _avatar(row: dict[str, Any], size: str) -> str:
     return f'<span class="avatar {size}"><b>{initial}</b>{img}</span>'
 
 
-_HITTER_HEADERS = ["選手", "チーム", "試合", "打率", "本塁打", "打点", "OPS", "出塁率"]
-_HITTER_KEYS = ["gamesPlayed", "avg", "homeRuns", "rbi", "ops", "obp"]
-_PITCHER_HEADERS = [
-    "選手", "チーム", "登板", "防御率", "勝", "敗", "奪三振", "WHIP", "投球回",
+# Season figures shown on each card: (label, stat key, highlighted).
+_HIT_FIELDS = [
+    ("試合", "gamesPlayed", False), ("打率", "avg", True), ("本塁打", "homeRuns", True),
+    ("打点", "rbi", False), ("OPS", "ops", False), ("出塁率", "obp", False),
 ]
-_PITCHER_KEYS = ["gamesPlayed", "era", "wins", "losses", "strikeOuts", "whip", "inningsPitched"]
-
-# Stats highlighted (bold + accent) as the headline numbers for each table.
-_HITTER_KEY_STATS = {"avg", "homeRuns"}
-_PITCHER_KEY_STATS = {"era", "strikeOuts"}
-
-
-def _html_table(
-    title: str,
-    headers: list[str],
-    keys: list[str],
-    rows: list[dict[str, Any]],
-    key_stats: set[str],
-) -> str:
-    head = "".join(f"<th>{_esc(h)}</th>" for h in headers)
-    body = []
-    for row in rows:
-        stat = row["stat"]
-        who = f'<span class="who">{_avatar(row, "sm")}{_esc(row["name"])}</span>'
-        # data-label drives the phone card layout (see the media query in the CSS).
-        cells = [
-            f'<td data-label="{_esc(headers[0])}">{who}</td>',
-            f'<td data-label="{_esc(headers[1])}">{_esc(row["team"])}</td>',
-        ]
-        for header, key in zip(headers[2:], keys):
-            cls = ' class="key"' if key in key_stats else ""
-            cells.append(
-                f'<td{cls} data-label="{_esc(header)}">{_esc(stat.get(key))}</td>'
-            )
-        body.append("<tr>" + "".join(cells) + "</tr>")
-    return (
-        f"<h2>{_esc(title)}</h2>\n"
-        '<div class="table-wrap"><table>\n'
-        f"<thead><tr>{head}</tr></thead>\n"
-        "<tbody>\n" + "\n".join(body) + "\n</tbody>\n"
-        "</table></div>"
-    )
+_PIT_FIELDS = [
+    ("登板", "gamesPlayed", False), ("防御率", "era", True), ("勝", "wins", False),
+    ("敗", "losses", False), ("奪三振", "strikeOuts", True), ("WHIP", "whip", False),
+    ("投球回", "inningsPitched", False),
+]
 
 
-def _recent_cards(recent: list[dict[str, Any]]) -> str:
-    """Latest game per player as photo cards (the page's headline section)."""
+def _stat_row(label: str, stat: dict[str, Any], fields: list[tuple[str, str, bool]]) -> str:
+    chips = []
+    for name, key, highlight in fields:
+        cls = "stat key" if highlight else "stat"
+        chips.append(
+            f'<span class="{cls}"><b>{_esc(stat.get(key))}</b><i>{_esc(name)}</i></span>'
+        )
+    return f'<div class="srow"><span class="slabel">{_esc(label)}</span>' + "".join(chips) + "</div>"
+
+
+def _season_block(player: dict[str, Any]) -> str:
+    """Season totals for a card; two-way players get both rows."""
+    rows = []
+    if player.get("hitting"):
+        rows.append(_stat_row("打撃", player["hitting"], _HIT_FIELDS))
+    if player.get("pitching"):
+        rows.append(_stat_row("投球", player["pitching"], _PIT_FIELDS))
+    if not rows:
+        return ""
+    return '<div class="season">' + "".join(rows) + "</div>"
+
+
+def _player_cards(players: list[dict[str, Any]]) -> str:
+    """One card per player: today's line and the season totals together."""
     cards = []
-    for r in recent:
-        result = _team_result(r)
+    for p in players:
+        result = _team_result(p)
         if result.startswith("勝"):
             badge = "badge win"
         elif result.startswith("敗"):
             badge = "badge lose"
         else:
             badge = "badge"
+        if p.get("date"):
+            meta = f'{_esc(_short_date(p.get("date")))}　{_esc(_matchup(p))}'
+            line = f'<div class="pline">{_esc(p.get("line"))}</div>'
+            badge_html = f'<span class="{badge}">{_esc(result)}</span>'
+        else:
+            meta = "直近の出場なし"
+            line = ""
+            badge_html = ""
         cards.append(
             '<article class="pcard">'
-            f'{_avatar(r, "lg")}'
+            f'{_avatar(p, "lg")}'
             '<div class="pbody">'
-            f'<div class="pname">{_esc(r["name"])}</div>'
-            f'<div class="pmeta">{_esc(_short_date(r.get("date")))}　{_esc(_matchup(r))}</div>'
-            f'<div class="pline">{_esc(r.get("line"))}</div>'
+            f'<div class="pname">{_esc(p["name"])}'
+            f'<span class="pteam">{_esc(p.get("team"))}</span></div>'
+            f'<div class="pmeta">{meta}</div>'
+            f"{line}"
+            f"{_season_block(p)}"
             "</div>"
-            f'<span class="{badge}">{_esc(result)}</span>'
+            f"{badge_html}"
             "</article>"
         )
-    return (
-        "<h2>直近試合の結果</h2>\n"
-        '<div class="cards">\n' + "\n".join(cards) + "\n</div>"
-    )
+    return '<div class="cards">\n' + "\n".join(cards) + "\n</div>"
 
 
 _PAGE_JS = r"""
@@ -826,12 +820,12 @@ _PAGE_JS = r"""
   var countsEl = document.getElementById("counts");
   var ONERR = "var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}";
 
-  var HIT_H = ["選手", "チーム", "試合", "打率", "本塁打", "打点", "OPS", "出塁率"];
-  var HIT_K = ["gamesPlayed", "avg", "homeRuns", "rbi", "ops", "obp"];
-  var HIT_KEY = { avg: 1, homeRuns: 1 };
-  var PIT_H = ["選手", "チーム", "登板", "防御率", "勝", "敗", "奪三振", "WHIP", "投球回"];
-  var PIT_K = ["gamesPlayed", "era", "wins", "losses", "strikeOuts", "whip", "inningsPitched"];
-  var PIT_KEY = { era: 1, strikeOuts: 1 };
+  /* Mirrors _HIT_FIELDS / _PIT_FIELDS in mlb_stats.py: [label, key, highlight] */
+  var HIT_FIELDS = [["試合", "gamesPlayed", 0], ["打率", "avg", 1], ["本塁打", "homeRuns", 1],
+                    ["打点", "rbi", 0], ["OPS", "ops", 0], ["出塁率", "obp", 0]];
+  var PIT_FIELDS = [["登板", "gamesPlayed", 0], ["防御率", "era", 1], ["勝", "wins", 0],
+                    ["敗", "losses", 0], ["奪三振", "strikeOuts", 1], ["WHIP", "whip", 0],
+                    ["投球回", "inningsPitched", 0]];
 
   function esc(v) {
     return String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;")
@@ -902,43 +896,53 @@ _PAGE_JS = r"""
     return res || "-";
   }
 
-  function renderCards(recent) {
-    var out = recent.map(function (r) {
-      var res = teamResult(r);
-      var badge = res.charAt(0) === "勝" ? "badge win" : (res.charAt(0) === "敗" ? "badge lose" : "badge");
-      return '<article class="pcard">' + avatar(r, "lg") +
-        '<div class="pbody"><div class="pname">' + esc(r.name) + "</div>" +
-        '<div class="pmeta">' + esc(shortDate(r.date)) + "　" + esc(matchup(r)) + "</div>" +
-        '<div class="pline">' + ecell(r.line) + "</div></div>" +
-        '<span class="' + badge + '">' + esc(res) + "</span></article>";
-    });
-    return "<h2>直近試合の結果</h2>\n" + '<div class="cards">\n' + out.join("\n") + "\n</div>";
+  function statRow(label, stat, fields) {
+    var chips = fields.map(function (f) {
+      return '<span class="' + (f[2] ? "stat key" : "stat") + '"><b>' +
+        ecell(stat[f[1]]) + "</b><i>" + esc(f[0]) + "</i></span>";
+    }).join("");
+    return '<div class="srow"><span class="slabel">' + esc(label) + "</span>" + chips + "</div>";
   }
 
-  function renderTable(title, headers, keys, rows, keySet) {
-    var head = headers.map(function (h) { return "<th>" + esc(h) + "</th>"; }).join("");
-    var body = rows.map(function (row) {
-      var who = '<span class="who">' + avatar(row, "sm") + esc(row.name) + "</span>";
-      var tds = ['<td data-label="' + esc(headers[0]) + '">' + who + "</td>",
-                 '<td data-label="' + esc(headers[1]) + '">' + esc(row.team) + "</td>"];
-      keys.forEach(function (k, i) {
-        var cls = keySet[k] ? ' class="key"' : "";
-        tds.push("<td" + cls + ' data-label="' + esc(headers[i + 2]) + '">' + ecell(row.stat[k]) + "</td>");
-      });
-      return "<tr>" + tds.join("") + "</tr>";
+  function seasonBlock(p) {
+    var rows = [];
+    if (p.hitting) rows.push(statRow("打撃", p.hitting, HIT_FIELDS));
+    if (p.pitching) rows.push(statRow("投球", p.pitching, PIT_FIELDS));
+    if (!rows.length) return "";
+    return '<div class="season">' + rows.join("") + "</div>";
+  }
+
+  function renderCards(players) {
+    var out = players.map(function (p) {
+      var res = teamResult(p);
+      var badge = res.charAt(0) === "勝" ? "badge win" : (res.charAt(0) === "敗" ? "badge lose" : "badge");
+      var meta, line, badgeHtml;
+      if (p.date) {
+        meta = esc(shortDate(p.date)) + "\u3000" + esc(matchup(p));
+        line = '<div class="pline">' + ecell(p.line) + "</div>";
+        badgeHtml = '<span class="' + badge + '">' + esc(res) + "</span>";
+      } else {
+        meta = "直近の出場なし";
+        line = "";
+        badgeHtml = "";
+      }
+      return '<article class="pcard">' + avatar(p, "lg") +
+        '<div class="pbody"><div class="pname">' + esc(p.name) +
+        '<span class="pteam">' + esc(p.team) + "</span></div>" +
+        '<div class="pmeta">' + meta + "</div>" + line + seasonBlock(p) +
+        "</div>" + badgeHtml + "</article>";
     });
-    return "<h2>" + esc(title) + "</h2>\n" + '<div class="table-wrap"><table>\n' +
-      "<thead><tr>" + head + "</tr></thead>\n<tbody>\n" + body.join("\n") + "\n</tbody>\n</table></div>";
+    return '<div class="cards">\n' + out.join("\n") + "\n</div>";
   }
 
   function render(data) {
-    var parts = [];
-    if (!data.hitters.length && !data.pitchers.length && !data.recent.length) return false;
-    if (data.recent.length) parts.push(renderCards(data.recent));
-    if (data.hitters.length) parts.push(renderTable("野手", HIT_H, HIT_K, data.hitters, HIT_KEY));
-    if (data.pitchers.length) parts.push(renderTable("投手", PIT_H, PIT_K, data.pitchers, PIT_KEY));
-    app.innerHTML = parts.join("\n");
-    if (countsEl) countsEl.textContent = "野手 " + data.hitters.length + "名 / 投手 " + data.pitchers.length + "名";
+    if (!data.players.length) return false;
+    app.innerHTML = renderCards(data.players);
+    if (countsEl) {
+      var h = 0, p = 0;
+      data.players.forEach(function (x) { if (x.hitting) h++; if (x.pitching) p++; });
+      countsEl.textContent = "野手 " + h + "名 / 投手 " + p + "名";
+    }
     if (stampEl) stampEl.textContent = data.generated_at;
     return true;
   }
@@ -1031,25 +1035,29 @@ _PAGE_JS = r"""
       var dates = {};
       players.forEach(function (p) { if (p.last && p.last.date) dates[p.last.date] = 1; });
       return loadSchedules(Object.keys(dates)).then(function (sched) {
-        var hitters = [], pitchers = [], recent = [];
-        players.forEach(function (p) {
-          var base = { id: p.id, name: p.name, team: p.team };
-          if (p.hitting) hitters.push({ id: p.id, name: p.name, team: p.team, stat: p.hitting });
-          if (p.pitching) pitchers.push({ id: p.id, name: p.name, team: p.team, stat: p.pitching });
+        var roster = players.map(function (p) {
+          var card = {
+            id: p.id, name: p.name, team: p.team,
+            hitting: p.hitting, pitching: p.pitching
+          };
           if (p.last) {
             var r = (sched[p.last.date] || {})[p.last.team_id] || {};
-            recent.push({
-              id: p.id, name: p.name, date: p.last.date,
-              opponent: teamJa(r.opponent || p.last.opponent || ""),
-              home: p.last.home, team_score: r.team_score, opp_score: r.opp_score,
-              result: r.result || "", line: gameLine(p.last.hitting, p.last.pitching)
-            });
+            card.date = p.last.date;
+            card.opponent = teamJa(r.opponent || p.last.opponent || "");
+            card.home = p.last.home;
+            card.team_score = r.team_score;
+            card.opp_score = r.opp_score;
+            card.result = r.result || "";
+            card.line = gameLine(p.last.hitting, p.last.pitching);
           }
+          return card;
         });
-        hitters.sort(function (a, b) { return num(b.stat.homeRuns) - num(a.stat.homeRuns); });
-        pitchers.sort(function (a, b) { return num(b.stat.strikeOuts) - num(a.stat.strikeOuts); });
-        recent.sort(function (a, b) { return (b.date || "") < (a.date || "") ? -1 : 1; });
-        return render({ hitters: hitters, pitchers: pitchers, recent: recent, generated_at: stamp() });
+        /* Most recent game first; players with no game log sort last. */
+        roster.sort(function (a, b) {
+          var x = a.date || "", y = b.date || "";
+          return x === y ? 0 : (x > y ? -1 : 1);
+        });
+        return render({ players: roster, generated_at: stamp() });
       });
     }).catch(function () { return false; });
   }
@@ -1070,7 +1078,9 @@ def _config_json(data: dict[str, Any]) -> str:
     to download the whole league to work out who to ask about.
     """
     seen: dict[Any, str] = {}
-    for group in ("recent", "hitters", "pitchers"):
+    # ``players`` is the canonical roster; the others are kept as a fallback so
+    # a snapshot built before that field existed still yields ids.
+    for group in ("players", "recent", "hitters", "pitchers"):
         for row in data.get(group, []):
             if row.get("id") and row["id"] not in seen:
                 seen[row["id"]] = row.get("name", "")
@@ -1097,27 +1107,22 @@ def format_html(data: dict[str, Any]) -> str:
     recent = data.get("recent", [])
     updated = _esc(data.get("generated_at", data.get("date", "")))
 
+    # Older snapshots predate ``players``; fall back to the recent list so a
+    # stale build still renders something.
+    roster = data.get("players") or recent
+    # Counted from the roster so the header matches what the refresh script
+    # recomputes client-side.
+    n_hit = sum(1 for p in roster if p.get("hitting")) or len(hitters)
+    n_pit = sum(1 for p in roster if p.get("pitching")) or len(pitchers)
+
     body = []
-    if not hitters and not pitchers and not recent:
+    if not roster:
         body.append(
             '<p class="empty">現時点で出場成績のある日本人選手は見つかりませんでした'
             "(オフシーズン、または今シーズンの試合前の可能性があります)。</p>"
         )
     else:
-        if recent:
-            body.append(_recent_cards(recent))
-        if hitters:
-            body.append(
-                _html_table(
-                    "野手", _HITTER_HEADERS, _HITTER_KEYS, hitters, _HITTER_KEY_STATS
-                )
-            )
-        if pitchers:
-            body.append(
-                _html_table(
-                    "投手", _PITCHER_HEADERS, _PITCHER_KEYS, pitchers, _PITCHER_KEY_STATS
-                )
-            )
+        body.append(_player_cards(roster))
 
     return (
         "<!doctype html>\n"
@@ -1132,8 +1137,8 @@ def format_html(data: dict[str, Any]) -> str:
         "<h1>日本人メジャーリーガー成績</h1>\n"
         f'<p class="meta">{_esc(season)}シーズン ・ 最終更新: '
         f'<span id="updated">{updated}</span></p>\n'
-        f'<p class="meta"><span id="counts">野手 {len(hitters)}名 / '
-        f"投手 {len(pitchers)}名</span></p>\n"
+        f'<p class="meta"><span id="counts">野手 {n_hit}名 / '
+        f"投手 {n_pit}名</span></p>\n"
         "</div></header>\n"
         '<main id="app">\n' + "\n".join(body) + "\n</main>\n"
         "<footer>データ提供: "
