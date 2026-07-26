@@ -70,8 +70,15 @@ touching the study app**.
   blocked API, an offline phone or an API change degrades to the snapshot
   rather than an empty page. It also keeps the page useful offline.
 - `_PAGE_JS` duplicates the rendering in JavaScript. **Change the two together**
-  — `_recent_cards`/`_html_table` and `renderCards`/`renderTable` must emit the
-  same markup, or a refresh will silently restyle the page.
+  — `_player_cards`/`_season_block` and `renderCards`/`seasonBlock` must emit
+  the same markup, or a refresh will silently restyle the page. `_HIT_FIELDS`/
+  `_PIT_FIELDS` are mirrored by `HIT_FIELDS`/`PIT_FIELDS` in the script.
+- The page is **one card per player**: today's line and the season totals sit
+  together, sorted by most recent game (a player with no game log sorts last).
+  `collect_stats` emits that as `players`; `hitters`/`pitchers` remain because
+  the Markdown report still renders them as tables.
+- `_config_json` reads `players` first — the roster it ships is what the client
+  asks the API about, so a player missing there never refreshes.
 - Player ids come from the daily build, so a newly arrived Japanese player
   appears after the next daily run, not instantly.
 - `sw.js` cooperates: it ignores cross-origin requests (otherwise the MLB API

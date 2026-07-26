@@ -57,6 +57,22 @@ RECENT_SAMPLE = {
             "line": "4打数1安打 打点1",
         },
     ],
+    "players": [
+        {
+            "id": 660271, "name": "大谷翔平", "team": "ドジャース",
+            "hitting": {"avg": ".310", "homeRuns": 35}, "pitching": None,
+            "date": "2026-07-24", "opponent": "San Diego Padres", "home": False,
+            "team_score": 5, "opp_score": 3, "result": "勝",
+            "line": "投: 6.0回 2失点 7奪三振 / 打: 4打数2安打 本塁打1 打点2",
+        },
+        {
+            "id": 673548, "name": "鈴木誠也", "team": "カブス",
+            "hitting": {"avg": ".280", "homeRuns": 20}, "pitching": None,
+            "date": "2026-07-24", "opponent": "St. Louis Cardinals", "home": True,
+            "team_score": 2, "opp_score": 4, "result": "敗",
+            "line": "4打数1安打 打点1",
+        },
+    ],
 }
 
 # A small fixture mimicking the structure produced by ``collect_stats``.
@@ -103,6 +119,28 @@ SAMPLE = {
                 "whip": "1.05",
                 "inningsPitched": "130.0",
             },
+        },
+    ],
+    "players": [
+        {
+            "id": 660271, "name": "Shohei Ohtani", "team": "Los Angeles Dodgers",
+            "hitting": {
+                "gamesPlayed": 100, "avg": ".310", "homeRuns": 35, "rbi": 80,
+                "ops": "1.050", "obp": ".410",
+            },
+            "pitching": None,
+            "date": "2026-07-24", "opponent": "San Diego Padres", "home": False,
+            "team_score": 5, "opp_score": 3, "result": "勝", "line": "4打数2安打",
+        },
+        {
+            "id": 808967, "name": "Yoshinobu Yamamoto", "team": "Los Angeles Dodgers",
+            "hitting": None,
+            "pitching": {
+                "gamesPlayed": 20, "era": "2.85", "wins": 12, "losses": 4,
+                "strikeOuts": 150, "whip": "1.05", "inningsPitched": "130.0",
+            },
+            "date": "2026-07-23", "opponent": "New York Mets", "home": True,
+            "team_score": 4, "opp_score": 1, "result": "勝", "line": "7.0回 1失点 8奪三振",
         },
     ],
 }
@@ -163,26 +201,28 @@ class FormatHtmlTests(unittest.TestCase):
         self.assertTrue(page.lstrip().startswith("<!doctype html"))
         self.assertIn('<html lang="ja">', page)
         self.assertIn("<style>", page)  # self-contained, no external CSS
-        self.assertIn("<table", page)
+        self.assertIn('class="pcard"', page)
 
     def test_includes_players_and_stats(self) -> None:
-        page = format_html(SAMPLE)
-        self.assertIn("Shohei Ohtani", page)
-        self.assertIn("Yoshinobu Yamamoto", page)
-        self.assertIn("野手", page)
-        self.assertIn("投手", page)
-        self.assertIn("35", page)  # Ohtani home runs
-        self.assertIn("2.85", page)  # Yamamoto ERA
+        body = snapshot(format_html(SAMPLE))
+        self.assertIn("Shohei Ohtani", body)
+        self.assertIn("Yoshinobu Yamamoto", body)
+        self.assertIn("打撃", body)  # season block labels
+        self.assertIn("投球", body)
+        self.assertIn("35", body)  # Ohtani home runs
+        self.assertIn("2.85", body)  # Yamamoto ERA
 
     def test_escapes_html_in_names(self) -> None:
         data = {
             "date": "2026-07-25",
             "generated_at": "2026-07-25 04:00 UTC",
             "season": 2026,
-            "hitters": [
-                {"name": "<script>", "team": "T & U", "stat": {"homeRuns": 1}}
-            ],
+            "hitters": [],
             "pitchers": [],
+            "players": [
+                {"id": 1, "name": "<script>", "team": "T & U",
+                 "hitting": {"homeRuns": 1}, "pitching": None}
+            ],
         }
         body = snapshot(format_html(data))
         self.assertNotIn("<script>", body)
@@ -227,33 +267,61 @@ class JapaneseTeamTests(unittest.TestCase):
 
 
 class ReadabilityMarkupTests(unittest.TestCase):
-    """The phone card layout and stat emphasis depend on this markup."""
+    """Season totals live inside each card, next to today's line."""
 
-    def test_cells_carry_data_labels(self) -> None:
-        page = format_html(SAMPLE)
-        # data-label drives the per-row card layout under the media query.
-        self.assertIn('data-label="選手"', page)
-        self.assertIn('data-label="本塁打"', page)
-        self.assertIn('data-label="防御率"', page)
+    def test_season_block_sits_in_the_card(self) -> None:
+        body = snapshot(format_html(SAMPLE))
+        # No separate tables any more: the card carries the season figures.
+        self.assertNotIn("<table", body)
+        self.assertIn('class="season"', body)
+        self.assertIn("<i>本塁打</i>", body)
+        self.assertIn("<i>防御率</i>", body)
+        self.assertIn("<i>出塁率</i>", body)  # full field set, not a subset
 
     def test_headline_stats_are_marked(self) -> None:
-        page = format_html(SAMPLE)
-        self.assertIn('class="key"', page)
+        body = snapshot(format_html(SAMPLE))
         # 打率 / 本塁打 for hitters, 防御率 / 奪三振 for pitchers.
-        self.assertIn('<td class="key" data-label="打率">.310</td>', page)
-        self.assertIn('<td class="key" data-label="本塁打">35</td>', page)
-        self.assertIn('<td class="key" data-label="防御率">2.85</td>', page)
-        self.assertIn('<td class="key" data-label="奪三振">150</td>', page)
+        self.assertIn('<span class="stat key"><b>.310</b><i>打率</i></span>', body)
+        self.assertIn('<span class="stat key"><b>35</b><i>本塁打</i></span>', body)
+        self.assertIn('<span class="stat key"><b>2.85</b><i>防御率</i></span>', body)
+        self.assertIn('<span class="stat key"><b>150</b><i>奪三振</i></span>', body)
+
+    def test_two_way_player_shows_both_stat_rows(self) -> None:
+        data = {
+            "date": "", "generated_at": "", "season": 2026,
+            "hitters": [], "pitchers": [],
+            "players": [{
+                "id": 660271, "name": "大谷翔平", "team": "ドジャース",
+                "hitting": {"avg": ".310", "homeRuns": 41},
+                "pitching": {"era": "2.41", "strikeOuts": 138},
+                "date": "2026-07-26", "opponent": "メッツ", "home": False,
+                "team_score": 8, "opp_score": 2, "result": "勝", "line": "投/打",
+            }],
+        }
+        body = snapshot(format_html(data))
+        self.assertIn('<span class="slabel">打撃</span>', body)
+        self.assertIn('<span class="slabel">投球</span>', body)
+
+    def test_player_without_a_game_still_renders(self) -> None:
+        data = {
+            "date": "", "generated_at": "", "season": 2026,
+            "hitters": [], "pitchers": [],
+            "players": [{"id": 5, "name": "控え選手", "team": "カブス",
+                         "hitting": {"avg": ".000"}, "pitching": None}],
+        }
+        body = snapshot(format_html(data))
+        self.assertIn("直近の出場なし", body)
+        self.assertIn("控え選手", body)
 
     def test_recent_cards_highlight_the_player_line(self) -> None:
         page = format_html(RECENT_SAMPLE)
         self.assertIn('class="pline"', page)
         self.assertIn("4打数1安打 打点1", page)
 
-    def test_page_has_phone_card_layout(self) -> None:
+    def test_page_has_phone_layout(self) -> None:
         page = format_html(SAMPLE)
         self.assertIn("@media (max-width: 700px)", page)
-        self.assertIn("content:attr(data-label)", page)
+        self.assertIn(".cards{grid-template-columns:1fr}", page)
 
 
 class PhotoTests(unittest.TestCase):
@@ -276,11 +344,13 @@ class PhotoTests(unittest.TestCase):
             "date": "2026-07-25",
             "generated_at": "",
             "season": 2026,
-            "hitters": [
-                {"id": 660271, "name": "大谷翔平", "team": "ドジャース", "stat": {}}
-            ],
+            "hitters": [],
             "pitchers": [],
             "recent": [],
+            "players": [
+                {"id": 660271, "name": "大谷翔平", "team": "ドジャース",
+                 "hitting": {}, "pitching": None}
+            ],
         }
         page = format_html(data)
         self.assertIn("midfield.mlbstatic.com/v1/people/660271/spots/", page)
@@ -293,15 +363,17 @@ class PhotoTests(unittest.TestCase):
             "date": "2026-07-25",
             "generated_at": "2026-07-25 04:00 UTC",
             "season": 2026,
-            "hitters": [
+            "hitters": [],
+            "pitchers": [],
+            "players": [
                 {
                     "id": 660271,
                     "name": "大谷翔平",
                     "team": "ドジャース",
-                    "stat": {"avg": ".310", "homeRuns": 35},
+                    "hitting": {"avg": ".310", "homeRuns": 35},
+                    "pitching": None,
                 }
             ],
-            "pitchers": [],
             "recent": [
                 {
                     "id": 808967,
@@ -317,13 +389,11 @@ class PhotoTests(unittest.TestCase):
             ],
         }
         page = format_html(data)
-        self.assertIn("/people/660271/spots/", page)  # small photo in table
-        self.assertIn("/people/808967/spots/", page)  # large photo on card
+        self.assertIn("/people/660271/spots/", page)
         self.assertIn("/people/660271/headshot/", page)  # kept as the fallback
         # Broken images fall back to the player's initial.
         self.assertIn("this.remove()", page)
         self.assertIn("<b>大</b>", page)
-        self.assertIn("<b>山</b>", page)
 
     def test_headshot_is_clipped_on_the_image_itself(self) -> None:
         """iOS Safari does not clip a positioned child to the parent's radius,
@@ -339,9 +409,11 @@ class PhotoTests(unittest.TestCase):
             "date": "2026-07-25",
             "generated_at": "",
             "season": 2026,
-            "hitters": [{"name": "鈴木誠也", "team": "カブス", "stat": {"avg": ".280"}}],
+            "hitters": [],
             "pitchers": [],
             "recent": [],
+            "players": [{"name": "鈴木誠也", "team": "カブス",
+                         "hitting": {"avg": ".280"}, "pitching": None}],
         }
         body = snapshot(format_html(data))
         self.assertIn("<b>鈴</b>", body)
@@ -380,7 +452,6 @@ class RecentSectionTests(unittest.TestCase):
 
     def test_html_includes_recent_section(self) -> None:
         page = format_html(RECENT_SAMPLE)
-        self.assertIn("直近試合の結果", page)
         self.assertIn('class="pcard"', page)  # photo cards, not a table
         self.assertIn("大谷翔平", page)
         self.assertIn("敗 2-4", page)  # team_score-opp_score
@@ -511,8 +582,9 @@ class LiveRefreshTests(unittest.TestCase):
         """No ids -> the script bails out and the snapshot stays on screen."""
         data = {
             "date": "", "generated_at": "", "season": 2026,
-            "hitters": [{"name": "鈴木誠也", "team": "カブス", "stat": {"avg": ".280"}}],
-            "pitchers": [], "recent": [],
+            "hitters": [], "pitchers": [], "recent": [],
+            "players": [{"name": "鈴木誠也", "team": "カブス",
+                         "hitting": {"avg": ".280"}, "pitching": None}],
         }
         page = format_html(data)
         self.assertEqual(self._config(page)["players"], [])
