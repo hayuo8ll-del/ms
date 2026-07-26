@@ -11,6 +11,8 @@ with::
 
 from __future__ import annotations
 
+import json
+import re
 import unittest
 
 from mlb_stats import (
@@ -105,6 +107,11 @@ SAMPLE = {
 }
 
 
+def snapshot(page: str) -> str:
+    """The server-rendered body only, excluding the bundled refresh script."""
+    return page.split('<main id="app">', 1)[1].split("</main>", 1)[0]
+
+
 class FormatReportTests(unittest.TestCase):
     def test_includes_header_and_season(self) -> None:
         report = format_report(SAMPLE)
@@ -176,10 +183,10 @@ class FormatHtmlTests(unittest.TestCase):
             ],
             "pitchers": [],
         }
-        page = format_html(data)
-        self.assertNotIn("<script>", page)
-        self.assertIn("&lt;script&gt;", page)
-        self.assertIn("T &amp; U", page)
+        body = snapshot(format_html(data))
+        self.assertNotIn("<script>", body)
+        self.assertIn("&lt;script&gt;", body)
+        self.assertIn("T &amp; U", body)
 
     def test_empty_data_does_not_raise(self) -> None:
         data = {
@@ -335,9 +342,9 @@ class PhotoTests(unittest.TestCase):
             "pitchers": [],
             "recent": [],
         }
-        page = format_html(data)
-        self.assertIn("<b>鈴</b>", page)
-        self.assertNotIn("img.mlbstatic.com", page)
+        body = snapshot(format_html(data))
+        self.assertIn("<b>鈴</b>", body)
+        self.assertNotIn("img.mlbstatic.com", body)
 
 
 class GameLineTests(unittest.TestCase):
@@ -448,3 +455,64 @@ class RecentSectionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LiveRefreshTests(unittest.TestCase):
+    """The page carries what it needs to refresh itself when opened."""
+
+    def _config(self, page: str) -> dict:
+        raw = page.split('<script id="mlb-config" type="application/json">', 1)[1]
+        return json.loads(raw.split("</script>", 1)[0].replace("<\\/", "</"))
+
+    def test_config_lists_players_with_ids(self) -> None:
+        data = {
+            "date": "2026-07-25",
+            "generated_at": "2026-07-25 04:00 UTC",
+            "season": 2026,
+            "hitters": [
+                {"id": 660271, "name": "大谷翔平", "team": "ドジャース", "stat": {}}
+            ],
+            "pitchers": [],
+            "recent": [
+                {
+                    "id": 808967, "name": "山本由伸", "date": "2026-07-24",
+                    "opponent": "パドレス", "home": True, "team_score": 5,
+                    "opp_score": 3, "result": "勝", "line": "7.0回",
+                }
+            ],
+        }
+        cfg = self._config(format_html(data))
+        self.assertEqual(cfg["season"], 2026)
+        ids = sorted(p["id"] for p in cfg["players"])
+        self.assertEqual(ids, [660271, 808967])
+        # Team names travel with the page so the client can localise fresh data.
+        self.assertEqual(cfg["teams"]["Los Angeles Dodgers"], "ドジャース")
+
+    def test_config_json_cannot_close_the_script_tag(self) -> None:
+        data = {
+            "date": "", "generated_at": "", "season": 2026,
+            "hitters": [{"id": 1, "name": "</script>x", "team": "T", "stat": {}}],
+            "pitchers": [], "recent": [],
+        }
+        page = format_html(data)
+        raw = page.split('<script id="mlb-config" type="application/json">', 1)[1]
+        self.assertNotIn("</script>", raw.split("</script>", 1)[0])
+
+    def test_page_ships_the_refresh_script(self) -> None:
+        page = format_html(SAMPLE)
+        self.assertIn('<main id="app">', page)
+        self.assertIn('id="updated"', page)
+        self.assertIn('id="counts"', page)
+        self.assertIn("statsapi.mlb.com/api/v1", page)
+        self.assertIn("window.MLBLive", page)
+
+    def test_snapshot_survives_when_refresh_cannot_run(self) -> None:
+        """No ids -> the script bails out and the snapshot stays on screen."""
+        data = {
+            "date": "", "generated_at": "", "season": 2026,
+            "hitters": [{"name": "鈴木誠也", "team": "カブス", "stat": {"avg": ".280"}}],
+            "pitchers": [], "recent": [],
+        }
+        page = format_html(data)
+        self.assertEqual(self._config(page)["players"], [])
+        self.assertIn("鈴木誠也", snapshot(page))
