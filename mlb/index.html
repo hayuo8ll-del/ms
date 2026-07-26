@@ -58,7 +58,7 @@ h2::before{
 }
 .avatar.lg{width:64px;height:64px;font-size:1.25rem}
 .avatar.sm{width:30px;height:30px;font-size:.8rem}
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:.75rem}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:.75rem}
 .pcard{
   display:flex; align-items:center; gap:.8rem; padding:.8rem .9rem; border-radius:14px;
   background:linear-gradient(180deg,var(--surface),var(--surface2)); border:1px solid var(--line);
@@ -73,45 +73,27 @@ h2::before{
 }
 .badge.win{color:var(--win);border-color:rgba(52,211,153,.42);background:rgba(52,211,153,.10)}
 .badge.lose{color:var(--lose);border-color:rgba(251,113,133,.42);background:rgba(251,113,133,.10)}
-.table-wrap{
-  overflow-x:auto; -webkit-overflow-scrolling:touch;
-  border:1px solid var(--line); border-radius:14px; background:var(--surface2);
+.pteam{font-weight:400;font-size:.82rem;color:var(--muted);margin-left:.4rem}
+/* Season totals sit inside the card, under today's line. */
+.season{margin-top:.6rem;padding-top:.55rem;border-top:1px solid var(--line);display:grid;gap:.4rem}
+.srow{display:flex;flex-wrap:wrap;align-items:baseline;gap:.5rem}
+.slabel{
+  flex:none; font-size:.7rem; color:var(--muted);
+  border:1px solid var(--line); border-radius:999px; padding:.05rem .45rem;
 }
-table{border-collapse:collapse;width:100%;min-width:640px;font-size:.94rem}
-th,td{padding:.6rem .75rem;text-align:right;white-space:nowrap;border-bottom:1px solid var(--line)}
-th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
-thead th{background:#0f1725;color:var(--muted);font-size:.8rem;position:sticky;top:0}
-tbody tr:hover{background:rgba(56,189,248,.05)}
-tbody tr:last-child td{border-bottom:none}
-td.key{font-weight:700;color:var(--accent)}
-.who{display:flex;align-items:center;gap:.5rem}
+.stat{display:flex;align-items:baseline;gap:.22rem;font-size:.88rem}
+.stat i{font-style:normal;color:var(--muted);font-size:.7rem}
+.stat b{font-weight:700}
+.stat.key b{color:var(--accent)}
 .empty{padding:1rem;color:var(--muted)}
 footer{margin:2.6rem auto 0;max-width:1040px;padding:0 1rem;color:var(--muted);font-size:.82rem}
 footer a{color:var(--accent)}
 
-/* Phone: each row becomes a card so nothing scrolls sideways. */
+/* Phone: one card per row. */
 @media (max-width: 700px){
   main{padding:0 .75rem}
   .cards{grid-template-columns:1fr}
-  .table-wrap{border:none;border-radius:0;overflow:visible;background:transparent}
-  table{min-width:0;display:block}
-  thead{display:none}
-  tbody,tr,td{display:block;width:100%}
-  tbody tr,tbody tr:hover{
-    background:linear-gradient(180deg,var(--surface),var(--surface2));
-    border:1px solid var(--line); border-radius:14px; margin:0 0 .7rem; padding:.7rem .85rem;
-  }
-  td{
-    display:flex; justify-content:space-between; align-items:baseline; gap:1rem;
-    border:none; padding:.24rem 0; text-align:right; white-space:normal;
-  }
-  td::before{content:attr(data-label);color:var(--muted);font-size:.82rem;text-align:left;flex:none}
-  td:first-child{
-    font-size:1.05rem; font-weight:700; text-align:left;
-    border-bottom:1px solid var(--line); margin-bottom:.45rem; padding-bottom:.5rem;
-  }
-  td:first-child::before{content:none}
-  td.key{font-size:1.02rem}
+  .pcard{align-items:flex-start}
 }
 </style>
 </head>
@@ -119,54 +101,26 @@ footer a{color:var(--accent)}
 <header class="hero"><div class="hero-inner">
 <span class="eyebrow">MLB JAPANESE PLAYERS</span>
 <h1>日本人メジャーリーガー成績</h1>
-<p class="meta">2026シーズン ・ 最終更新: <span id="updated">2026-07-26 11:58 JST</span></p>
+<p class="meta">2026シーズン ・ 最終更新: <span id="updated">2026-07-26 20:16 JST</span></p>
 <p class="meta"><span id="counts">野手 6名 / 投手 9名</span></p>
 </div></header>
 <main id="app">
-<h2>直近試合の結果</h2>
 <div class="cards">
-<article class="pcard"><span class="avatar lg"><b>岡</b><img src="https://midfield.mlbstatic.com/v1/people/672960/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/672960/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">岡本和真</div><div class="pmeta">07/25　@ レッドソックス</div><div class="pline">5打数1安打</div></div><span class="badge win">勝 6-0</span></article>
-<article class="pcard"><span class="avatar lg"><b>吉</b><img src="https://midfield.mlbstatic.com/v1/people/807799/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/807799/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">吉田正尚</div><div class="pmeta">07/25　vs ブルージェイズ</div><div class="pline">3打数0安打</div></div><span class="badge lose">敗 0-6</span></article>
-<article class="pcard"><span class="avatar lg"><b>村</b><img src="https://midfield.mlbstatic.com/v1/people/808959/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/808959/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">村上宗隆</div><div class="pmeta">07/25　vs アストロズ</div><div class="pline">4打数1安打</div></div><span class="badge lose">敗 1-4</span></article>
-<article class="pcard"><span class="avatar lg"><b>鈴</b><img src="https://midfield.mlbstatic.com/v1/people/673548/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/673548/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">鈴木誠也</div><div class="pmeta">07/25　@ パイレーツ</div><div class="pline">5打数1安打 打点2</div></div><span class="badge win">勝 11-0</span></article>
-<article class="pcard"><span class="avatar lg"><b>大</b><img src="https://midfield.mlbstatic.com/v1/people/660271/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/660271/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">大谷翔平</div><div class="pmeta">07/25　@ メッツ</div><div class="pline">5打数0安打</div></div><span class="badge win">勝 4-3</span></article>
-<article class="pcard"><span class="avatar lg"><b>今</b><img src="https://midfield.mlbstatic.com/v1/people/684007/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/684007/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">今永昇太</div><div class="pmeta">07/25　@ パイレーツ</div><div class="pline">6.0回 0失点 4奪三振</div></div><span class="badge win">勝 11-0</span></article>
-<article class="pcard"><span class="avatar lg"><b>山</b><img src="https://midfield.mlbstatic.com/v1/people/808967/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/808967/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">山本由伸</div><div class="pmeta">07/25　@ メッツ</div><div class="pline">6.0回 1失点 5奪三振</div></div><span class="badge win">勝 4-3</span></article>
-<article class="pcard"><span class="avatar lg"><b>松</b><img src="https://midfield.mlbstatic.com/v1/people/673513/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/673513/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">松井裕樹</div><div class="pmeta">07/25　@ マーリンズ</div><div class="pline">1.0回 0失点 1奪三振</div></div><span class="badge win">勝 7-2</span></article>
-<article class="pcard"><span class="avatar lg"><b>佐</b><img src="https://midfield.mlbstatic.com/v1/people/808963/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/808963/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">佐々木朗希</div><div class="pmeta">07/24　@ メッツ</div><div class="pline">7.0回 1失点 9奪三振</div></div><span class="badge win">勝 4-2</span></article>
-<article class="pcard"><span class="avatar lg"><b>菅</b><img src="https://midfield.mlbstatic.com/v1/people/608372/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/608372/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">菅野智之</div><div class="pmeta">07/24　@ ブルワーズ</div><div class="pline">5.1回 2失点 5奪三振</div></div><span class="badge win">勝 5-2</span></article>
-<article class="pcard"><span class="avatar lg"><b>今</b><img src="https://midfield.mlbstatic.com/v1/people/837227/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/837227/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">今井達也</div><div class="pmeta">07/21　vs マーリンズ</div><div class="pline">6.0回 1失点 8奪三振</div></div><span class="badge win">勝 5-3</span></article>
-<article class="pcard"><span class="avatar lg"><b>千</b><img src="https://midfield.mlbstatic.com/v1/people/673540/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/673540/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">千賀滉大</div><div class="pmeta">07/18　@ フィリーズ</div><div class="pline">1.1回 2失点 2奪三振</div></div><span class="badge lose">敗 1-6</span></article>
-<article class="pcard"><span class="avatar lg"><b>R</b><img src="https://midfield.mlbstatic.com/v1/people/807747/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/807747/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">Rikuu Nishida</div><div class="pmeta">06/07　@ フィリーズ</div><div class="pline">2打数1安打</div></div><span class="badge lose">敗 5-9</span></article>
-<article class="pcard"><span class="avatar lg"><b>菊</b><img src="https://midfield.mlbstatic.com/v1/people/579328/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/579328/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">菊池雄星</div><div class="pmeta">04/29　@ ホワイトソックス</div><div class="pline">2.0回 0失点 1奪三振</div></div><span class="badge lose">敗 2-3</span></article>
+<article class="pcard"><span class="avatar lg"><b>岡</b><img src="https://midfield.mlbstatic.com/v1/people/672960/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/672960/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">岡本和真<span class="pteam">ブルージェイズ</span></div><div class="pmeta">07/25　@ レッドソックス</div><div class="pline">5打数1安打</div><div class="season"><div class="srow"><span class="slabel">打撃</span><span class="stat"><b>102</b><i>試合</i></span><span class="stat key"><b>.226</b><i>打率</i></span><span class="stat key"><b>23</b><i>本塁打</i></span><span class="stat"><b>65</b><i>打点</i></span><span class="stat"><b>.754</b><i>OPS</i></span><span class="stat"><b>.307</b><i>出塁率</i></span></div></div></div><span class="badge win">勝 6-0</span></article>
+<article class="pcard"><span class="avatar lg"><b>吉</b><img src="https://midfield.mlbstatic.com/v1/people/807799/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/807799/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">吉田正尚<span class="pteam">レッドソックス</span></div><div class="pmeta">07/25　vs ブルージェイズ</div><div class="pline">3打数0安打</div><div class="season"><div class="srow"><span class="slabel">打撃</span><span class="stat"><b>69</b><i>試合</i></span><span class="stat key"><b>.261</b><i>打率</i></span><span class="stat key"><b>4</b><i>本塁打</i></span><span class="stat"><b>19</b><i>打点</i></span><span class="stat"><b>.725</b><i>OPS</i></span><span class="stat"><b>.341</b><i>出塁率</i></span></div></div></div><span class="badge lose">敗 0-6</span></article>
+<article class="pcard"><span class="avatar lg"><b>村</b><img src="https://midfield.mlbstatic.com/v1/people/808959/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/808959/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">村上宗隆<span class="pteam">ホワイトソックス</span></div><div class="pmeta">07/25　vs アストロズ</div><div class="pline">4打数1安打</div><div class="season"><div class="srow"><span class="slabel">打撃</span><span class="stat"><b>68</b><i>試合</i></span><span class="stat key"><b>.231</b><i>打率</i></span><span class="stat key"><b>20</b><i>本塁打</i></span><span class="stat"><b>42</b><i>打点</i></span><span class="stat"><b>.891</b><i>OPS</i></span><span class="stat"><b>.374</b><i>出塁率</i></span></div></div></div><span class="badge lose">敗 1-4</span></article>
+<article class="pcard"><span class="avatar lg"><b>鈴</b><img src="https://midfield.mlbstatic.com/v1/people/673548/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/673548/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">鈴木誠也<span class="pteam">カブス</span></div><div class="pmeta">07/25　@ パイレーツ</div><div class="pline">5打数1安打 打点2</div><div class="season"><div class="srow"><span class="slabel">打撃</span><span class="stat"><b>88</b><i>試合</i></span><span class="stat key"><b>.266</b><i>打率</i></span><span class="stat key"><b>17</b><i>本塁打</i></span><span class="stat"><b>56</b><i>打点</i></span><span class="stat"><b>.824</b><i>OPS</i></span><span class="stat"><b>.356</b><i>出塁率</i></span></div></div></div><span class="badge win">勝 11-0</span></article>
+<article class="pcard"><span class="avatar lg"><b>大</b><img src="https://midfield.mlbstatic.com/v1/people/660271/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/660271/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">大谷翔平<span class="pteam">ドジャース</span></div><div class="pmeta">07/25　@ メッツ</div><div class="pline">5打数0安打</div><div class="season"><div class="srow"><span class="slabel">打撃</span><span class="stat"><b>100</b><i>試合</i></span><span class="stat key"><b>.282</b><i>打率</i></span><span class="stat key"><b>22</b><i>本塁打</i></span><span class="stat"><b>61</b><i>打点</i></span><span class="stat"><b>.908</b><i>OPS</i></span><span class="stat"><b>.388</b><i>出塁率</i></span></div><div class="srow"><span class="slabel">投球</span><span class="stat"><b>14</b><i>登板</i></span><span class="stat key"><b>1.79</b><i>防御率</i></span><span class="stat"><b>8</b><i>勝</i></span><span class="stat"><b>2</b><i>敗</i></span><span class="stat key"><b>95</b><i>奪三振</i></span><span class="stat"><b>0.95</b><i>WHIP</i></span><span class="stat"><b>85.2</b><i>投球回</i></span></div></div></div><span class="badge win">勝 4-3</span></article>
+<article class="pcard"><span class="avatar lg"><b>今</b><img src="https://midfield.mlbstatic.com/v1/people/684007/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/684007/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">今永昇太<span class="pteam">カブス</span></div><div class="pmeta">07/25　@ パイレーツ</div><div class="pline">6.0回 0失点 4奪三振</div><div class="season"><div class="srow"><span class="slabel">投球</span><span class="stat"><b>21</b><i>登板</i></span><span class="stat key"><b>3.72</b><i>防御率</i></span><span class="stat"><b>7</b><i>勝</i></span><span class="stat"><b>8</b><i>敗</i></span><span class="stat key"><b>113</b><i>奪三振</i></span><span class="stat"><b>1.10</b><i>WHIP</i></span><span class="stat"><b>121.0</b><i>投球回</i></span></div></div></div><span class="badge win">勝 11-0</span></article>
+<article class="pcard"><span class="avatar lg"><b>山</b><img src="https://midfield.mlbstatic.com/v1/people/808967/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/808967/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">山本由伸<span class="pteam">ドジャース</span></div><div class="pmeta">07/25　@ メッツ</div><div class="pline">6.0回 1失点 5奪三振</div><div class="season"><div class="srow"><span class="slabel">投球</span><span class="stat"><b>19</b><i>登板</i></span><span class="stat key"><b>2.72</b><i>防御率</i></span><span class="stat"><b>11</b><i>勝</i></span><span class="stat"><b>6</b><i>敗</i></span><span class="stat key"><b>118</b><i>奪三振</i></span><span class="stat"><b>0.90</b><i>WHIP</i></span><span class="stat"><b>125.2</b><i>投球回</i></span></div></div></div><span class="badge win">勝 4-3</span></article>
+<article class="pcard"><span class="avatar lg"><b>松</b><img src="https://midfield.mlbstatic.com/v1/people/673513/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/673513/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">松井裕樹<span class="pteam">パドレス</span></div><div class="pmeta">07/25　@ マーリンズ</div><div class="pline">1.0回 0失点 1奪三振</div><div class="season"><div class="srow"><span class="slabel">投球</span><span class="stat"><b>29</b><i>登板</i></span><span class="stat key"><b>2.61</b><i>防御率</i></span><span class="stat"><b>1</b><i>勝</i></span><span class="stat"><b>1</b><i>敗</i></span><span class="stat key"><b>41</b><i>奪三振</i></span><span class="stat"><b>1.24</b><i>WHIP</i></span><span class="stat"><b>38.0</b><i>投球回</i></span></div></div></div><span class="badge win">勝 7-2</span></article>
+<article class="pcard"><span class="avatar lg"><b>佐</b><img src="https://midfield.mlbstatic.com/v1/people/808963/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/808963/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">佐々木朗希<span class="pteam">ドジャース</span></div><div class="pmeta">07/24　@ メッツ</div><div class="pline">7.0回 1失点 9奪三振</div><div class="season"><div class="srow"><span class="slabel">投球</span><span class="stat"><b>18</b><i>登板</i></span><span class="stat key"><b>4.71</b><i>防御率</i></span><span class="stat"><b>4</b><i>勝</i></span><span class="stat"><b>5</b><i>敗</i></span><span class="stat key"><b>94</b><i>奪三振</i></span><span class="stat"><b>1.29</b><i>WHIP</i></span><span class="stat"><b>93.2</b><i>投球回</i></span></div></div></div><span class="badge win">勝 4-2</span></article>
+<article class="pcard"><span class="avatar lg"><b>菅</b><img src="https://midfield.mlbstatic.com/v1/people/608372/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/608372/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">菅野智之<span class="pteam">ロッキーズ</span></div><div class="pmeta">07/24　@ ブルワーズ</div><div class="pline">5.1回 2失点 5奪三振</div><div class="season"><div class="srow"><span class="slabel">投球</span><span class="stat"><b>18</b><i>登板</i></span><span class="stat key"><b>4.69</b><i>防御率</i></span><span class="stat"><b>10</b><i>勝</i></span><span class="stat"><b>4</b><i>敗</i></span><span class="stat key"><b>56</b><i>奪三振</i></span><span class="stat"><b>1.29</b><i>WHIP</i></span><span class="stat"><b>96.0</b><i>投球回</i></span></div></div></div><span class="badge win">勝 5-2</span></article>
+<article class="pcard"><span class="avatar lg"><b>今</b><img src="https://midfield.mlbstatic.com/v1/people/837227/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/837227/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">今井達也<span class="pteam">アストロズ</span></div><div class="pmeta">07/21　vs マーリンズ</div><div class="pline">6.0回 1失点 8奪三振</div><div class="season"><div class="srow"><span class="slabel">投球</span><span class="stat"><b>14</b><i>登板</i></span><span class="stat key"><b>5.59</b><i>防御率</i></span><span class="stat"><b>6</b><i>勝</i></span><span class="stat"><b>4</b><i>敗</i></span><span class="stat key"><b>71</b><i>奪三振</i></span><span class="stat"><b>1.47</b><i>WHIP</i></span><span class="stat"><b>58.0</b><i>投球回</i></span></div></div></div><span class="badge win">勝 5-3</span></article>
+<article class="pcard"><span class="avatar lg"><b>千</b><img src="https://midfield.mlbstatic.com/v1/people/673540/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/673540/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">千賀滉大<span class="pteam">メッツ</span></div><div class="pmeta">07/18　@ フィリーズ</div><div class="pline">1.1回 2失点 2奪三振</div><div class="season"><div class="srow"><span class="slabel">投球</span><span class="stat"><b>12</b><i>登板</i></span><span class="stat key"><b>8.85</b><i>防御率</i></span><span class="stat"><b>0</b><i>勝</i></span><span class="stat"><b>7</b><i>敗</i></span><span class="stat key"><b>49</b><i>奪三振</i></span><span class="stat"><b>1.84</b><i>WHIP</i></span><span class="stat"><b>40.2</b><i>投球回</i></span></div></div></div><span class="badge lose">敗 1-6</span></article>
+<article class="pcard"><span class="avatar lg"><b>R</b><img src="https://midfield.mlbstatic.com/v1/people/807747/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/807747/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">Rikuu Nishida<span class="pteam">Charlotte Knights</span></div><div class="pmeta">06/07　@ フィリーズ</div><div class="pline">2打数1安打</div><div class="season"><div class="srow"><span class="slabel">打撃</span><span class="stat"><b>12</b><i>試合</i></span><span class="stat key"><b>.241</b><i>打率</i></span><span class="stat key"><b>0</b><i>本塁打</i></span><span class="stat"><b>2</b><i>打点</i></span><span class="stat"><b>.482</b><i>OPS</i></span><span class="stat"><b>.241</b><i>出塁率</i></span></div></div></div><span class="badge lose">敗 5-9</span></article>
+<article class="pcard"><span class="avatar lg"><b>菊</b><img src="https://midfield.mlbstatic.com/v1/people/579328/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/579328/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span><div class="pbody"><div class="pname">菊池雄星<span class="pteam">エンゼルス</span></div><div class="pmeta">04/29　@ ホワイトソックス</div><div class="pline">2.0回 0失点 1奪三振</div><div class="season"><div class="srow"><span class="slabel">投球</span><span class="stat"><b>7</b><i>登板</i></span><span class="stat key"><b>5.81</b><i>防御率</i></span><span class="stat"><b>0</b><i>勝</i></span><span class="stat"><b>3</b><i>敗</i></span><span class="stat key"><b>33</b><i>奪三振</i></span><span class="stat"><b>1.58</b><i>WHIP</i></span><span class="stat"><b>31.0</b><i>投球回</i></span></div></div></div><span class="badge lose">敗 2-3</span></article>
 </div>
-<h2>野手</h2>
-<div class="table-wrap"><table>
-<thead><tr><th>選手</th><th>チーム</th><th>試合</th><th>打率</th><th>本塁打</th><th>打点</th><th>OPS</th><th>出塁率</th></tr></thead>
-<tbody>
-<tr><td data-label="選手"><span class="who"><span class="avatar sm"><b>岡</b><img src="https://midfield.mlbstatic.com/v1/people/672960/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/672960/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span>岡本和真</span></td><td data-label="チーム">ブルージェイズ</td><td data-label="試合">102</td><td class="key" data-label="打率">.226</td><td class="key" data-label="本塁打">23</td><td data-label="打点">65</td><td data-label="OPS">.754</td><td data-label="出塁率">.307</td></tr>
-<tr><td data-label="選手"><span class="who"><span class="avatar sm"><b>大</b><img src="https://midfield.mlbstatic.com/v1/people/660271/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/660271/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span>大谷翔平</span></td><td data-label="チーム">ドジャース</td><td data-label="試合">100</td><td class="key" data-label="打率">.282</td><td class="key" data-label="本塁打">22</td><td data-label="打点">61</td><td data-label="OPS">.908</td><td data-label="出塁率">.388</td></tr>
-<tr><td data-label="選手"><span class="who"><span class="avatar sm"><b>村</b><img src="https://midfield.mlbstatic.com/v1/people/808959/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/808959/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span>村上宗隆</span></td><td data-label="チーム">ホワイトソックス</td><td data-label="試合">68</td><td class="key" data-label="打率">.231</td><td class="key" data-label="本塁打">20</td><td data-label="打点">42</td><td data-label="OPS">.891</td><td data-label="出塁率">.374</td></tr>
-<tr><td data-label="選手"><span class="who"><span class="avatar sm"><b>鈴</b><img src="https://midfield.mlbstatic.com/v1/people/673548/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/673548/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span>鈴木誠也</span></td><td data-label="チーム">カブス</td><td data-label="試合">88</td><td class="key" data-label="打率">.266</td><td class="key" data-label="本塁打">17</td><td data-label="打点">56</td><td data-label="OPS">.824</td><td data-label="出塁率">.356</td></tr>
-<tr><td data-label="選手"><span class="who"><span class="avatar sm"><b>吉</b><img src="https://midfield.mlbstatic.com/v1/people/807799/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/807799/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span>吉田正尚</span></td><td data-label="チーム">レッドソックス</td><td data-label="試合">69</td><td class="key" data-label="打率">.261</td><td class="key" data-label="本塁打">4</td><td data-label="打点">19</td><td data-label="OPS">.725</td><td data-label="出塁率">.341</td></tr>
-<tr><td data-label="選手"><span class="who"><span class="avatar sm"><b>R</b><img src="https://midfield.mlbstatic.com/v1/people/807747/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/807747/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span>Rikuu Nishida</span></td><td data-label="チーム">Charlotte Knights</td><td data-label="試合">12</td><td class="key" data-label="打率">.241</td><td class="key" data-label="本塁打">0</td><td data-label="打点">2</td><td data-label="OPS">.482</td><td data-label="出塁率">.241</td></tr>
-</tbody>
-</table></div>
-<h2>投手</h2>
-<div class="table-wrap"><table>
-<thead><tr><th>選手</th><th>チーム</th><th>登板</th><th>防御率</th><th>勝</th><th>敗</th><th>奪三振</th><th>WHIP</th><th>投球回</th></tr></thead>
-<tbody>
-<tr><td data-label="選手"><span class="who"><span class="avatar sm"><b>山</b><img src="https://midfield.mlbstatic.com/v1/people/808967/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/808967/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span>山本由伸</span></td><td data-label="チーム">ドジャース</td><td data-label="登板">19</td><td class="key" data-label="防御率">2.72</td><td data-label="勝">11</td><td data-label="敗">6</td><td class="key" data-label="奪三振">118</td><td data-label="WHIP">0.90</td><td data-label="投球回">125.2</td></tr>
-<tr><td data-label="選手"><span class="who"><span class="avatar sm"><b>今</b><img src="https://midfield.mlbstatic.com/v1/people/684007/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/684007/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span>今永昇太</span></td><td data-label="チーム">カブス</td><td data-label="登板">21</td><td class="key" data-label="防御率">3.72</td><td data-label="勝">7</td><td data-label="敗">8</td><td class="key" data-label="奪三振">113</td><td data-label="WHIP">1.10</td><td data-label="投球回">121.0</td></tr>
-<tr><td data-label="選手"><span class="who"><span class="avatar sm"><b>大</b><img src="https://midfield.mlbstatic.com/v1/people/660271/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/660271/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span>大谷翔平</span></td><td data-label="チーム">ドジャース</td><td data-label="登板">14</td><td class="key" data-label="防御率">1.79</td><td data-label="勝">8</td><td data-label="敗">2</td><td class="key" data-label="奪三振">95</td><td data-label="WHIP">0.95</td><td data-label="投球回">85.2</td></tr>
-<tr><td data-label="選手"><span class="who"><span class="avatar sm"><b>佐</b><img src="https://midfield.mlbstatic.com/v1/people/808963/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/808963/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span>佐々木朗希</span></td><td data-label="チーム">ドジャース</td><td data-label="登板">18</td><td class="key" data-label="防御率">4.71</td><td data-label="勝">4</td><td data-label="敗">5</td><td class="key" data-label="奪三振">94</td><td data-label="WHIP">1.29</td><td data-label="投球回">93.2</td></tr>
-<tr><td data-label="選手"><span class="who"><span class="avatar sm"><b>今</b><img src="https://midfield.mlbstatic.com/v1/people/837227/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/837227/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span>今井達也</span></td><td data-label="チーム">アストロズ</td><td data-label="登板">14</td><td class="key" data-label="防御率">5.59</td><td data-label="勝">6</td><td data-label="敗">4</td><td class="key" data-label="奪三振">71</td><td data-label="WHIP">1.47</td><td data-label="投球回">58.0</td></tr>
-<tr><td data-label="選手"><span class="who"><span class="avatar sm"><b>菅</b><img src="https://midfield.mlbstatic.com/v1/people/608372/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/608372/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span>菅野智之</span></td><td data-label="チーム">ロッキーズ</td><td data-label="登板">18</td><td class="key" data-label="防御率">4.69</td><td data-label="勝">10</td><td data-label="敗">4</td><td class="key" data-label="奪三振">56</td><td data-label="WHIP">1.29</td><td data-label="投球回">96.0</td></tr>
-<tr><td data-label="選手"><span class="who"><span class="avatar sm"><b>千</b><img src="https://midfield.mlbstatic.com/v1/people/673540/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/673540/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span>千賀滉大</span></td><td data-label="チーム">メッツ</td><td data-label="登板">12</td><td class="key" data-label="防御率">8.85</td><td data-label="勝">0</td><td data-label="敗">7</td><td class="key" data-label="奪三振">49</td><td data-label="WHIP">1.84</td><td data-label="投球回">40.2</td></tr>
-<tr><td data-label="選手"><span class="who"><span class="avatar sm"><b>松</b><img src="https://midfield.mlbstatic.com/v1/people/673513/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/673513/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span>松井裕樹</span></td><td data-label="チーム">パドレス</td><td data-label="登板">29</td><td class="key" data-label="防御率">2.61</td><td data-label="勝">1</td><td data-label="敗">1</td><td class="key" data-label="奪三振">41</td><td data-label="WHIP">1.24</td><td data-label="投球回">38.0</td></tr>
-<tr><td data-label="選手"><span class="who"><span class="avatar sm"><b>菊</b><img src="https://midfield.mlbstatic.com/v1/people/579328/spots/120" data-fallback="https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/579328/headshot/67/current" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}"></span>菊池雄星</span></td><td data-label="チーム">エンゼルス</td><td data-label="登板">7</td><td class="key" data-label="防御率">5.81</td><td data-label="勝">0</td><td data-label="敗">3</td><td class="key" data-label="奪三振">33</td><td data-label="WHIP">1.58</td><td data-label="投球回">31.0</td></tr>
-</tbody>
-</table></div>
 </main>
 <footer>データ提供: <a href="https://statsapi.mlb.com" rel="noopener">MLB Stats API</a>・写真: MLB。ページを開くたびに最新へ更新します。</footer>
 <script id="mlb-config" type="application/json">{"season": 2026, "players": [{"id": 672960, "name": "岡本和真"}, {"id": 807799, "name": "吉田正尚"}, {"id": 808959, "name": "村上宗隆"}, {"id": 673548, "name": "鈴木誠也"}, {"id": 660271, "name": "大谷翔平"}, {"id": 684007, "name": "今永昇太"}, {"id": 808967, "name": "山本由伸"}, {"id": 673513, "name": "松井裕樹"}, {"id": 808963, "name": "佐々木朗希"}, {"id": 608372, "name": "菅野智之"}, {"id": 837227, "name": "今井達也"}, {"id": 673540, "name": "千賀滉大"}, {"id": 807747, "name": "Rikuu Nishida"}, {"id": 579328, "name": "菊池雄星"}], "teams": {"Arizona Diamondbacks": "ダイヤモンドバックス", "Atlanta Braves": "ブレーブス", "Baltimore Orioles": "オリオールズ", "Boston Red Sox": "レッドソックス", "Chicago Cubs": "カブス", "Chicago White Sox": "ホワイトソックス", "Cincinnati Reds": "レッズ", "Cleveland Guardians": "ガーディアンズ", "Colorado Rockies": "ロッキーズ", "Detroit Tigers": "タイガース", "Houston Astros": "アストロズ", "Kansas City Royals": "ロイヤルズ", "Los Angeles Angels": "エンゼルス", "Los Angeles Dodgers": "ドジャース", "Miami Marlins": "マーリンズ", "Milwaukee Brewers": "ブルワーズ", "Minnesota Twins": "ツインズ", "New York Mets": "メッツ", "New York Yankees": "ヤンキース", "Philadelphia Phillies": "フィリーズ", "Pittsburgh Pirates": "パイレーツ", "San Diego Padres": "パドレス", "San Francisco Giants": "ジャイアンツ", "Seattle Mariners": "マリナーズ", "St. Louis Cardinals": "カージナルス", "Tampa Bay Rays": "レイズ", "Texas Rangers": "レンジャーズ", "Toronto Blue Jays": "ブルージェイズ", "Washington Nationals": "ナショナルズ", "Athletics": "アスレチックス", "Oakland Athletics": "アスレチックス", "Sacramento Athletics": "アスレチックス"}}</script>
@@ -188,12 +142,12 @@ footer a{color:var(--accent)}
   var countsEl = document.getElementById("counts");
   var ONERR = "var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}";
 
-  var HIT_H = ["選手", "チーム", "試合", "打率", "本塁打", "打点", "OPS", "出塁率"];
-  var HIT_K = ["gamesPlayed", "avg", "homeRuns", "rbi", "ops", "obp"];
-  var HIT_KEY = { avg: 1, homeRuns: 1 };
-  var PIT_H = ["選手", "チーム", "登板", "防御率", "勝", "敗", "奪三振", "WHIP", "投球回"];
-  var PIT_K = ["gamesPlayed", "era", "wins", "losses", "strikeOuts", "whip", "inningsPitched"];
-  var PIT_KEY = { era: 1, strikeOuts: 1 };
+  /* Mirrors _HIT_FIELDS / _PIT_FIELDS in mlb_stats.py: [label, key, highlight] */
+  var HIT_FIELDS = [["試合", "gamesPlayed", 0], ["打率", "avg", 1], ["本塁打", "homeRuns", 1],
+                    ["打点", "rbi", 0], ["OPS", "ops", 0], ["出塁率", "obp", 0]];
+  var PIT_FIELDS = [["登板", "gamesPlayed", 0], ["防御率", "era", 1], ["勝", "wins", 0],
+                    ["敗", "losses", 0], ["奪三振", "strikeOuts", 1], ["WHIP", "whip", 0],
+                    ["投球回", "inningsPitched", 0]];
 
   function esc(v) {
     return String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;")
@@ -264,43 +218,53 @@ footer a{color:var(--accent)}
     return res || "-";
   }
 
-  function renderCards(recent) {
-    var out = recent.map(function (r) {
-      var res = teamResult(r);
-      var badge = res.charAt(0) === "勝" ? "badge win" : (res.charAt(0) === "敗" ? "badge lose" : "badge");
-      return '<article class="pcard">' + avatar(r, "lg") +
-        '<div class="pbody"><div class="pname">' + esc(r.name) + "</div>" +
-        '<div class="pmeta">' + esc(shortDate(r.date)) + "　" + esc(matchup(r)) + "</div>" +
-        '<div class="pline">' + ecell(r.line) + "</div></div>" +
-        '<span class="' + badge + '">' + esc(res) + "</span></article>";
-    });
-    return "<h2>直近試合の結果</h2>\n" + '<div class="cards">\n' + out.join("\n") + "\n</div>";
+  function statRow(label, stat, fields) {
+    var chips = fields.map(function (f) {
+      return '<span class="' + (f[2] ? "stat key" : "stat") + '"><b>' +
+        ecell(stat[f[1]]) + "</b><i>" + esc(f[0]) + "</i></span>";
+    }).join("");
+    return '<div class="srow"><span class="slabel">' + esc(label) + "</span>" + chips + "</div>";
   }
 
-  function renderTable(title, headers, keys, rows, keySet) {
-    var head = headers.map(function (h) { return "<th>" + esc(h) + "</th>"; }).join("");
-    var body = rows.map(function (row) {
-      var who = '<span class="who">' + avatar(row, "sm") + esc(row.name) + "</span>";
-      var tds = ['<td data-label="' + esc(headers[0]) + '">' + who + "</td>",
-                 '<td data-label="' + esc(headers[1]) + '">' + esc(row.team) + "</td>"];
-      keys.forEach(function (k, i) {
-        var cls = keySet[k] ? ' class="key"' : "";
-        tds.push("<td" + cls + ' data-label="' + esc(headers[i + 2]) + '">' + ecell(row.stat[k]) + "</td>");
-      });
-      return "<tr>" + tds.join("") + "</tr>";
+  function seasonBlock(p) {
+    var rows = [];
+    if (p.hitting) rows.push(statRow("打撃", p.hitting, HIT_FIELDS));
+    if (p.pitching) rows.push(statRow("投球", p.pitching, PIT_FIELDS));
+    if (!rows.length) return "";
+    return '<div class="season">' + rows.join("") + "</div>";
+  }
+
+  function renderCards(players) {
+    var out = players.map(function (p) {
+      var res = teamResult(p);
+      var badge = res.charAt(0) === "勝" ? "badge win" : (res.charAt(0) === "敗" ? "badge lose" : "badge");
+      var meta, line, badgeHtml;
+      if (p.date) {
+        meta = esc(shortDate(p.date)) + "\u3000" + esc(matchup(p));
+        line = '<div class="pline">' + ecell(p.line) + "</div>";
+        badgeHtml = '<span class="' + badge + '">' + esc(res) + "</span>";
+      } else {
+        meta = "直近の出場なし";
+        line = "";
+        badgeHtml = "";
+      }
+      return '<article class="pcard">' + avatar(p, "lg") +
+        '<div class="pbody"><div class="pname">' + esc(p.name) +
+        '<span class="pteam">' + esc(p.team) + "</span></div>" +
+        '<div class="pmeta">' + meta + "</div>" + line + seasonBlock(p) +
+        "</div>" + badgeHtml + "</article>";
     });
-    return "<h2>" + esc(title) + "</h2>\n" + '<div class="table-wrap"><table>\n' +
-      "<thead><tr>" + head + "</tr></thead>\n<tbody>\n" + body.join("\n") + "\n</tbody>\n</table></div>";
+    return '<div class="cards">\n' + out.join("\n") + "\n</div>";
   }
 
   function render(data) {
-    var parts = [];
-    if (!data.hitters.length && !data.pitchers.length && !data.recent.length) return false;
-    if (data.recent.length) parts.push(renderCards(data.recent));
-    if (data.hitters.length) parts.push(renderTable("野手", HIT_H, HIT_K, data.hitters, HIT_KEY));
-    if (data.pitchers.length) parts.push(renderTable("投手", PIT_H, PIT_K, data.pitchers, PIT_KEY));
-    app.innerHTML = parts.join("\n");
-    if (countsEl) countsEl.textContent = "野手 " + data.hitters.length + "名 / 投手 " + data.pitchers.length + "名";
+    if (!data.players.length) return false;
+    app.innerHTML = renderCards(data.players);
+    if (countsEl) {
+      var h = 0, p = 0;
+      data.players.forEach(function (x) { if (x.hitting) h++; if (x.pitching) p++; });
+      countsEl.textContent = "野手 " + h + "名 / 投手 " + p + "名";
+    }
     if (stampEl) stampEl.textContent = data.generated_at;
     return true;
   }
@@ -393,25 +357,29 @@ footer a{color:var(--accent)}
       var dates = {};
       players.forEach(function (p) { if (p.last && p.last.date) dates[p.last.date] = 1; });
       return loadSchedules(Object.keys(dates)).then(function (sched) {
-        var hitters = [], pitchers = [], recent = [];
-        players.forEach(function (p) {
-          var base = { id: p.id, name: p.name, team: p.team };
-          if (p.hitting) hitters.push({ id: p.id, name: p.name, team: p.team, stat: p.hitting });
-          if (p.pitching) pitchers.push({ id: p.id, name: p.name, team: p.team, stat: p.pitching });
+        var roster = players.map(function (p) {
+          var card = {
+            id: p.id, name: p.name, team: p.team,
+            hitting: p.hitting, pitching: p.pitching
+          };
           if (p.last) {
             var r = (sched[p.last.date] || {})[p.last.team_id] || {};
-            recent.push({
-              id: p.id, name: p.name, date: p.last.date,
-              opponent: teamJa(r.opponent || p.last.opponent || ""),
-              home: p.last.home, team_score: r.team_score, opp_score: r.opp_score,
-              result: r.result || "", line: gameLine(p.last.hitting, p.last.pitching)
-            });
+            card.date = p.last.date;
+            card.opponent = teamJa(r.opponent || p.last.opponent || "");
+            card.home = p.last.home;
+            card.team_score = r.team_score;
+            card.opp_score = r.opp_score;
+            card.result = r.result || "";
+            card.line = gameLine(p.last.hitting, p.last.pitching);
           }
+          return card;
         });
-        hitters.sort(function (a, b) { return num(b.stat.homeRuns) - num(a.stat.homeRuns); });
-        pitchers.sort(function (a, b) { return num(b.stat.strikeOuts) - num(a.stat.strikeOuts); });
-        recent.sort(function (a, b) { return (b.date || "") < (a.date || "") ? -1 : 1; });
-        return render({ hitters: hitters, pitchers: pitchers, recent: recent, generated_at: stamp() });
+        /* Most recent game first; players with no game log sort last. */
+        roster.sort(function (a, b) {
+          var x = a.date || "", y = b.date || "";
+          return x === y ? 0 : (x > y ? -1 : 1);
+        });
+        return render({ players: roster, generated_at: stamp() });
       });
     }).catch(function () { return false; });
   }
