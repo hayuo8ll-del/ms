@@ -640,6 +640,13 @@ button#bn-validate:disabled {
   border-left: 3px solid var(--text-dim);
 }
 
+/* 進捗表の工程別ブロック見出し行 */
+.bn-table tr.bn-stage-sep td {
+  border-top: 2px solid var(--line);
+  font-weight: 700;
+  background: var(--panel-2);
+}
+
 .bn-changeover-note {
   margin: 8px 2px 0;
   font-size: 12px;

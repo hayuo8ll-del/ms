@@ -21,6 +21,7 @@ from bottleneck_planner import (
     A_SHIFT_DEFERRAL_TAG,
     apply_actuals,
     compute_progress,
+    compute_stage_progress,
     plan_bottleneck,
     suggest_remedies,
     working_days_in_range,
@@ -44,6 +45,7 @@ from thm_ledger_import import (
     parse_ta1_hal_actuals,
     parse_thm_ledger,
     parse_thm_shortterm_actuals,
+    parse_thm_shortterm_daily_actuals,
 )
 
 app = FastAPI(title="生産計画自動立案API")
@@ -152,29 +154,40 @@ async def _build_bottleneck_plan(
     except Exception as exc:  # noqa: BLE001 - 壊れたファイル/非対応形式を一律400にする
         raise HTTPException(status_code=400, detail=f"台帳ファイルを読み込めませんでした: {exc}") from exc
 
-    # 実績: THM短期投入予定表(製番別MIL完成実績=赤字) → 需要控除
+    # 実績: THM短期投入予定表(赤字) → 製番別MIL完成実績は需要控除、TAL/MIL日次は工程別進捗
     thm_tal_total = 0.0
+    stage_actuals: dict[str, dict[date, float]] = {}
     if thm_plan_file is not None:
+        thm_bytes = await thm_plan_file.read()
         try:
-            thm_act = parse_thm_shortterm_actuals(io.BytesIO(await thm_plan_file.read()))
+            thm_act = parse_thm_shortterm_actuals(io.BytesIO(thm_bytes))
+            thm_daily = parse_thm_shortterm_daily_actuals(io.BytesIO(thm_bytes))
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=400, detail=f"THM短期投入予定表を読み込めませんでした: {exc}") from exc
         for seiban, per_stage in thm_act.items():
             if per_stage.get("MIL"):
                 actuals[seiban] = actuals.get(seiban, 0.0) + per_stage["MIL"]
             thm_tal_total += per_stage.get("TAL", 0.0)
+        for stage_id in ("TAL", "MIL"):
+            in_window = {d: q for d, q in thm_daily.get(stage_id, {}).items() if plan_start <= d <= plan_end}
+            if in_window:
+                stage_actuals[stage_id] = in_window
 
-    # 実績: TA1_投入計画(HAL日別実績=赤字) → 進捗の実績ライン
+    # 実績: TA1_投入計画(HAL日別実績=赤字) → ライン進捗 + 工程別進捗のHAL行
     hal_actual_days = 0
     if ta1_file is not None:
         try:
             hal_act = parse_ta1_hal_actuals(io.BytesIO(await ta1_file.read()), year=plan_start.year)
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=400, detail=f"TA1_投入計画を読み込めませんでした: {exc}") from exc
+        hal_window: dict[date, float] = {}
         for d, q in hal_act.items():
             if plan_start <= d <= plan_end:
                 daily_actuals[d] = daily_actuals.get(d, 0.0) + q
+                hal_window[d] = hal_window.get(d, 0.0) + q
                 hal_actual_days += 1
+        if hal_window:
+            stage_actuals["HAL"] = hal_window
 
     actual_warnings: list[str] = []
     actuals_total = 0.0
@@ -206,6 +219,7 @@ async def _build_bottleneck_plan(
         )
 
     result.progress = compute_progress(result, daily_actuals or None)
+    result.stage_progress = compute_stage_progress(result, stage_actuals or None)
     result.remedies = suggest_remedies(
         demands, working_days, cfg.line_daily_capacities, plan_kwargs, result
     )
@@ -281,6 +295,15 @@ async def bottleneck_plan(
             for p in result.progress
         ],
         "has_actuals": any(p.actual is not None for p in result.progress),
+        "stage_progress": {
+            stage_id: [
+                {"day": p.day.isoformat(), "plan": p.plan, "plan_cum": p.plan_cum,
+                 "actual": p.actual, "actual_cum": p.actual_cum,
+                 "diff": p.diff, "progress_cum": p.progress_cum}
+                for p in rows
+            ]
+            for stage_id, rows in result.stage_progress.items()
+        },
         "campaigns": [
             {"stage_id": c.stage_id, "product": c.product,
              "start_day": c.start_day.isoformat(), "end_day": c.end_day.isoformat(),

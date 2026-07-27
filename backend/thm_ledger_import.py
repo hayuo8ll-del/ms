@@ -437,3 +437,45 @@ def parse_ta1_hal_actuals(
             if isinstance(v, (int, float)) and _is_red_font(cell):
                 hal[d] = hal.get(d, 0.0) + float(v)
     return hal
+
+
+def parse_thm_shortterm_daily_actuals(
+    file_obj: BinaryIO, sheet_name: str = "TA1"
+) -> dict[str, dict[date, float]]:
+    """THM短期投入予定表から、TAL(投入)/MIL(完成)の**実績(赤字)を日別**に読む。
+
+    日付ヘッダー(行3)は平日が2列(A勤/B勤)、土日が1列になっているため、日付が入って
+    いない列は**直前の日付**に属するものとして前方補完(forward-fill)して日別に合算する。
+    製番別合計の `parse_thm_shortterm_actuals` に対し、こちらは工程別進捗
+    (計画 vs 実績)用の日次系列。
+    戻り値: {"TAL": {日付: 実績}, "MIL": {日付: 実績}}。
+    """
+    wb = load_workbook(file_obj, data_only=True)
+    ws = wb[sheet_name] if sheet_name in wb.sheetnames else wb[wb.sheetnames[0]]
+
+    col_date: dict[int, date] = {}
+    current: date | None = None
+    for c in range(7, ws.max_column + 1):
+        d = _as_date(ws.cell(row=3, column=c).value)
+        if d is not None:
+            current = d
+        if current is not None:
+            col_date[c] = current
+
+    tal: dict[date, float] = {}
+    mil: dict[date, float] = {}
+    r = 5
+    while r <= ws.max_row:
+        role = ws.cell(row=r, column=6).value
+        seiban = ws.cell(row=r, column=3).value
+        if role == "Line-In" and seiban not in (None, "", "-"):
+            for c, d in col_date.items():
+                for row_i, acc in ((r, tal), (r + 1, mil)):
+                    cell = ws.cell(row=row_i, column=c)
+                    v = cell.value
+                    if isinstance(v, (int, float)) and v and _is_red_font(cell):
+                        acc[d] = acc.get(d, 0.0) + float(v)
+            r += 2
+        else:
+            r += 1
+    return {"TAL": tal, "MIL": mil}

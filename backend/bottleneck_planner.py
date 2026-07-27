@@ -202,6 +202,7 @@ class BottleneckPlanResult:
     stage_allocation: list[StageDailyCell] = field(default_factory=list)  # 全工程(ANT/TAL/HAL/MIL)の日次
     mil_lots: list[MilLotCompletion] = field(default_factory=list)  # MILの製番別完成日
     progress: list[ProgressRow] = field(default_factory=list)  # 計画/実績/差/累計の進捗
+    stage_progress: dict = field(default_factory=dict)  # 工程別の進捗 {工程: [ProgressRow]}
     remedies: list["Remedy"] = field(default_factory=list)  # 納期遅れの解消提案
     campaigns: list["Campaign"] = field(default_factory=list)  # 工程×機種の段取り(切替)キャンペーン
     warnings: list[str] = field(default_factory=list)
@@ -305,6 +306,51 @@ def compute_progress(
         for row in rows:
             row.actual = row.actual_cum = row.diff = row.progress_cum = None
     return rows
+
+
+def compute_stage_progress(
+    result: "BottleneckPlanResult",
+    actuals_by_stage: dict[str, dict[date, float]] | None = None,
+) -> dict[str, list[ProgressRow]]:
+    """**工程別**の進捗(計画/実績/差/累計)を稼働日ごとに計算する。
+
+    計画は `stage_allocation` の工程×日合計、実績は `actuals_by_stage`
+    ({工程: {日付: 実績}})。TAL/MILはTHM短期投入予定表の赤字、HALはTA1_投入計画の赤字
+    を想定。実績の無い工程も計画累計だけの行を返す(工程別の予定管理に使える)。
+    戻り値: {工程ID: [ProgressRow]}。
+    """
+    actuals_by_stage = actuals_by_stage or {}
+    plan_by_stage: dict[str, dict[date, float]] = {}
+    for c in result.stage_allocation:
+        s = plan_by_stage.setdefault(c.stage_id, {})
+        s[c.day] = s.get(c.day, 0.0) + c.quantity
+
+    out: dict[str, list[ProgressRow]] = {}
+    for stage_id in list(plan_by_stage) + [s for s in actuals_by_stage if s not in plan_by_stage]:
+        plan_daily = plan_by_stage.get(stage_id, {})
+        daily_actuals = actuals_by_stage.get(stage_id)
+        rows: list[ProgressRow] = []
+        plan_cum = actual_cum = progress_cum = 0.0
+        saw_actual = False
+        for day in result.working_days:
+            plan = plan_daily.get(day, 0.0)
+            plan_cum += plan
+            row = ProgressRow(day=day, plan=plan, plan_cum=plan_cum)
+            if daily_actuals is not None and day in daily_actuals:
+                saw_actual = True
+                actual = daily_actuals[day]
+                actual_cum += actual
+                progress_cum += actual - plan
+                row.actual = actual
+                row.actual_cum = actual_cum
+                row.diff = actual - plan
+                row.progress_cum = progress_cum
+            rows.append(row)
+        if not saw_actual:
+            for row in rows:
+                row.actual = row.actual_cum = row.diff = row.progress_cum = None
+        out[stage_id] = rows
+    return out
 
 
 def working_days_in_range(start: date, end: date, holidays: set[date] | None = None) -> list[date]:

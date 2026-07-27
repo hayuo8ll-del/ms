@@ -615,7 +615,39 @@ function renderBnProgress(data) {
       metricRow("差", (p) => p.diff, { redNeg: true }) +
       metricRow("進捗(累計)", (p) => p.progress_cum, { redNeg: true });
   }
-  bnProgressEl.innerHTML = head + `<tbody>${body}</tbody>`;
+
+  // 工程別の進捗(TAL/MIL=THM短期の赤字, HAL=TA1の赤字)。実績のある工程のみ出す。
+  const sp = data.stage_progress || {};
+  const stageOrder = (data.stage_order || []).filter(
+    (s) => (sp[s] || []).some((p) => p.actual != null)
+  );
+  for (const stage of stageOrder) {
+    const srows = sp[stage];
+    const sMetric = (label, pick, opts = {}) =>
+      `<tr><td class="bn-c-metric">${label}</td>` +
+      srows
+        .map((p) => {
+          const v = pick(p);
+          const neg = opts.redNeg && v != null && v < 0;
+          return cell(v, neg ? "bn-judge-late" : "");
+        })
+        .join("") +
+      `</tr>`;
+    body +=
+      `<tr class="bn-stage-sep"><td class="bn-c-metric" style="color:${BN_STAGE_COLOR[stage] || "var(--text)"}">${stage}</td>` +
+      srows.map(() => "<td></td>").join("") +
+      `</tr>` +
+      sMetric(`${stage} 計画`, (p) => (p.plan ? p.plan : null)) +
+      sMetric(`${stage} 実績`, (p) => p.actual) +
+      sMetric(`${stage} 差`, (p) => p.diff, { redNeg: true }) +
+      sMetric(`${stage} 進捗(累計)`, (p) => p.progress_cum, { redNeg: true });
+  }
+
+  bnProgressEl.innerHTML =
+    head + `<tbody>${body}</tbody>` +
+    (stageOrder.length
+      ? `<p class="bn-changeover-note">工程別: TAL/MIL=THM短期投入予定表の赤字、HAL=TA1_投入計画の赤字を実績として表示。</p>`
+      : "");
 }
 
 function renderBnMatrix(data) {

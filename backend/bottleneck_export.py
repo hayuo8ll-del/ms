@@ -179,7 +179,22 @@ def _add_progress(wb: Workbook, result: BottleneckPlanResult) -> None:
             if p.progress_cum is not None and p.progress_cum < 0:
                 ws.cell(row=prog_row, column=2 + i).fill = _LATE_FILL
 
-    _set_widths(ws, [14] + [7] * len(days))
+    # 工程別の進捗(TAL/MIL=THM短期の赤字, HAL=TA1の赤字)。実績のある工程だけ出す。
+    for stage_id, rows in (result.stage_progress or {}).items():
+        if not any(p.actual is not None for p in rows):
+            continue
+        ws.append([])
+        add_row(stage_id, [])
+        add_row(f"{stage_id} 計画", [p.plan or None for p in rows])
+        add_row(f"{stage_id} 実績", [p.actual for p in rows])
+        add_row(f"{stage_id} 差(実績-計画)", [p.diff for p in rows])
+        add_row(f"{stage_id} 進捗(累計)", [p.progress_cum for p in rows])
+        prog_row = ws.max_row
+        for i, p in enumerate(rows):
+            if p.progress_cum is not None and p.progress_cum < 0:
+                ws.cell(row=prog_row, column=2 + i).fill = _LATE_FILL
+
+    _set_widths(ws, [18] + [7] * len(days))
     ws.freeze_panes = "B2"
 
 

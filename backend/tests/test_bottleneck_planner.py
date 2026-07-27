@@ -14,6 +14,7 @@ from bottleneck_planner import (  # noqa: E402
     apply_equipment_stops,
     choose_shift_mode,
     compute_progress,
+    compute_stage_progress,
     derive_campaigns,
     expand_to_stages,
     mil_completion_by_order,
@@ -558,3 +559,29 @@ def test_plan_bottleneck_populates_campaigns():
     result = plan_bottleneck(demands, days, CAPS, stage_flows=flows, product_caps_by_mode=caps)
     assert result.campaigns
     assert {c.stage_id for c in result.campaigns} <= {"ANT", "HAL", "MIL"}
+
+
+def test_compute_stage_progress_per_stage_plan_vs_actual():
+    """工程別進捗: 各工程の計画(stage_allocation)と実績を突き合わせ、差・進捗累計を出す。"""
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    flows = [StageFlowConfig("TAL", -1), StageFlowConfig("HAL", 0), StageFlowConfig("MIL", 1)]
+    caps = {"16h": {"P": 90000}, "22h": {"P": 120000}}
+    demands = [DemandItem("P", 180000, date(2026, 7, 31), order_id="S1")]
+    result = plan_bottleneck(demands, days, CAPS, stage_flows=flows, product_caps_by_mode=caps)
+
+    hal_days = sorted({c.day for c in result.stage_allocation if c.stage_id == "HAL"})
+    d0 = hal_days[0]
+    hal_plan = sum(c.quantity for c in result.stage_allocation if c.stage_id == "HAL" and c.day == d0)
+
+    # HALだけ実績を与える(計画より1万台少ない日を1日)
+    sp = compute_stage_progress(result, {"HAL": {d0: hal_plan - 10000}})
+    assert set(sp) >= {"TAL", "HAL", "MIL"}
+
+    hal_rows = {r.day: r for r in sp["HAL"]}
+    assert hal_rows[d0].plan == hal_plan
+    assert hal_rows[d0].actual == hal_plan - 10000
+    assert hal_rows[d0].diff == -10000
+    assert hal_rows[d0].progress_cum == -10000
+    # 実績を与えていない工程は計画累計のみ(実績系はNone)
+    assert all(r.actual is None for r in sp["TAL"])
+    assert sp["TAL"][-1].plan_cum > 0

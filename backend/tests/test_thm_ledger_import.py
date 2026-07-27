@@ -19,6 +19,7 @@ from thm_ledger_import import (  # noqa: E402
     parse_ta1_hal_actuals,
     parse_thm_ledger,
     parse_thm_shortterm_actuals,
+    parse_thm_shortterm_daily_actuals,
     resolve_product,
 )
 
@@ -319,3 +320,32 @@ def test_parse_ta1_hal_actuals_reads_red_hal_with_month_rollover():
     assert hal[date(2026, 12, 31)] == 200.0
     assert hal[date(2027, 1, 1)] == 300.0  # 年跨ぎ
     assert date(2027, 1, 2) not in hal      # 黒字は実績でない
+
+
+def test_parse_thm_shortterm_daily_actuals_forward_fills_date_columns():
+    """日付が入っていない列(平日のB勤側)は直前の日付に合算する(前方補完)。"""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    red = Font(color="FFFF0000")
+    black = Font(color="FF000000")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "TA1"
+    # 行3: c7=7/1, c8は空(=7/1のB勤), c9=7/2
+    ws.cell(row=3, column=7, value=date(2026, 7, 1))
+    ws.cell(row=3, column=9, value=date(2026, 7, 2))
+    ws.cell(row=5, column=3, value="S1")
+    ws.cell(row=5, column=6, value="Line-In")
+    ws.cell(row=5, column=7, value=100).font = red   # TAL 7/1
+    ws.cell(row=5, column=8, value=50).font = red    # TAL 7/1(B勤・前方補完)
+    ws.cell(row=5, column=9, value=70).font = black  # 予定→無視
+    ws.cell(row=6, column=7, value=200).font = red   # MIL 7/1
+    ws.cell(row=6, column=9, value=300).font = red   # MIL 7/2
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    daily = parse_thm_shortterm_daily_actuals(buf)
+    assert daily["TAL"] == {date(2026, 7, 1): 150.0}          # 100+50、黒字は除外
+    assert daily["MIL"] == {date(2026, 7, 1): 200.0, date(2026, 7, 2): 300.0}

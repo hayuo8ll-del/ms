@@ -134,6 +134,10 @@ directly by FastAPI's `StaticFiles` mount.
   `result.progress`): per-working-day 計画(bottleneck daily total)/計画累計, and — when
   daily actuals are given — 実績/実績累計/差(実績−計画)/進捗(Σ差), matching the 現場 THM 短期
   投入予定表 Sheet1 (計画/実績/差/進捗). Days with no actual leave the actual columns blank.
+  `compute_stage_progress(result, actuals_by_stage)` → `result.stage_progress`
+  (`{工程: [ProgressRow]}`) does the same **per stage**: plan from `stage_allocation`, actuals
+  from TAL/MIL (THM短期の赤字) and HAL (TA1の赤字) — the 工程別進捗管理 view. Stages with no
+  actual keep plan-cumulative only.
   **Remedies** (`suggest_remedies(demands, working_days, shift_capacities, plan_kwargs,
   base_result, high_mode="22h")` → `Remedy`s on `result.remedies`): decision support when
   lots miss due dates — how many lates clear if the whole horizon runs 22H
@@ -189,7 +193,10 @@ directly by FastAPI's `StaticFiles` mount.
   `parse_thm_shortterm_actuals` reads the **THM短期投入予定表** (sheet `TA1`; per-製番
   Line-In=TAL / Completion=MIL row pairs) and sums each row's **red-font** date cells into
   `{製番: {"TAL", "MIL"}}` — the MIL total is the per-製番 完成実績 (→ `apply_actuals` demand
-  reduction). `parse_ta1_hal_actuals(file, year)` reads the **TA1_投入計画** (sheet `生産計画`;
+  reduction). `parse_thm_shortterm_daily_actuals` reads the same file **per day** (date header row 3;
+  weekdays span 2 columns A勤/B勤 and weekends 1, so header-less columns are forward-filled to
+  the preceding date) into `{"TAL": {date: qty}, "MIL": {date: qty}}` — the per-stage 進捗 lines.
+  `parse_ta1_hal_actuals(file, year)` reads the **TA1_投入計画** (sheet `生産計画`;
   per-機種 blocks, col1 stage labels, row1 月 carried forward + row2 日) and sums the **HAL**
   rows' red-font cells into `{date: HAL実績}` (→ the 進捗 daily 実績 line). Both are robust to
   layout (row-role / stage-label + red-font), no fixed date-column mapping for THM短期.
@@ -230,7 +237,8 @@ directly by FastAPI's `StaticFiles` mount.
   columns = working days — the TA1_生産計画 form) and `製番別MIL` (one row per 製番/出荷ロット
   with MIL completion day, 出荷日(納期), 完成目標(=出荷日−buffer), on-time verdict — the THM
   短期投入予定表 form; MIL cells tinted orange, late lots red), `進捗` (計画/計画累計/実績/実績累計/差/進捗 per working day,
-  negative-progress cells red — the Sheet1 form), `段取り` (one row per campaign: 工程/機種/
+  negative-progress cells red — the Sheet1 form; followed by per-stage 計画/実績/差/進捗 blocks
+  for stages that have actuals), `段取り` (one row per campaign: 工程/機種/
   開始日/終了日/日数/数量/区分, changeover rows tinted red — from `result.campaigns`), `提案`
   (`suggest_remedies` output when lots are late), plus サマリー and 警告.
   `export_bottleneck_workbook(result, demands, stage_order)`.
@@ -292,7 +300,8 @@ directly by FastAPI's `StaticFiles` mount.
   plan window) uploads reflect real actuals when supplied;
   `POST /api/bottleneck/plan` (same multipart inputs,
   returns the plan as JSON — shift mode, per-stage×day allocation, per-製番 MIL lots,
-  per-day 進捗 (`progress` + `has_actuals`), `campaigns` (段取り/切替 per stage), 納期遅れ解消の
+  per-day 進捗 (`progress` + `has_actuals`) and per-stage 進捗 (`stage_progress`),
+  `campaigns` (段取り/切替 per stage), 納期遅れ解消の
   `remedies`, warnings, summary (with 切替回数 / A勤限定切替の翌朝繰下げ counts in `extra`) —
   for on-screen rendering; shares `_build_bottleneck_plan` with the export route),
   `POST /api/bottleneck/validate` (multipart THM 台帳 + FeliCa 実計画; runs
@@ -354,7 +363,9 @@ directly by FastAPI's `StaticFiles` mount.
   advisory, and end-to-end reduced-capacity days in `plan_bottleneck`), progress
   (`compute_progress`: plan-cumulative only without actuals; 差/進捗 累計 with daily actuals),
   remedies (`suggest_remedies`: full-22H escalation, min-22H-days search, all-on-time
-  `ok`; `high_mode_days` raising only the leading days' capacity), and campaigns/changeovers
+  `ok`; `high_mode_days` raising only the leading days' capacity), per-stage progress
+  (`compute_stage_progress`: plan vs actual per stage, stages without actuals keep plan-only),
+  and campaigns/changeovers
   (`derive_campaigns`: consecutive-day grouping, gap → new campaign, `is_changeover` true only
   when the prior working day ran another 機種 on the stage; `plan_bottleneck` populates
   `result.campaigns`).
@@ -366,7 +377,8 @@ directly by FastAPI's `StaticFiles` mount.
   parsing (duplicate summing, missing-sheet default), 日次実績 parsing (per-day summing across
   stages, missing-sheet default), THM短期投入予定表 実績 (`parse_thm_shortterm_actuals`:
   per-製番 red-font TAL/MIL sums, black 予定 ignored) and TA1 HAL 実績
-  (`parse_ta1_hal_actuals`: red-font HAL per day with 月→年 rollover), 設備停止マスタ parsing (有効=Y
+  (`parse_ta1_hal_actuals`: red-font HAL per day with 月→年 rollover), per-day THM短期
+  (`parse_thm_shortterm_daily_actuals`: forward-filled A勤/B勤 columns, black 予定 ignored), 設備停止マスタ parsing (有効=Y
   filter, missing-sheet default), `load_bottleneck_planning` config reading,
   `save_bottleneck_calibration` (offset/A-shift write-back on a tmp config, other fields
   preserved), and `save_nonworking_days` (nonWorkingDays write-back, sorted, other fields kept).
@@ -414,7 +426,9 @@ directly by FastAPI's `StaticFiles` mount.
   for a 段取り替え/切替, grey for a 立上げ — with a per-stage 切替回数 summary line below, from
   `campaigns`), the **製番別MIL完成予定** table (出荷日(納期)/完成目標(=出荷日−buffer)/判定
   columns, late-vs-完成目標 lots highlighted) and a **進捗** table (計画/計画累計/実績/実績累計/差/進捗 per day, negative in
-  red; shown when the ledger has a 「日次実績」 sheet, else plan-cumulative only) and a
+  red; shown when actuals exist, else plan-cumulative only; below the line total it also renders
+  **per-stage blocks** (TAL/HAL/MIL 計画・実績・差・進捗累計, stage-coloured headers) from
+  `stage_progress`) and a
   **納期遅れ 解消の提案** panel (`suggest_remedies`, shown only when lots are late), and a
   **実計画(FeliCa)との照合** panel — the **「実計画と照合(精度検証)」** button uploads a FeliCa
   workbook (with the stored ledger) to `/api/bottleneck/validate` and shows current vs
@@ -434,7 +448,8 @@ directly by FastAPI's `StaticFiles` mount.
   **「実績取込:TA1(HAL)」** (`#bn-ta1-actuals`) buttons that store a THM短期投入予定表 /
   TA1_投入計画 file (`lastThmPlanFile`/`lastTa1File`, sent with every plan/export POST via
   `appendActualsFiles`) and re-plan so the red-font 実績 reduce demand (MIL) / fill the 進捗
-  実績 line (HAL). The discrete-scheduler view and this bottleneck view coexist on
+  実績 line (HAL). The THM短期 file drives both the per-製番 MIL demand reduction and the
+  per-day TAL/MIL 工程別進捗 lines. The discrete-scheduler view and this bottleneck view coexist on
   the page. The
   date×shift matrix (`renderShiftMatrix`)
   fetches the active shift pattern from `GET /api/equipment`
