@@ -366,6 +366,8 @@ async def validate_bottleneck_plan(
         raise HTTPException(status_code=422, detail="FeliCa実計画から製番が読み取れませんでした。")
 
     working_days = result.working_days
+    # 立案側(_build_bottleneck_plan)と同じ条件で較正する。号機マスタ・非稼働日を
+    # 落とすと「現行config」として提示する誤差が実際の計画と別物になる。
     plan_kwargs = dict(
         stage_flows=cfg.stage_flows,
         a_shift_only_switch=True,
@@ -373,6 +375,8 @@ async def validate_bottleneck_plan(
         product_caps_by_mode=cfg.product_daily_caps_by_mode,
         bottleneck_stage=cfg.bottleneck_stage,
         machine_counts=cfg.machine_counts,
+        holidays={d for d in cfg.non_working_days if working_days and working_days[0] <= d <= working_days[-1]} or None,
+        machines_by_mode=cfg.machines_by_mode or None,
     )
     cal = calibrate(demands, working_days, cfg.line_daily_capacities, plan_kwargs, felica)
     # 機種別 日次形状(重複窓): calibrate は aliases を通さないので base に直接1回かける

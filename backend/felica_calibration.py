@@ -398,8 +398,8 @@ def calibrate(
     shift_capacities: dict[str, float],
     plan_kwargs: dict,
     felica: dict[str, FelicaLot],
-    ant_range=(-5, -4, -3, -2, -1, 0),
-    tal_range=(-5, -4, -3, -2, -1, 0),
+    ant_range=(-8, -7, -6, -5, -4, -3, -2, -1, 0),
+    tal_range=(-8, -7, -6, -5, -4, -3, -2, -1, 0),
     mil_range=(0, 1, 2, 3, 4, 5),
     a_fractions=(0.3, 0.4, 0.5, 0.6, 0.7),
 ) -> CalibrationResult:

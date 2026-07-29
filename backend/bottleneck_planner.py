@@ -1188,6 +1188,30 @@ def plan_bottleneck(
     空きで決まる)。
     """
     pre_warnings: list[str] = []
+
+    # 号機マスタがあるときは、機種別キャパを「その機種が使えるボトルネック号機の能力
+    # 合計」で上から抑える。CAP表の 機種別キャパ 列が号機の実態より大きいままだと、
+    # 実際には出せない日産を前提にスラック(所要日数)を見積もってしまい、その機種の
+    # 着手が遅れる。逆に列のほうが小さい場合(人員などの追加制約)はその値を尊重する。
+    cap_shortfalls: dict[str, dict[str, tuple[float, float]]] = {}
+    if machines_by_mode and product_caps_by_mode:
+        clamped: dict[str, dict[str, float]] = {}
+        for mode, mode_caps in product_caps_by_mode.items():
+            stage_machines = [
+                m for m in machines_by_mode.get(mode, []) if m.stage_id == bottleneck_stage
+            ]
+            if not stage_machines:
+                clamped[mode] = dict(mode_caps)
+                continue
+            new_caps: dict[str, float] = {}
+            for product, stated in mode_caps.items():
+                usable = sum(m.daily_capacity for m in stage_machines if m.can_run(product))
+                new_caps[product] = min(stated, usable) if usable else stated
+                if usable and usable + 1e-6 < stated:
+                    cap_shortfalls.setdefault(mode, {})[product] = (stated, usable)
+            clamped[mode] = new_caps
+        product_caps_by_mode = clamped
+
     if product_caps_by_mode:
         producible = {
             product
@@ -1263,27 +1287,18 @@ def plan_bottleneck(
         if high_pcaps:
             pcaps_by_day = {d: high_pcaps for d in high_days}
 
-    # 号機マスタと機種別キャパの整合チェック。ボトルネック工程の号機を足しても
-    # 機種別キャパに届かない機種は、表に載っていない号機がある(CAP表の注記に
-    # 「HAL#1/HAL#2優先で生産中」とある機種など)。黙って少ない能力で組むと
-    # その機種だけ後ろへずれるので、数量を挙げて知らせる。
-    bottleneck_machines = [
-        m for m in (machines_by_mode or {}).get(shift_mode, []) if m.stage_id == bottleneck_stage
-    ]
-    if bottleneck_machines:
-        mode_caps = (product_caps_by_mode or {}).get(shift_mode, {})
-        for product in sorted({d.product for d in demands}):
-            stated = mode_caps.get(product)
-            if not stated:
-                continue
-            usable = sum(m.daily_capacity for m in bottleneck_machines if m.can_run(product))
-            if usable + 1e-6 < stated:
-                result.warnings.append(
-                    f"{product}: 機種別キャパ {stated:,.0f}/日 に対し、号機マスタで"
-                    f"{bottleneck_stage}に使える号機の合計は {usable:,.0f}/日 しかありません"
-                    f"(不足 {stated - usable:,.0f})。設備表に載っていない号機があるはずなので"
-                    f"確認してください。この機種はこのままだと計画が後ろへずれます。"
-                )
+    # 機種別キャパを号機能力まで抑えた件は、実際に選ばれたモードのぶんだけ知らせる
+    demanded = {d.product for d in demands}
+    for product, (stated, usable) in sorted(cap_shortfalls.get(shift_mode, {}).items()):
+        if product not in demanded:
+            continue
+        result.warnings.append(
+            f"{product}: CAP表の機種別キャパ {stated:,.0f}/日({shift_mode})は、稼働号機で"
+            f"{bottleneck_stage}に使える能力 {usable:,.0f}/日 を超えています"
+            f"(差 {stated - usable:,.0f})。出せる {usable:,.0f}/日 で計画しました。"
+            f"機種別キャパ列か、機種×号機の可否(○/×)のどちらかが実態と合っていないので"
+            f"確認してください。"
+        )
 
     allocation, completion, warnings = allocate_bottleneck(
         demands,

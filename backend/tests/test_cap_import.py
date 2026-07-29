@@ -133,3 +133,26 @@ def test_parse_recipe_codes_maps_stage_recipe_to_product():
     codes = parse_recipe_codes(_cap_workbook(BLOCKS))
     assert codes["A02F"] == "さそり金融"
     assert codes["982F"] == "Lite-S(Mies)"
+
+
+def test_only_machines_filters_to_the_operating_set():
+    """CAP表には稼働していない号機やモードで食い違うラベルの列が残っているので絞れる。"""
+    master = parse_machine_master(_cap_workbook(BLOCKS), only_machines={"HAL#7", "MIL#3"})
+    assert {m.machine_id for m in master["22h"]} == {"HAL#7", "MIL#3"}
+    # 絞っても能力・可否は変わらない
+    hal7 = next(m for m in master["22h"] if m.machine_id == "HAL#7")
+    assert hal7.daily_capacity == 30000
+    assert hal7.eligibility == {"さそり金融": "○", "Lite-S(Mies)": "○"}
+
+
+def test_active_machines_default_covers_the_real_line():
+    """既定の稼働号機一覧(TAL#2/#3, HAL#5-#9, MIL#3/#5/#6/#7)。"""
+    from cap_import import ACTIVE_MACHINES
+
+    assert ACTIVE_MACHINES == frozenset({
+        "TAL#2", "TAL#3",
+        "HAL#5", "HAL#6", "HAL#7", "HAL#8", "HAL#9",
+        "MIL#3", "MIL#5", "MIL#6", "MIL#7",
+    })
+    # ANT号機は持たない(工程展開のリードタイムだけで表現する)
+    assert not any(m.startswith("ANT") for m in ACTIVE_MACHINES)

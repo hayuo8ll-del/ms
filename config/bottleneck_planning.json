@@ -27,7 +27,7 @@
     }
   ],
   "machineCounts": {
-    "ANT": 2,
+    "ANT": 1,
     "TAL": 2,
     "HAL": 5,
     "MIL": 4
@@ -164,88 +164,6 @@
   "machinesByMode": {
     "22h": [
       {
-        "machineId": "ANT#1",
-        "stageId": "ANT",
-        "dailyCapacity": 86400.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "SuicaⅢ": "○",
-          "さそり交通": "○",
-          "さそり金融": "○"
-        }
-      },
-      {
-        "machineId": "ANT#2",
-        "stageId": "ANT",
-        "dailyCapacity": 144000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "MOT2": "○",
-          "SuicaⅢ": "○",
-          "さそり交通": "○",
-          "さそり金融": "○",
-          "部分リライト": "○"
-        }
-      },
-      {
-        "machineId": "TAL#3",
-        "stageId": "TAL",
-        "dailyCapacity": 80000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "MOT2": "○",
-          "SD-T1": "○",
-          "SuicaⅢ": "○",
-          "さそり交通": "○",
-          "さそり金融": "○"
-        }
-      },
-      {
-        "machineId": "TAL#2",
-        "stageId": "TAL",
-        "dailyCapacity": 80000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "MOT2": "○",
-          "SD-T1": "○",
-          "SD3": "○",
-          "SuicaⅢ": "○",
-          "さそり交通": "○",
-          "さそり金融": "○",
-          "部分リライト": "○"
-        }
-      },
-      {
-        "machineId": "HAL#7",
-        "stageId": "HAL",
-        "dailyCapacity": 30000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "SuicaⅢ": "○",
-          "さそり金融": "○"
-        }
-      },
-      {
-        "machineId": "HAL#9",
-        "stageId": "HAL",
-        "dailyCapacity": 30000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "△",
-          "SD3": "△",
-          "さそり交通": "○"
-        }
-      },
-      {
-        "machineId": "HAL#8",
-        "stageId": "HAL",
-        "dailyCapacity": 30000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "MOT2": "○",
-          "さそり交通": "○"
-        }
-      },
-      {
         "machineId": "HAL#5",
         "stageId": "HAL",
         "dailyCapacity": 30000.0,
@@ -270,22 +188,42 @@
         }
       },
       {
+        "machineId": "HAL#7",
+        "stageId": "HAL",
+        "dailyCapacity": 30000.0,
+        "eligibility": {
+          "Lite-S(Mies)": "○",
+          "SuicaⅢ": "○",
+          "さそり金融": "○"
+        }
+      },
+      {
+        "machineId": "HAL#8",
+        "stageId": "HAL",
+        "dailyCapacity": 30000.0,
+        "eligibility": {
+          "Lite-S(Mies)": "○",
+          "MOT2": "○",
+          "さそり交通": "○"
+        }
+      },
+      {
+        "machineId": "HAL#9",
+        "stageId": "HAL",
+        "dailyCapacity": 30000.0,
+        "eligibility": {
+          "Lite-S(Mies)": "△",
+          "SD3": "△",
+          "さそり交通": "○"
+        }
+      },
+      {
         "machineId": "MIL#3",
         "stageId": "MIL",
         "dailyCapacity": 42240.0,
         "eligibility": {
           "Lite-S(Mies)": "○",
           "SuicaⅢ": "○",
-          "さそり交通": "○",
-          "さそり金融": "○"
-        }
-      },
-      {
-        "machineId": "MIL#7",
-        "stageId": "MIL",
-        "dailyCapacity": 42240.0,
-        "eligibility": {
-          "MOT2": "○",
           "さそり交通": "○",
           "さそり金融": "○"
         }
@@ -308,6 +246,44 @@
         "stageId": "MIL",
         "dailyCapacity": 42240.0,
         "eligibility": {
+          "SD-T1": "○",
+          "SuicaⅢ": "○",
+          "さそり交通": "○",
+          "さそり金融": "○"
+        }
+      },
+      {
+        "machineId": "MIL#7",
+        "stageId": "MIL",
+        "dailyCapacity": 42240.0,
+        "eligibility": {
+          "MOT2": "○",
+          "さそり交通": "○",
+          "さそり金融": "○"
+        }
+      },
+      {
+        "machineId": "TAL#2",
+        "stageId": "TAL",
+        "dailyCapacity": 80000.0,
+        "eligibility": {
+          "Lite-S(Mies)": "○",
+          "MOT2": "○",
+          "SD-T1": "○",
+          "SD3": "○",
+          "SuicaⅢ": "○",
+          "さそり交通": "○",
+          "さそり金融": "○",
+          "部分リライト": "○"
+        }
+      },
+      {
+        "machineId": "TAL#3",
+        "stageId": "TAL",
+        "dailyCapacity": 80000.0,
+        "eligibility": {
+          "Lite-S(Mies)": "○",
+          "MOT2": "○",
           "SD-T1": "○",
           "SuicaⅢ": "○",
           "さそり交通": "○",
@@ -317,88 +293,6 @@
     ],
     "16h": [
       {
-        "machineId": "TAL#1",
-        "stageId": "TAL",
-        "dailyCapacity": 108000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "SuicaⅢ": "○",
-          "さそり交通": "○",
-          "さそり金融": "○"
-        }
-      },
-      {
-        "machineId": "ANT#2",
-        "stageId": "ANT",
-        "dailyCapacity": 108000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "MOT2": "○",
-          "SuicaⅢ": "○",
-          "さそり交通": "○",
-          "さそり金融": "○",
-          "部分リライト": "○"
-        }
-      },
-      {
-        "machineId": "TAL#3",
-        "stageId": "TAL",
-        "dailyCapacity": 60000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "MOT2": "○",
-          "SD-T1": "○",
-          "SuicaⅢ": "○",
-          "さそり交通": "○",
-          "さそり金融": "○"
-        }
-      },
-      {
-        "machineId": "TAL#2",
-        "stageId": "TAL",
-        "dailyCapacity": 60000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "MOT2": "○",
-          "SD-T1": "○",
-          "SD3": "○",
-          "SuicaⅢ": "○",
-          "さそり交通": "○",
-          "さそり金融": "○",
-          "部分リライト": "○"
-        }
-      },
-      {
-        "machineId": "HAL#7",
-        "stageId": "HAL",
-        "dailyCapacity": 20000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "SuicaⅢ": "○",
-          "さそり金融": "○"
-        }
-      },
-      {
-        "machineId": "HAL#9",
-        "stageId": "HAL",
-        "dailyCapacity": 20000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "△",
-          "SD3": "△",
-          "さそり交通": "○"
-        }
-      },
-      {
-        "machineId": "HAL#8",
-        "stageId": "HAL",
-        "dailyCapacity": 20000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "MOT2": "○",
-          "さそり交通": "○"
-        }
-      },
-      {
         "machineId": "HAL#5",
         "stageId": "HAL",
         "dailyCapacity": 20000.0,
@@ -423,22 +317,42 @@
         }
       },
       {
+        "machineId": "HAL#7",
+        "stageId": "HAL",
+        "dailyCapacity": 20000.0,
+        "eligibility": {
+          "Lite-S(Mies)": "○",
+          "SuicaⅢ": "○",
+          "さそり金融": "○"
+        }
+      },
+      {
+        "machineId": "HAL#8",
+        "stageId": "HAL",
+        "dailyCapacity": 20000.0,
+        "eligibility": {
+          "Lite-S(Mies)": "○",
+          "MOT2": "○",
+          "さそり交通": "○"
+        }
+      },
+      {
+        "machineId": "HAL#9",
+        "stageId": "HAL",
+        "dailyCapacity": 20000.0,
+        "eligibility": {
+          "Lite-S(Mies)": "△",
+          "SD3": "△",
+          "さそり交通": "○"
+        }
+      },
+      {
         "machineId": "MIL#3",
         "stageId": "MIL",
         "dailyCapacity": 30720.0,
         "eligibility": {
           "Lite-S(Mies)": "○",
           "SuicaⅢ": "○",
-          "さそり交通": "○",
-          "さそり金融": "○"
-        }
-      },
-      {
-        "machineId": "MIL#7",
-        "stageId": "MIL",
-        "dailyCapacity": 30720.0,
-        "eligibility": {
-          "MOT2": "○",
           "さそり交通": "○",
           "さそり金融": "○"
         }
@@ -461,6 +375,44 @@
         "stageId": "MIL",
         "dailyCapacity": 30720.0,
         "eligibility": {
+          "SD-T1": "○",
+          "SuicaⅢ": "○",
+          "さそり交通": "○",
+          "さそり金融": "○"
+        }
+      },
+      {
+        "machineId": "MIL#7",
+        "stageId": "MIL",
+        "dailyCapacity": 30720.0,
+        "eligibility": {
+          "MOT2": "○",
+          "さそり交通": "○",
+          "さそり金融": "○"
+        }
+      },
+      {
+        "machineId": "TAL#2",
+        "stageId": "TAL",
+        "dailyCapacity": 60000.0,
+        "eligibility": {
+          "Lite-S(Mies)": "○",
+          "MOT2": "○",
+          "SD-T1": "○",
+          "SD3": "○",
+          "SuicaⅢ": "○",
+          "さそり交通": "○",
+          "さそり金融": "○",
+          "部分リライト": "○"
+        }
+      },
+      {
+        "machineId": "TAL#3",
+        "stageId": "TAL",
+        "dailyCapacity": 60000.0,
+        "eligibility": {
+          "Lite-S(Mies)": "○",
+          "MOT2": "○",
           "SD-T1": "○",
           "SuicaⅢ": "○",
           "さそり交通": "○",
@@ -470,88 +422,6 @@
     ],
     "11h": [
       {
-        "machineId": "TAL#1",
-        "stageId": "TAL",
-        "dailyCapacity": 72000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "SuicaⅢ": "○",
-          "さそり交通": "○",
-          "さそり金融": "○"
-        }
-      },
-      {
-        "machineId": "ANT#2",
-        "stageId": "ANT",
-        "dailyCapacity": 72000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "MOT2": "○",
-          "SuicaⅢ": "○",
-          "さそり交通": "○",
-          "さそり金融": "○",
-          "部分リライト": "○"
-        }
-      },
-      {
-        "machineId": "TAL#3",
-        "stageId": "TAL",
-        "dailyCapacity": 40000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "MOT2": "○",
-          "SD-T1": "○",
-          "SuicaⅢ": "○",
-          "さそり交通": "○",
-          "さそり金融": "○"
-        }
-      },
-      {
-        "machineId": "TAL#2",
-        "stageId": "TAL",
-        "dailyCapacity": 40000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "MOT2": "○",
-          "SD-T1": "○",
-          "SD3": "○",
-          "SuicaⅢ": "○",
-          "さそり交通": "○",
-          "さそり金融": "○",
-          "部分リライト": "○"
-        }
-      },
-      {
-        "machineId": "HAL#7",
-        "stageId": "HAL",
-        "dailyCapacity": 15000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "SuicaⅢ": "○",
-          "さそり金融": "○"
-        }
-      },
-      {
-        "machineId": "HAL#9",
-        "stageId": "HAL",
-        "dailyCapacity": 15000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "△",
-          "SD3": "△",
-          "さそり交通": "○"
-        }
-      },
-      {
-        "machineId": "HAL#8",
-        "stageId": "HAL",
-        "dailyCapacity": 15000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "MOT2": "○",
-          "さそり交通": "○"
-        }
-      },
-      {
         "machineId": "HAL#5",
         "stageId": "HAL",
         "dailyCapacity": 15000.0,
@@ -576,22 +446,42 @@
         }
       },
       {
+        "machineId": "HAL#7",
+        "stageId": "HAL",
+        "dailyCapacity": 15000.0,
+        "eligibility": {
+          "Lite-S(Mies)": "○",
+          "SuicaⅢ": "○",
+          "さそり金融": "○"
+        }
+      },
+      {
+        "machineId": "HAL#8",
+        "stageId": "HAL",
+        "dailyCapacity": 15000.0,
+        "eligibility": {
+          "Lite-S(Mies)": "○",
+          "MOT2": "○",
+          "さそり交通": "○"
+        }
+      },
+      {
+        "machineId": "HAL#9",
+        "stageId": "HAL",
+        "dailyCapacity": 15000.0,
+        "eligibility": {
+          "Lite-S(Mies)": "△",
+          "SD3": "△",
+          "さそり交通": "○"
+        }
+      },
+      {
         "machineId": "MIL#3",
         "stageId": "MIL",
         "dailyCapacity": 21120.0,
         "eligibility": {
           "Lite-S(Mies)": "○",
           "SuicaⅢ": "○",
-          "さそり交通": "○",
-          "さそり金融": "○"
-        }
-      },
-      {
-        "machineId": "MIL#7",
-        "stageId": "MIL",
-        "dailyCapacity": 21120.0,
-        "eligibility": {
-          "MOT2": "○",
           "さそり交通": "○",
           "さそり金融": "○"
         }
@@ -614,6 +504,44 @@
         "stageId": "MIL",
         "dailyCapacity": 21120.0,
         "eligibility": {
+          "SD-T1": "○",
+          "SuicaⅢ": "○",
+          "さそり交通": "○",
+          "さそり金融": "○"
+        }
+      },
+      {
+        "machineId": "MIL#7",
+        "stageId": "MIL",
+        "dailyCapacity": 21120.0,
+        "eligibility": {
+          "MOT2": "○",
+          "さそり交通": "○",
+          "さそり金融": "○"
+        }
+      },
+      {
+        "machineId": "TAL#2",
+        "stageId": "TAL",
+        "dailyCapacity": 40000.0,
+        "eligibility": {
+          "Lite-S(Mies)": "○",
+          "MOT2": "○",
+          "SD-T1": "○",
+          "SD3": "○",
+          "SuicaⅢ": "○",
+          "さそり交通": "○",
+          "さそり金融": "○",
+          "部分リライト": "○"
+        }
+      },
+      {
+        "machineId": "TAL#3",
+        "stageId": "TAL",
+        "dailyCapacity": 40000.0,
+        "eligibility": {
+          "Lite-S(Mies)": "○",
+          "MOT2": "○",
           "SD-T1": "○",
           "SuicaⅢ": "○",
           "さそり交通": "○",
@@ -623,88 +551,6 @@
     ],
     "8h": [
       {
-        "machineId": "TAL#1",
-        "stageId": "TAL",
-        "dailyCapacity": 54000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "SuicaⅢ": "○",
-          "さそり交通": "○",
-          "さそり金融": "○"
-        }
-      },
-      {
-        "machineId": "ANT#2",
-        "stageId": "ANT",
-        "dailyCapacity": 54000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "MOT2": "○",
-          "SuicaⅢ": "○",
-          "さそり交通": "○",
-          "さそり金融": "○",
-          "部分リライト": "○"
-        }
-      },
-      {
-        "machineId": "TAL#3",
-        "stageId": "TAL",
-        "dailyCapacity": 30000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "MOT2": "○",
-          "SD-T1": "○",
-          "SuicaⅢ": "○",
-          "さそり交通": "○",
-          "さそり金融": "○"
-        }
-      },
-      {
-        "machineId": "TAL#2",
-        "stageId": "TAL",
-        "dailyCapacity": 30000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "MOT2": "○",
-          "SD-T1": "○",
-          "SD3": "○",
-          "SuicaⅢ": "○",
-          "さそり交通": "○",
-          "さそり金融": "○",
-          "部分リライト": "○"
-        }
-      },
-      {
-        "machineId": "HAL#7",
-        "stageId": "HAL",
-        "dailyCapacity": 10000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "SuicaⅢ": "○",
-          "さそり金融": "○"
-        }
-      },
-      {
-        "machineId": "HAL#9",
-        "stageId": "HAL",
-        "dailyCapacity": 10000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "△",
-          "SD3": "△",
-          "さそり交通": "○"
-        }
-      },
-      {
-        "machineId": "HAL#8",
-        "stageId": "HAL",
-        "dailyCapacity": 10000.0,
-        "eligibility": {
-          "Lite-S(Mies)": "○",
-          "MOT2": "○",
-          "さそり交通": "○"
-        }
-      },
-      {
         "machineId": "HAL#5",
         "stageId": "HAL",
         "dailyCapacity": 10000.0,
@@ -729,22 +575,42 @@
         }
       },
       {
+        "machineId": "HAL#7",
+        "stageId": "HAL",
+        "dailyCapacity": 10000.0,
+        "eligibility": {
+          "Lite-S(Mies)": "○",
+          "SuicaⅢ": "○",
+          "さそり金融": "○"
+        }
+      },
+      {
+        "machineId": "HAL#8",
+        "stageId": "HAL",
+        "dailyCapacity": 10000.0,
+        "eligibility": {
+          "Lite-S(Mies)": "○",
+          "MOT2": "○",
+          "さそり交通": "○"
+        }
+      },
+      {
+        "machineId": "HAL#9",
+        "stageId": "HAL",
+        "dailyCapacity": 10000.0,
+        "eligibility": {
+          "Lite-S(Mies)": "△",
+          "SD3": "△",
+          "さそり交通": "○"
+        }
+      },
+      {
         "machineId": "MIL#3",
         "stageId": "MIL",
         "dailyCapacity": 15360.0,
         "eligibility": {
           "Lite-S(Mies)": "○",
           "SuicaⅢ": "○",
-          "さそり交通": "○",
-          "さそり金融": "○"
-        }
-      },
-      {
-        "machineId": "MIL#7",
-        "stageId": "MIL",
-        "dailyCapacity": 15360.0,
-        "eligibility": {
-          "MOT2": "○",
           "さそり交通": "○",
           "さそり金融": "○"
         }
@@ -772,7 +638,58 @@
           "さそり交通": "○",
           "さそり金融": "○"
         }
+      },
+      {
+        "machineId": "MIL#7",
+        "stageId": "MIL",
+        "dailyCapacity": 15360.0,
+        "eligibility": {
+          "MOT2": "○",
+          "さそり交通": "○",
+          "さそり金融": "○"
+        }
+      },
+      {
+        "machineId": "TAL#2",
+        "stageId": "TAL",
+        "dailyCapacity": 30000.0,
+        "eligibility": {
+          "Lite-S(Mies)": "○",
+          "MOT2": "○",
+          "SD-T1": "○",
+          "SD3": "○",
+          "SuicaⅢ": "○",
+          "さそり交通": "○",
+          "さそり金融": "○",
+          "部分リライト": "○"
+        }
+      },
+      {
+        "machineId": "TAL#3",
+        "stageId": "TAL",
+        "dailyCapacity": 30000.0,
+        "eligibility": {
+          "Lite-S(Mies)": "○",
+          "MOT2": "○",
+          "SD-T1": "○",
+          "SuicaⅢ": "○",
+          "さそり交通": "○",
+          "さそり金融": "○"
+        }
       }
     ]
-  }
+  },
+  "activeMachines": [
+    "HAL#5",
+    "HAL#6",
+    "HAL#7",
+    "HAL#8",
+    "HAL#9",
+    "MIL#3",
+    "MIL#5",
+    "MIL#6",
+    "MIL#7",
+    "TAL#2",
+    "TAL#3"
+  ]
 }

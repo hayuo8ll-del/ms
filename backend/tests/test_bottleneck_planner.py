@@ -841,16 +841,44 @@ def test_machine_master_defers_midday_takeover_past_a_shift():
     assert any("A勤" in w for w in warnings)
 
 
-def test_warns_when_machines_cannot_reach_the_stated_product_cap():
-    """機種別キャパに号機の合計が届かない=表に載っていない号機がある、を警告する。"""
+def test_product_cap_is_clamped_to_what_the_machines_can_deliver():
+    """CAP表の機種別キャパが稼働号機の能力を超えていたら、出せる値まで抑えて警告する。
+
+    抑えないと「実際には出せない日産」でスラック(所要日数)を見積もることになり、
+    その機種の着手が遅れる。
+    """
     days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
     flows = [StageFlowConfig("HAL", 0)]
     demands = [DemandItem("A", 300000, date(2026, 7, 31), order_id="L1")]
     result = plan_bottleneck(
         demands, days, CAPS, stage_flows=flows,
+        # 表は22Hで120,000/日と言うが、Aが使える号機は1台=30,000/日しかない
         product_caps_by_mode={"16h": {"A": 90000}, "22h": {"A": 120000}},
         machines_by_mode={"16h": [_hal("HAL#5", 20000, A="○")],
                           "22h": [_hal("HAL#5", 30000, A="○")]},
     )
-    warning = next(w for w in result.warnings if "号機マスタ" in w)
-    assert "機種別キャパ" in warning and "不足" in warning
+    warning = next(w for w in result.warnings if "CAP表の機種別キャパ" in w)
+    assert "90,000" in warning and "20,000" in warning  # 選ばれたモード(16h)の値
+
+    per_day: dict[date, float] = {}
+    for c in result.allocation:
+        per_day[c.day] = per_day.get(c.day, 0.0) + c.quantity
+    assert all(q <= 20000 + 1e-6 for q in per_day.values())  # 出せる能力で計画されている
+
+
+def test_product_cap_smaller_than_machines_is_respected():
+    """逆に表のキャパが号機より小さい場合(人員などの追加制約)はその値を尊重する。"""
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    flows = [StageFlowConfig("HAL", 0)]
+    demands = [DemandItem("A", 300000, date(2026, 7, 31), order_id="L1")]
+    result = plan_bottleneck(
+        demands, days, CAPS, stage_flows=flows,
+        product_caps_by_mode={"16h": {"A": 20000}, "22h": {"A": 20000}},
+        machines_by_mode={"16h": [_hal("HAL#5", 20000, A="○"), _hal("HAL#6", 20000, A="○")],
+                          "22h": [_hal("HAL#5", 30000, A="○"), _hal("HAL#6", 30000, A="○")]},
+    )
+    assert not any("CAP表の機種別キャパ" in w for w in result.warnings)
+    per_day: dict[date, float] = {}
+    for c in result.allocation:
+        per_day[c.day] = per_day.get(c.day, 0.0) + c.quantity
+    assert all(q <= 20000 + 1e-6 for q in per_day.values())

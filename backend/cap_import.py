@@ -34,6 +34,15 @@ _STAGE_PATTERNS = (
 _MODE_HEADER = re.compile(r"■\s*(\d+)\s*h")
 _OK, _COND = "○", "△"
 
+# 現在稼働している号機。CAP表には過去の号機や、シフトモードごとにラベルが食い違う列
+# (22Hだけ `ANT#1`、16H以下は `TAL#1`)が残っているため、ここで明示的に絞り込む。
+# ANT工程は号機を持たない(工程展開のリードタイムだけで表現する)。
+ACTIVE_MACHINES = frozenset({
+    "TAL#2", "TAL#3",
+    "HAL#5", "HAL#6", "HAL#7", "HAL#8", "HAL#9",
+    "MIL#3", "MIL#5", "MIL#6", "MIL#7",
+})
+
 
 @dataclass
 class MachineSlot:
@@ -83,8 +92,16 @@ def _mode_blocks(ws) -> list[tuple[str, int]]:
     return blocks
 
 
-def parse_machine_master(file_obj: BinaryIO) -> dict[str, list[MachineSlot]]:
-    """CAP表の `THM` シートから {シフトモード: [MachineSlot]} を読む。"""
+def parse_machine_master(
+    file_obj: BinaryIO,
+    only_machines: set[str] | None = None,
+) -> dict[str, list[MachineSlot]]:
+    """CAP表の `THM` シートから {シフトモード: [MachineSlot]} を読む。
+
+    `only_machines` を渡すと、その号機だけを採る。CAP表には過去の号機や、
+    シフトモードごとにラベルが食い違う列(22Hだけ `ANT#1`、16H以下は `TAL#1`)が
+    残っているため、**実際に稼働している号機**を明示して絞り込むために使う。
+    """
     ws = load_workbook(file_obj, data_only=True)["THM"]
     result: dict[str, list[MachineSlot]] = {}
 
@@ -93,8 +110,11 @@ def parse_machine_master(file_obj: BinaryIO) -> dict[str, list[MachineSlot]]:
         columns: dict[int, str] = {}
         for c in range(5, ws.max_column + 1):
             name = _norm(ws.cell(row=header_row, column=c).value)
-            if name and _stage_of(name):
-                columns[c] = name
+            if not name or not _stage_of(name):
+                continue
+            if only_machines is not None and name not in only_machines:
+                continue
+            columns[c] = name
         if not columns:
             continue
 
