@@ -283,3 +283,67 @@ def test_parse_felica_nonworking_days_reads_gray_weekday_cells():
 
     days = parse_felica_nonworking_days(buf)
     assert days == [date(2026, 7, 2)]  # 平日の灰のみ、週末は除外
+
+
+# --- 実データ照合で判明した計測バイアスの修正 (docs/検証_自動立案_vs_手動計画.md) ------
+
+
+def test_nearest_index_excludes_dates_outside_the_plan_window():
+    """計画期間外のFeliCaロットは照合の母数から外す(端に丸めるとMAEが頭打ちになる)。"""
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    flows = [StageFlowConfig("ANT", -1), StageFlowConfig("HAL", 0), StageFlowConfig("MIL", 1)]
+    demands = [DemandItem("さそり金融", 90000, date(2026, 7, 31), order_id="S1")]
+    caps = {"16h": {"さそり金融": 90000}, "22h": {"さそり金融": 120000}}
+    result = plan_bottleneck(demands, days, CAPS, stage_flows=flows, product_caps_by_mode=caps)
+
+    # FeliCa側は3か月前(4月)の計画 → 7月の計画とは突き合わせられない
+    buf = _felica_workbook([
+        ("S1", "RC-SA02F/5", 90000, {date(2026, 4, 1): 90000}, {date(2026, 4, 30): 90000}),
+    ])
+    rep = compare_plans(result, parse_felica_plan(buf), days)
+    assert rep.matched == 0
+    assert rep.completion_mae == 0.0
+
+
+def test_comparison_report_carries_denominators():
+    """MAEがFeliCaのどれだけを代表しているかを画面に出せるよう母数を返す。"""
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    # ANTを0にしておく(負オフセットだと初日の投入が期間外に出て投入日が拾えない)
+    flows = [StageFlowConfig("ANT", 0), StageFlowConfig("HAL", 0), StageFlowConfig("MIL", 1)]
+    demands = [DemandItem("さそり金融", 90000, date(2026, 7, 31), order_id="S1")]
+    caps = {"16h": {"さそり金融": 90000}, "22h": {"さそり金融": 120000}}
+    result = plan_bottleneck(demands, days, CAPS, stage_flows=flows, product_caps_by_mode=caps)
+    our_comp = {lot.order_id: lot.completion_day for lot in result.mil_lots}["S1"]
+
+    buf = _felica_workbook([
+        ("S1", "RC-SA02F/5", 90000, {days[0]: 90000}, {our_comp: 90000}),
+        # 当該期間に台数の無い製番(実データでは310行中255行がこれ)
+        ("S2", "RC-S105/5", 0, {}, {}),
+    ])
+    rep = compare_plans(result, parse_felica_plan(buf), days)
+    assert rep.felica_lots == 2
+    assert rep.felica_active_lots == 1  # 台数があるのは1製番だけ
+    assert rep.matched == 1
+    assert rep.start_matched == 1
+
+
+def test_with_offsets_preserves_per_product_overrides():
+    """較正のグリッド探索が機種別オフセット上書きを落とさない。
+
+    落とすと「現行config」として提示される誤差が、実際に立案される計画とは
+    別物の計画に対する誤差になる。
+    """
+    from felica_calibration import _with_offsets
+
+    flows = [
+        StageFlowConfig("ANT", -1),
+        StageFlowConfig("HAL", 0),
+        StageFlowConfig("MIL", 2, input_unit=1920, lead_offset_by_product={"Lite-S(Mies)": 5}),
+    ]
+    out = _with_offsets(flows, {"ANT": -2, "HAL": 0, "MIL": 1})
+    mil = next(f for f in out if f.stage_id == "MIL")
+    assert mil.lead_offset_days == 1  # グローバル値は差し替わる
+    assert mil.input_unit == 1920
+    assert mil.lead_offset_by_product == {"Lite-S(Mies)": 5}  # 機種別は引き継ぐ
+    assert mil.offset_for("Lite-S(Mies)") == 5
+    assert mil.offset_for("SuicaⅢ") == 1

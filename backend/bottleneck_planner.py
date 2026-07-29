@@ -196,7 +196,10 @@ class BottleneckPlanResult:
     shift_mode: str
     daily_capacity: float
     required_daily_rate: float
-    working_days: list[date]
+    working_days: list[date]  # ボトルネック(HAL)を配分する稼働日
+    # 工程展開の表示軸。上流(ANT/TAL)はHALより前に投入され下流(MIL)は後に完成するため、
+    # working_days の前後へオフセット分だけ伸ばした軸。機種×日マトリクスの列はこちらを使う。
+    stage_days: list[date] = field(default_factory=list)
     allocation: list[DailyCell] = field(default_factory=list)  # ボトルネック(HAL)の日次配分
     completion: dict[str, date] = field(default_factory=dict)  # 機種 -> 投入完了日
     stage_allocation: list[StageDailyCell] = field(default_factory=list)  # 全工程(ANT/TAL/HAL/MIL)の日次
@@ -365,12 +368,97 @@ def working_days_in_range(start: date, end: date, holidays: set[date] | None = N
     return days
 
 
+def extend_working_days(
+    working_days: list[date],
+    before: int,
+    after: int,
+    holidays: set[date] | None = None,
+) -> list[date]:
+    """稼働日リストの前後に稼働日を継ぎ足す(工程展開のはみ出しを受け止める軸)。
+
+    上流工程(ANT/TAL)はHALより前に投入されるため、計画期間の先頭数日ぶんの投入は
+    期間開始より前に出る。その分の列が無いと台数が黙って消えるので、表示・集計用に
+    前後へ稼働日を伸ばした軸を作る。
+    """
+    if not working_days:
+        return working_days
+    holidays = holidays or set()
+
+    def walk(start: date, step: int, count: int) -> list[date]:
+        out: list[date] = []
+        d = start
+        while len(out) < count:
+            d += timedelta(days=step)
+            if d.weekday() < 5 and d not in holidays:
+                out.append(d)
+        return out
+
+    head = sorted(walk(working_days[0], -1, max(0, before)))
+    tail = walk(working_days[-1], 1, max(0, after))
+    return head + list(working_days) + tail
+
+
+def stage_offset_span(stage_flows: list[StageFlowConfig]) -> tuple[int, int]:
+    """stage_flows のオフセットが必要とする (前に伸ばす日数, 後ろに伸ばす日数)。"""
+    offsets: list[int] = []
+    for flow in stage_flows or []:
+        offsets.append(flow.lead_offset_days)
+        offsets.extend((flow.lead_offset_by_product or {}).values())
+    if not offsets:
+        return 0, 0
+    return max(0, -min(offsets)), max(0, max(offsets))
+
+
+def required_daily_rate(
+    demands: list[DemandItem],
+    working_days: list[date],
+    max_rate: float | None = None,
+) -> float:
+    """納期を考慮した必要日次レートを出す。
+
+    「期間需要 ÷ 稼働日数」だと、画面で指定した終了日を伸ばすだけで必要レートが下がり、
+    9月納期のロットまで8月に作る前提でシフトモードが決まってしまう。ここでは各納期
+    時点での **累積需要 ÷ その納期までの稼働日数** の最大値を取る(累積フィージビリティ)。
+    終了日を後ろへ伸ばしても、早い納期のロットに必要なレートは下がらない。
+
+    - 計画開始より前の納期(既に遅れているロット)は、それ自体ではレートを決めない
+      (過去はどのモードでも取り返せないため)が、数量は以降の累積に効かせる。
+    - `max_rate`(最大シフト能力)を渡すと、それを超える納期チェックポイントは
+      **どのモードでも間に合わない**ので最大値の判定から外す。間に合わないことは
+      納期遅れ警告の仕事で、シフトモード選択をそこに引きずられないようにする。
+    - 期間末より後の納期は、全稼働日で割る。
+    戻り値: 必要日次レート(台/日)。
+    """
+    if not working_days:
+        raise ValueError("稼働日が0日です。期間・カレンダーを確認してください。")
+    by_due: dict[date, float] = {}
+    for item in demands:
+        by_due[item.due_date] = by_due.get(item.due_date, 0.0) + item.quantity
+
+    total = sum(by_due.values())
+    best = total / len(working_days)  # 期間全体を流し切るのに必要なレート
+    cumulative = 0.0
+    for due in sorted(by_due):
+        cumulative += by_due[due]
+        if due < working_days[0]:
+            continue  # 既に納期切れ。数量は cumulative に残して次の納期で効かせる
+        available = sum(1 for d in working_days if d <= due)
+        if available <= 0:
+            continue
+        rate = cumulative / available
+        if max_rate is not None and rate > max_rate:
+            continue  # どのモードでも間に合わない納期。遅れ警告に任せる
+        best = max(best, rate)
+    return best
+
+
 def choose_shift_mode(
     total_demand: float,
     num_working_days: int,
     capacities: dict[str, float],
     product_demands: dict[str, float] | None = None,
     product_caps_by_mode: dict[str, dict[str, float]] | None = None,
+    required_rate: float | None = None,
 ) -> tuple[str, float, float]:
     """必要日次レートを賄える最小のシフトモードを選ぶ。
 
@@ -379,11 +467,13 @@ def choose_shift_mode(
     ライン合計だけでなく **機種別にも期間内に作り切れるか** を確認する
     (例: Lite-Sだけ需要が大きい月は、合計では16Hで足りても22Hへ上げる)。
     どのモードでも足りない場合は最大能力のモードを返す(呼び出し側で警告)。
+    `required_rate` を渡すと必要日次レートをそれで上書きする(納期を考慮した
+    `required_daily_rate` の結果を渡す想定。省略時は 総需要÷稼働日数)。
     戻り値: (シフトモード, 日次能力, 必要日次レート)。
     """
     if num_working_days <= 0:
         raise ValueError("稼働日が0日です。期間・カレンダーを確認してください。")
-    required = total_demand / num_working_days
+    required = required_rate if required_rate is not None else total_demand / num_working_days
     for mode, cap in sorted(capacities.items(), key=lambda kv: kv[1]):
         if cap < required:
             continue
@@ -412,6 +502,7 @@ def apply_actuals(
     adjusted: list[DemandItem] = []
     warnings: list[str] = []
     matched: set[str] = set()
+    completed: list[str] = []
 
     for d in demands:
         done = actuals.get(d.order_id, 0.0)
@@ -422,16 +513,66 @@ def apply_actuals(
             continue
         rest = d.quantity - done
         if rest <= 0:
-            warnings.append(
-                f"製番{d.order_id}({d.product}): 実績{done:.0f}で計画数{d.quantity:.0f}を満たしたため計画から除外しました。"
-            )
+            completed.append(d.order_id)
             continue
         adjusted.append(DemandItem(product=d.product, quantity=rest, due_date=d.due_date, order_id=d.order_id, ship_date=d.ship_date))
 
-    for seiban in sorted(set(actuals) - matched):
-        warnings.append(f"実績の製番{seiban}が台帳の対象受注に見つかりません(製番・対象期間を確認してください)。")
+    # 製番ごとに1行出すと数百行になり、納期遅れなど本当に見るべき警告が埋もれる。
+    # 件数 + 先頭いくつかの製番に集約する(全件は 製番別MIL シート側で追える)。
+    def _summarize(seibans: list[str], head: str) -> None:
+        if not seibans:
+            return
+        sample = "、".join(sorted(seibans)[:5])
+        more = f" ほか{len(seibans) - 5}件" if len(seibans) > 5 else ""
+        warnings.append(f"{head}: {len(seibans)}件 ({sample}{more})")
+
+    _summarize(completed, "実績が計画数に達したため計画から除外した製番")
+    _summarize(
+        sorted(set(actuals) - matched),
+        "実績はあるが台帳の対象受注に見つからない製番(製番・対象期間を確認してください)",
+    )
 
     return adjusted, warnings
+
+
+def _sequence_lots(
+    demands: list[DemandItem],
+    working_days: list[date],
+    product_daily_caps: dict[str, float] | None,
+) -> list[DemandItem]:
+    """投入順を決める。機種別キャパを考慮した **余裕(スラック)の小さい順**。
+
+    素のEDD(納期順)だと、機種別キャパの小さい機種(例 Lite-S 42,240/日 = 需要を
+    流し切るのに21稼働日必要)が、納期が遅いというだけで後回しになり、着手した時には
+    もう間に合わない。現場は逆に、そういう機種を早い時期から毎日流し続ける。
+
+    ロットごとに
+        スラック = 納期までの稼働日数 − 同一機種で自分より納期の早い分も含めた所要日数
+    を出し、小さい順(=余裕が無い順)に並べる。所要日数は機種別キャパで割って求めるので、
+    キャパの小さい機種ほど早く前に出る。**機種別キャパが無い場合は所要日数が0となり、
+    従来どおりの純粋なEDD順に一致する。**
+    """
+    ordered = sorted(demands, key=lambda d: (d.due_date, d.product))
+    if not working_days:
+        return ordered
+
+    days_until: dict[date, int] = {}
+
+    def available(due: date) -> int:
+        if due not in days_until:
+            days_until[due] = sum(1 for d in working_days if d <= due)
+        return days_until[due]
+
+    cumulative: dict[str, float] = {}
+    slack: list[tuple[float, date, str]] = []
+    for item in ordered:
+        cap = (product_daily_caps or {}).get(item.product)
+        cum = cumulative.get(item.product, 0.0) + item.quantity
+        cumulative[item.product] = cum
+        need_days = cum / cap if cap else 0.0
+        slack.append((available(item.due_date) - need_days, item.due_date, item.product))
+
+    return [item for _key, item in sorted(zip(slack, ordered), key=lambda pair: pair[0])]
 
 
 def allocate_bottleneck(
@@ -468,11 +609,13 @@ def allocate_bottleneck(
     completion: dict[str, date] = {}
     warnings: list[str] = []
 
-    queue = sorted(demands, key=lambda d: (d.due_date, d.product))
+    queue = _sequence_lots(demands, working_days, product_daily_caps)
     lot_remaining = [item.quantity for item in queue]
     lot_completion: list[date | None] = [None] * len(queue)
     total_left = sum(lot_remaining)
     prev_day_products: set[str] = set()
+    # A勤限定切替で開始を繰り下げた日を機種ごとにためる(警告は最後に1機種1行へ集約)
+    deferrals: dict[str, list[date]] = {}
 
     for day in working_days:
         if total_left <= 0:
@@ -502,14 +645,23 @@ def allocate_bottleneck(
                 and product not in today_products
                 and product not in prev_day_products
             ):
-                used_fraction = 1.0 - line_remaining / cap_today
-                if used_fraction > a_shift_fraction:
-                    blocked_today.add(product)
-                    warnings.append(
-                        f"{product}: {A_SHIFT_DEFERRAL_TAG}のため、"
-                        f"{day.isoformat()}中の切替を避け翌稼働日の朝に開始します。"
+                # 号機グループの空きを見る。既に流している機種の機種別キャパ合計が
+                # ライン能力に届かないなら、別の号機グループが終日空いている =
+                # その機種の段取りは朝(A勤)から可能なので、A勤限定制約の対象外。
+                # (キャパ未定義=ライン全体を使いうる機種として扱う → 従来どおり飽和扱い)
+                if caps_today is None:
+                    running_cap = cap_today if today_products else 0.0
+                else:
+                    running_cap = sum(
+                        caps_today.get(p, cap_today) for p in today_products
                     )
-                    continue
+                if running_cap >= cap_today:
+                    # ラインは既に埋まっている → 新機種は稼働中の号機を奪う=段取り替え
+                    used_fraction = 1.0 - line_remaining / cap_today
+                    if used_fraction > a_shift_fraction:
+                        blocked_today.add(product)
+                        deferrals.setdefault(product, []).append(day)
+                        continue
 
             available = line_remaining
             if caps_today is not None:
@@ -537,6 +689,23 @@ def allocate_bottleneck(
                 completion[product] = day
 
         prev_day_products = today_products
+
+    # A勤限定切替の繰り下げは機種ごとに1行へまとめる(日ごとに1行出すと警告欄が埋まるため)
+    for product, deferred_days in deferrals.items():
+        # 最後に見送った日以降で実際に立ち上がった日(見送り前の稼働は別キャンペーン)
+        resumed = min(
+            (c.day for c in allocation if c.product == product and c.day > deferred_days[-1]),
+            default=None,
+        )
+        tail = (
+            f"次に立ち上げたのは {resumed.isoformat()} です。" if resumed
+            else "その後この期間内では立ち上げられませんでした。"
+        )
+        warnings.append(
+            f"{product}: {A_SHIFT_DEFERRAL_TAG}のため "
+            f"{deferred_days[0].isoformat()}〜{deferred_days[-1].isoformat()} の"
+            f"計{len(deferred_days)}稼働日はその日の立ち上げを見送りました。{tail}"
+        )
 
     # 期間内に投入しきれなかった機種
     leftover: dict[str, float] = {}
@@ -567,27 +736,38 @@ def expand_to_stages(
     bottleneck_allocation: list[DailyCell],
     working_days: list[date],
     stage_flows: list[StageFlowConfig],
+    stage_days: list[date] | None = None,
 ) -> tuple[list[StageDailyCell], list[str]]:
     """ボトルネック(HAL)の日次配分を、各工程へ稼働日オフセットでずらして展開する。
 
     HALが成り立つように上流(ANT/TAL)を早め・下流(MIL)を後ろへ配置する。各工程の
     日次台数はHALの台数と同じで、投入/完成のタイミングだけがオフセット分だけずれる。
-    オフセットが計画期間の外へ出る場合や、工程の日次上限を超える場合は警告する。
+
+    `stage_days`(前後へ伸ばした稼働日軸。`extend_working_days` で作る)を渡すと、
+    オフセットではみ出した投入/完成もその軸の上に置ける。渡さない場合は
+    `working_days` の外へ出たセルは破棄し、数量を明示した警告を出す。
+    工程の日次上限を超える場合も警告する。
     """
-    day_to_index = {d: i for i, d in enumerate(working_days)}
+    axis = stage_days or working_days
+    day_to_index = {d: i for i, d in enumerate(axis)}
     cells: list[StageDailyCell] = []
     warnings: list[str] = []
-    out_of_range: set[str] = set()
+    # 期間外に出た台数を 工程 -> ("before"=期間前/"after"=期間後) -> 台数 で集計する。
+    # 「期間前」は計画開始時点で既に前段WIPとして存在していなければならない量、
+    # 「期間後」は翌期へ繰り越す量。どちらも数量が分からないと手当てできないので明示する。
+    out_of_range: dict[str, dict[str, float]] = {}
 
     for flow in stage_flows:
         # まずオフセット適用済みの(日, 元セル)列を作る
         shifted: list[tuple[date, DailyCell]] = []
         for cell in bottleneck_allocation:
             target_i = day_to_index[cell.day] + flow.offset_for(cell.product)
-            if target_i < 0 or target_i >= len(working_days):
-                out_of_range.add(flow.stage_id)
+            if target_i < 0 or target_i >= len(axis):
+                side = "before" if target_i < 0 else "after"
+                bucket = out_of_range.setdefault(flow.stage_id, {})
+                bucket[side] = bucket.get(side, 0.0) + cell.quantity
                 continue
-            shifted.append((working_days[target_i], cell))
+            shifted.append((axis[target_i], cell))
 
         if not flow.input_unit:
             for day, cell in shifted:
@@ -620,9 +800,17 @@ def expand_to_stages(
                     emitted = target
 
     for stage_id in sorted(out_of_range):
+        before = out_of_range[stage_id].get("before", 0.0)
+        after = out_of_range[stage_id].get("after", 0.0)
+        parts = []
+        if before:
+            parts.append(f"期間開始前に {before:,.0f}台(計画開始時点で前段WIPとして必要)")
+        if after:
+            parts.append(f"期間終了後に {after:,.0f}台(翌期繰越)")
         warnings.append(
-            f"工程{stage_id}: オフセット後の投入/完成が計画期間の外に出る台数があります。"
-            f"期間を広げるか前段WIPで吸収してください。"
+            f"工程{stage_id}: オフセット後の投入/完成が計画期間の外に出ます — "
+            + "、".join(parts)
+            + f"。この分は工程{stage_id}の行に表示されないため、材料手配には計上してください。"
         )
 
     # 工程別の日次上限チェック
@@ -836,6 +1024,7 @@ def plan_bottleneck(
     machine_counts: dict[str, int] | None = None,
     high_mode: str | None = None,
     high_mode_days: int = 0,
+    holidays: set[date] | None = None,
 ) -> BottleneckPlanResult:
     """Step 1(シフト/レート決定)＋Step 2(HAL日次配分)を実行する。
 
@@ -847,6 +1036,8 @@ def plan_bottleneck(
     警告して計画から除外する。シフトモード選択も機種別の実現性を確認する。
     high_mode/high_mode_days を渡すと、先頭 high_mode_days 稼働日だけ high_mode(例 "22h")の
     能力・機種別キャパを使う(納期遅れ解消の「22Hを◯日」検討用)。
+    holidays は working_days を作ったときの非稼働日。工程展開の表示軸(`stage_days`)を
+    計画期間の前後へ伸ばすときに、同じカレンダーで稼働日を数えるために使う。
     """
     pre_warnings: list[str] = []
     if product_caps_by_mode:
@@ -875,6 +1066,11 @@ def plan_bottleneck(
         shift_capacities,
         product_demands=product_demands or None,
         product_caps_by_mode=product_caps_by_mode,
+        required_rate=(
+            required_daily_rate(demands, working_days, max_rate=max(shift_capacities.values()))
+            if demands and shift_capacities
+            else None
+        ),
     )
 
     result = BottleneckPlanResult(
@@ -937,7 +1133,12 @@ def plan_bottleneck(
     result.warnings.extend(warnings)
 
     if stage_flows:
-        stage_cells, stage_warnings = expand_to_stages(allocation, working_days, stage_flows)
+        # 工程展開はオフセットで前後にはみ出すので、表示軸を伸ばして受け止める
+        lead, trail = stage_offset_span(stage_flows)
+        result.stage_days = extend_working_days(working_days, lead, trail, holidays)
+        stage_cells, stage_warnings = expand_to_stages(
+            allocation, working_days, stage_flows, stage_days=result.stage_days
+        )
         result.stage_allocation = stage_cells
         result.warnings.extend(stage_warnings)
 
@@ -953,7 +1154,9 @@ def plan_bottleneck(
     # 段取り(切替)キャンペーン: 工程展開があれば全工程、無ければボトルネック工程のみ。
     if result.stage_allocation:
         result.campaigns = derive_campaigns(
-            result.stage_allocation, working_days, stage_order=[f.stage_id for f in stage_flows]
+            result.stage_allocation,
+            result.stage_days or working_days,  # 期間外へ伸びた工程日も連続性の判定に含める
+            stage_order=[f.stage_id for f in stage_flows],
         )
     else:
         base_cells = [

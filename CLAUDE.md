@@ -95,12 +95,18 @@ directly by FastAPI's `StaticFiles` mount.
 - `backend/bottleneck_planner.py` — an **alternative planning paradigm** matching how the
   real line is actually planned: rate-based, bottleneck-anchored daily flow (distinct from
   `scheduler.py`'s discrete forward-EDD job scheduling). `plan_bottleneck(demands,
-  working_days, shift_capacities)` runs Step 1 (`choose_shift_mode`: period demand ÷
-  working days → required daily rate → smallest shift mode that covers it, e.g. 16H=90k/day
-  vs 22H=120k/day; when per-product caps are supplied it also checks each product can
+  working_days, shift_capacities)` runs Step 1 (`choose_shift_mode` fed by `required_daily_rate`: the max over
+  due dates of cumulative demand ÷ working days up to that due date, so lengthening the
+  horizon no longer lowers the rate an early-due lot needs (plain 需要÷稼働日数 made the
+  16H/22H answer depend on the end date typed into the screen); due dates already
+  infeasible at max capacity are skipped — that's the lateness warning's job → smallest
+  shift mode that covers it, e.g. 16H=90k/day vs 22H=120k/day; when per-product caps are supplied it also checks each product can
   finish within the horizon at that mode's per-product rate, escalating otherwise) and
   Step 2 (`allocate_bottleneck`: fill each working day up to the
-  bottleneck/HAL daily capacity, EDD across lots — campaigns form naturally; with
+  bottleneck/HAL daily capacity, **least-slack order** across lots (`_sequence_lots`:
+  slack = working days until due − days needed at the product's own 機種別キャパ, counting
+  the same product's earlier-due lots; degrades to plain EDD when no per-product caps are
+  given) — campaigns form naturally; with
   `product_daily_caps` each product's daily fill is additionally capped by its 機種別キャパ
   (the machine-eligibility consequence), and line capacity a slow product leaves unused is
   filled the same day by other products running in parallel on other machine groups, as on
@@ -113,9 +119,15 @@ directly by FastAPI's `StaticFiles` mount.
   the HAL daily allocation is expanded to every stage (ANT/TAL/HAL/MIL) by a per-stage
   working-day `lead_offset_days` (upstream negative = fed earlier, bottleneck 0, downstream
   positive = completed later; `StageFlowConfig.offset_for(product)` applies an optional
-  per-product `lead_offset_by_product` override — the Phase-4 dynamic offsets), with
-  out-of-horizon and per-stage-capacity warnings —
-  `plan_bottleneck(..., stage_flows=[...])` attaches `stage_allocation`. **Step 4**
+  per-product `lead_offset_by_product` override — the Phase-4 dynamic offsets), onto an **extended day axis** (`result.stage_days`, built by
+  `extend_working_days`/`stage_offset_span`: `working_days` grown by the offset span at
+  both ends on the same calendar) so upstream input that lands before the horizon and
+  downstream completion that lands after it are still placed instead of being dropped —
+  on the real files the old drop silently hid 20% of the ANT/TAL rows, and a planner
+  ordering material off that table would come up short. Cells that fall outside even the
+  extended axis raise a warning **naming the quantity** and whether it is 前段WIP or
+  翌期繰越. Per-stage-capacity warnings as before —
+  `plan_bottleneck(..., stage_flows=[...])` attaches `stage_allocation` + `stage_days`. **Step 4**
   (`mil_completion_by_order`): the MIL stage's daily flow is grouped by 製番 (出荷ロット =
   `order_id`) into `MilLotCompletion`s (completion day = the lot's last MIL day, plus the
   完成目標 `due_date`=出荷日−buffer / `ship_date`=出荷日 / on-time = completion ≤ 完成目標 when
@@ -123,13 +135,23 @@ directly by FastAPI's `StaticFiles` mount.
   (THM 短期投入予定表 form); lots missing the 完成目標 also raise warnings.
   **A-shift-only changeover** (`allocate_bottleneck(..., a_shift_only_switch=True,
   a_shift_fraction=0.5)`): product changeovers (performed by supervisors on TAL/MIL) can
-  only happen during the day shift — if the previous campaign ends past `a_shift_fraction`
-  of a day's capacity, the next product's start is deferred to the next working morning
-  (with a warning); since stage expansion shifts whole days, the boundary lands at the
-  same in-day position on TAL/MIL too. Same-product lot changes are exempt.
+  only happen during the day shift. The rule only bites when **the line is already
+  saturated** — i.e. the 機種別キャパ of the products already running that day sum to at
+  least the line capacity, so a new product must take over a busy machine group; if the
+  running products can't fill the line, another machine group is idle all day and its
+  setup can be done in the morning, so the new product starts (this is the 別号機グループ
+  parallel fill the real TA1 plan shows every day). When it does bite and the previous
+  campaign ends past `a_shift_fraction` of a day's capacity, the next product's start is
+  deferred (deferrals are aggregated into **one warning per 機種**, not one per day).
+  Same-product lot changes are exempt.
+  *Measured on the real files: keying the decision off line fill instead of group
+  saturation left the line running one 機種 at half capacity for the first three days and
+  cost 6 late 製番.*
   **Actuals** (`apply_actuals(demands, actuals)`): subtracts per-製番 production actuals
   from demand so the plan is re-drawn on remaining quantities; fully-covered lots are
-  dropped (reported), and actuals whose 製番 matches no demand raise a warning.
+  dropped, and actuals whose 製番 matches no demand are reported — both **aggregated into
+  one warning line each** (count + first few 製番) rather than one line per 製番, which on
+  the real files turned a 134-line warning panel into 21 actionable lines.
   **Progress** (`compute_progress(result, daily_actuals)` → `ProgressRow`s on
   `result.progress`): per-working-day 計画(bottleneck daily total)/計画累計, and — when
   daily actuals are given — 実績/実績累計/差(実績−計画)/進捗(Σ差), matching the 現場 THM 短期
@@ -223,7 +245,11 @@ directly by FastAPI's `StaticFiles` mount.
   grid-searches ANT/TAL/MIL offsets (HAL fixed 0) and A-shift fraction to minimise
   completion+start MAE (re-running `plan_bottleneck` with `equipment_stops` disabled),
   returning the current vs best error and the recommended offsets/fraction (advisory —
-  `config/bottleneck_planning.json` is not auto-edited). `derive_stage_offsets` computes
+  `config/bottleneck_planning.json` is not auto-edited). The grid is wide enough that the
+  optimum does not sit on its boundary (a boundary hit means "best within the range", not
+  a converged value) and **enforces stage monotonicity** ANT ≤ TAL ≤ HAL(0) ≤ MIL, since
+  the stages are a serial routing — without it the search happily returned ANT −1 / TAL −2,
+  i.e. TAL fed a day before the stage that precedes it. `derive_stage_offsets` computes
   **per-product** offsets from FeliCa's own 投入→完成 span (median working-days per 機種,
   resolved to 呼称), split around HAL by the current offset ratio — kept (and unit-tested) but
   **no longer surfaced** by `/validate`: on the real files it (and any per-product
@@ -464,7 +490,16 @@ directly by FastAPI's `StaticFiles` mount.
   integration yet.
 - The shift calendar assumes the same shift pattern applies to every machine (no
   per-machine or per-day calendar overrides). Non-working days (祝日/計画休) are supported for
-  the bottleneck planner via `config.nonWorkingDays` (populated from FeliCa's grey cells), but
-  the discrete `scheduler.py` still only skips weekends.
+  the bottleneck planner via `config.nonWorkingDays` (seeded with the 2026-07/08 dates from
+  FeliCa's grey cells; refresh it per period via 「非稼働日カレンダー取込(FeliCa)」 — an empty
+  list silently schedules full production on holidays), but the discrete `scheduler.py` still
+  only skips weekends.
+- The A-shift-only changeover rule approximates "is a machine group free" from the
+  per-product daily caps summing to the line capacity. It has no explicit machine-group
+  model, so it cannot express "two products share one group" or limit how many setups the
+  supervisors can do in one morning.
+- Lot sequencing is least-slack against each product's own capacity. It has no notion of
+  material arrival or customer priority, so a 機種 the real planner front-loads for reasons
+  outside the ledger will still be scheduled late (さそり金融 on the July-August files).
 - Changeover time is charged only against the stage it occurs on; it does not model
   shared setup crews/tooling across machines.

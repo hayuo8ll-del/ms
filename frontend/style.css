@@ -640,6 +640,14 @@ button#bn-validate:disabled {
   border-left: 3px solid var(--text-dim);
 }
 
+/* 計画期間の外に出た工程日(上流=前段WIP / 下流=翌期繰越)。列ごと淡く落とす。 */
+.bn-table th.bn-outside,
+.bn-table td.bn-outside {
+  background: var(--panel-2);
+  color: var(--text-dim);
+  font-style: italic;
+}
+
 /* 進捗表の工程別ブロック見出し行 */
 .bn-table tr.bn-stage-sep td {
   border-top: 2px solid var(--line);

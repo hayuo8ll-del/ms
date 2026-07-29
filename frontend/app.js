@@ -651,7 +651,11 @@ function renderBnProgress(data) {
 }
 
 function renderBnMatrix(data) {
-  const days = data.working_days;
+  // 列は工程展開の軸。上流(ANT/TAL)はHALより前に投入され下流(MIL)は後に完成するので、
+  // working_days だけを列にすると、はみ出した台数が表から抜け落ちる。
+  const days = data.stage_days || data.working_days;
+  const planStart = data.working_days[0];
+  const planEnd = data.working_days[data.working_days.length - 1];
   const stages = data.stage_order;
   // (product, stage, day) -> qty
   const agg = new Map();
@@ -678,9 +682,16 @@ function renderBnMatrix(data) {
     return da < db ? -1 : da > db ? 1 : a < b ? -1 : 1;
   });
 
+  // 計画期間の外(=前段WIPとして先に投入する分／翌期へ繰り越す分)は列を淡く区別する
+  const outside = (d) => d < planStart || d > planEnd;
   const head =
     `<thead><tr><th class="bn-c-prod">機種</th><th class="bn-c-stage">工程</th>` +
-    days.map((d) => `<th>${fmtMd(d)}</th>`).join("") +
+    days
+      .map(
+        (d) =>
+          `<th${outside(d) ? ' class="bn-outside" title="計画期間外（前段WIP／翌期繰越）"' : ""}>${fmtMd(d)}</th>`
+      )
+      .join("") +
     `</tr></thead>`;
 
   const body = products
@@ -692,13 +703,14 @@ function renderBnMatrix(data) {
               const k = `${product} ${stage} ${d}`;
               const q = agg.get(k);
               const txt = q ? fmtNum(q) : "";
+              const out = outside(d) ? " bn-outside" : "";
               if (changeoverStart.has(k)) {
-                return `<td class="bn-changeover" title="段取り替え: ${stage}で${product}のキャンペーン開始(別機種からの切替)">${txt}</td>`;
+                return `<td class="bn-changeover${out}" title="段取り替え: ${stage}で${product}のキャンペーン開始(別機種からの切替)">${txt}</td>`;
               }
               if (campaignStart.has(k)) {
-                return `<td class="bn-startup" title="立上げ: ${stage}で${product}のキャンペーン開始">${txt}</td>`;
+                return `<td class="bn-startup${out}" title="立上げ: ${stage}で${product}のキャンペーン開始">${txt}</td>`;
               }
-              return `<td>${txt}</td>`;
+              return `<td${out ? ` class="${out.trim()}"` : ""}>${txt}</td>`;
             })
             .join("");
           const prodCell = si === 0 ? `<td class="bn-c-prod" rowspan="${stages.length}">${product}</td>` : "";
@@ -841,7 +853,10 @@ function renderValidation(d) {
     `<tr><td>${label}</td><td class="bn-num">${cur}</td><td class="bn-num">${rec}</td></tr>`;
   const better = (c, r) => (r < c ? ' class="bn-improved"' : "");
   bnValidationBodyEl.innerHTML =
-    `<p class="bn-validation-note">FeliCa実計画の${d.felica_lots}製番のうち一致した${d.current.matched}製番で照合（単位=稼働日）。推奨較正後の値は下の「推奨値をconfigに反映」で書き戻せます。</p>` +
+    `<p class="bn-validation-note">FeliCa実計画の${d.felica_lots}製番（うちこの期間に台数があるのは${d.current.felica_active_lots}製番）に対し、` +
+    `完成日${d.current.matched}製番・投入日${d.current.start_matched}製番で照合（単位=稼働日）。` +
+    `<strong>MAEはこの母数だけを代表した値</strong>なので、母数が小さいときは期間の取り方で大きく振れます。` +
+    `推奨較正後の値は下の「推奨値をconfigに反映」で書き戻せます。</p>` +
     `<table class="bn-vtable"><thead><tr><th>指標</th><th>現状</th><th>推奨較正後</th></tr></thead><tbody>` +
     `<tr><td>完成日 MAE</td><td class="bn-num">${d.current.completion_mae}</td><td class="bn-num"${better(d.current.completion_mae, d.recommended.completion_mae)}>${d.recommended.completion_mae}</td></tr>` +
     `<tr><td>完成日 バイアス(our−実)</td><td class="bn-num">${d.current.completion_bias}</td><td class="bn-num">${d.recommended.completion_bias}</td></tr>` +

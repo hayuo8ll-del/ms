@@ -210,6 +210,7 @@ async def _build_bottleneck_plan(
         equipment_stops=stops or None,
         bottleneck_stage=cfg.bottleneck_stage,
         machine_counts=cfg.machine_counts,
+        holidays=holidays or None,
     )
     result = plan_bottleneck(demands, working_days, cfg.line_daily_capacities, **plan_kwargs)
     result.warnings.extend(actual_warnings)
@@ -275,6 +276,8 @@ async def bottleneck_plan(
         "required_daily_rate": round(result.required_daily_rate),
         "stage_order": cfg.stage_order,
         "working_days": [d.isoformat() for d in result.working_days],
+        # 機種×日マトリクスの列。上流の前倒し/下流の後ろ倒しを含む表示軸。
+        "stage_days": [d.isoformat() for d in (result.stage_days or result.working_days)],
         "stage_allocation": [
             {"stage_id": c.stage_id, "day": c.day.isoformat(), "product": c.product,
              "quantity": c.quantity, "order_id": c.order_id}
@@ -330,6 +333,10 @@ def _report_dict(rep) -> dict:
         "start_bias": rep.start_bias,
         "completion_daily_mae": rep.completion_daily_mae,
         "line_in_daily_mae": rep.line_in_daily_mae,
+        # 母数: MAEがFeliCaのどれだけを代表しているか(全製番行 / 台数のある製番)
+        "start_matched": rep.start_matched,
+        "felica_lots": rep.felica_lots,
+        "felica_active_lots": rep.felica_active_lots,
     }
 
 

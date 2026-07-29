@@ -5,6 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from bottleneck_planner import (  # noqa: E402
+    DailyCell,
     DemandItem,
     EquipmentStop,
     StageDailyCell,
@@ -19,6 +20,7 @@ from bottleneck_planner import (  # noqa: E402
     expand_to_stages,
     mil_completion_by_order,
     plan_bottleneck,
+    required_daily_rate,
     suggest_remedies,
     working_days_in_range,
 )
@@ -190,8 +192,9 @@ def test_apply_actuals_reduces_remaining_and_drops_completed():
     assert by_id["L1"].quantity == 60000  # 残数量に控除
     assert "L2" not in by_id  # 完了済みは除外
     assert by_id["L3"].quantity == 30000  # 実績なしはそのまま
-    assert any("L2" in w and "除外" in w for w in warnings)
-    assert any("L9" in w and "見つかりません" in w for w in warnings)
+    # 警告は製番ごとではなく件数+サンプルへ集約する(数百行になると本命の警告が埋もれる)
+    assert any("L2" in w and "除外" in w and "1件" in w for w in warnings)
+    assert any("L9" in w and "見つからない" in w and "1件" in w for w in warnings)
 
 
 def test_a_shift_only_switch_defers_changeover_past_a_shift():
@@ -585,3 +588,186 @@ def test_compute_stage_progress_per_stage_plan_vs_actual():
     # 実績を与えていない工程は計画累計のみ(実績系はNone)
     assert all(r.actual is None for r in sp["TAL"])
     assert sp["TAL"][-1].plan_cum > 0
+
+
+# --- 実データ照合で判明したズレの修正 (docs/検証_自動立案_vs_手動計画.md) -------------
+
+
+def test_a_shift_switch_allowed_when_another_machine_group_is_free():
+    """機種別キャパで余ったライン能力は、別号機グループが終日空いている = 朝から段取り可能。
+
+    現場のTA1計画は毎日3〜5機種を並行させている。以前は「ライン消化率」を時刻の代理に
+    使っていたため、先行機種が自分のキャパ上限に張り付いただけで新機種が締め出されていた。
+    """
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    demands = [
+        DemandItem("MOT2", 180000, date(2026, 7, 10), order_id="L1"),
+        DemandItem("SuicaⅢ", 120000, date(2026, 7, 20), order_id="L2"),
+    ]
+    # MOT2は60,000/日が上限 → ライン120,000のうち60,000は別グループが終日空く
+    caps = {"MOT2": 60000, "SuicaⅢ": 60000}
+    alloc, _completion, warnings = allocate_bottleneck(
+        demands, days, 120000, a_shift_only_switch=True, a_shift_fraction=0.4,
+        product_daily_caps=caps,
+    )
+    day1 = {c.product: c.quantity for c in alloc if c.day == date(2026, 7, 1)}
+    assert day1 == {"MOT2": 60000, "SuicaⅢ": 60000}  # 初日から並行できる
+    assert not any("切替" in w for w in warnings)
+
+
+def test_a_shift_switch_still_deferred_when_line_is_saturated():
+    """先行機種だけでライン能力を埋め切る場合は、新機種の投入は号機の奪取=段取り替え。"""
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    demands = [
+        DemandItem("A", 70000, date(2026, 7, 3), order_id="L1"),
+        DemandItem("B", 90000, date(2026, 7, 10), order_id="L2"),
+    ]
+    caps = {"A": 90000, "B": 90000}  # Aだけでライン(90,000)を埋められる
+    alloc, _completion, warnings = allocate_bottleneck(
+        demands, days, 90000, a_shift_only_switch=True, a_shift_fraction=0.5,
+        product_daily_caps=caps,
+    )
+    b_first = min(c.day for c in alloc if c.product == "B")
+    assert b_first == date(2026, 7, 2)  # 7/1は70,000消化(78%)でA勤を過ぎている
+    assert any("A勤" in w for w in warnings)
+
+
+def test_a_shift_deferral_warnings_are_aggregated_per_product():
+    """繰り下げ警告は機種ごとに1行へ集約する(日ごとに1行だと警告欄が埋まる)。"""
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    demands = [
+        DemandItem("A", 400000, date(2026, 7, 20), order_id="L1"),
+        DemandItem("B", 90000, date(2026, 7, 31), order_id="L2"),
+    ]
+    # Aはライン全体を使いうる(=飽和)が、投入単位4万の切り下げで毎日1万を残す →
+    # 消化率89%でA勤を過ぎており、Bはその日には立ち上げられない、が5稼働日続く
+    caps = {"A": 90000, "B": 90000}
+    _alloc, _completion, warnings = allocate_bottleneck(
+        demands, days, 90000, a_shift_only_switch=True, a_shift_fraction=0.4,
+        product_daily_caps=caps, input_unit=40000,
+    )
+    deferrals = [w for w in warnings if "A勤" in w]
+    assert len(deferrals) == 1  # 5稼働日ぶん繰り下がっても1行
+    assert "計5稼働日" in deferrals[0]
+
+
+def test_required_daily_rate_is_driven_by_due_dates_not_horizon_length():
+    """終了日を伸ばしても、早い納期のロットに必要なレートは下がらない。"""
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))  # 23稼働日
+    demands = [
+        DemandItem("A", 400000, date(2026, 7, 8), order_id="L1"),   # 6稼働日で40万 → 66,667/日
+        DemandItem("B", 200000, date(2026, 7, 31), order_id="L2"),
+    ]
+    rate = required_daily_rate(demands, days)
+    assert round(rate) == 66667
+    # 素の「総需要÷稼働日数」なら 600,000/23 = 26,087 にしかならない
+    assert rate > 600000 / len(days)
+
+    # 空の稼働日を後ろへ足しても、7/8納期に必要なレートは変わらない
+    longer = working_days_in_range(date(2026, 7, 1), date(2026, 9, 30))
+    assert round(required_daily_rate(demands, longer)) == 66667
+
+
+def test_required_daily_rate_ignores_already_infeasible_due_dates():
+    """どのモードでも間に合わない納期はモード選択を歪めない(遅れ警告の仕事)。"""
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    demands = [
+        DemandItem("A", 500000, date(2026, 7, 1), order_id="L1"),  # 初日に50万=不可能
+        DemandItem("B", 400000, date(2026, 7, 31), order_id="L2"),
+    ]
+    rate = required_daily_rate(demands, days, max_rate=120000)
+    assert rate <= 120000
+    # 期間全体を流し切るレート(900,000/23)は下回らない
+    assert rate >= 900000 / len(days) - 1e-6
+
+
+def test_low_capacity_product_is_sequenced_early_by_slack():
+    """機種別キャパの小さい機種は、納期が遅くても余裕が無いので先に着手する。
+
+    Lite-Sは日産が小さく流し切るのに日数がかかるため、素のEDDだと着手が遅れて
+    間に合わなくなる。現場は逆に早い時期から毎日流し続けている。
+    """
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    demands = [
+        # 大キャパ・納期早め: 2日で終わる
+        DemandItem("さそり金融", 160000, date(2026, 7, 10), order_id="L1"),
+        # 小キャパ・納期遅め: 30,000/日では10稼働日必要 = 余裕が無い
+        DemandItem("Lite-S(Mies)", 300000, date(2026, 7, 17), order_id="L2"),
+    ]
+    caps = {"さそり金融": 80000, "Lite-S(Mies)": 30000}
+    alloc, _completion, _warn = allocate_bottleneck(
+        demands, days, 90000, product_daily_caps=caps
+    )
+    lite_start = min(c.day for c in alloc if c.product == "Lite-S(Mies)")
+    assert lite_start == date(2026, 7, 1)  # 納期が遅くても初日から流す
+    lite_last = max(c.day for c in alloc if c.product == "Lite-S(Mies)")
+    assert lite_last <= date(2026, 7, 17)  # 納期に間に合う
+
+
+def test_lot_sequencing_falls_back_to_edd_without_product_caps():
+    """機種別キャパが無ければ所要日数=0となり、従来どおりのEDD順になる。"""
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    demands = [
+        DemandItem("A", 90000, date(2026, 7, 31), order_id="L1"),
+        DemandItem("B", 90000, date(2026, 7, 10), order_id="L2"),
+    ]
+    alloc, _completion, _warn = allocate_bottleneck(demands, days, 90000)
+    assert alloc[0].product == "B"
+    assert alloc[1].product == "A"
+
+
+def test_out_of_horizon_stage_quantity_is_reported_with_amounts():
+    """期間外に出た上流/下流の台数を、前段WIP/翌期繰越として数量つきで警告する。"""
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 7))  # 5稼働日
+    flows = [StageFlowConfig("TAL", -2), StageFlowConfig("HAL", 0), StageFlowConfig("MIL", 2)]
+    alloc = [DailyCell(day=d, product="A", quantity=50000, order_id="L1") for d in days]
+    _cells, warnings = expand_to_stages(alloc, days, flows)
+    tal = next(w for w in warnings if "工程TAL" in w)
+    assert "100,000台" in tal and "前段WIP" in tal
+    mil = next(w for w in warnings if "工程MIL" in w)
+    assert "100,000台" in mil and "翌期繰越" in mil
+
+
+def test_stage_days_extend_the_axis_so_upstream_is_not_dropped():
+    """上流の前倒し・下流の後ろ倒しを受け止める表示軸を持ち、台数を落とさない。
+
+    以前は working_days の外へ出たセルを捨てていたため、実データで ANT/TAL の行が
+    需要の 80% しか表示されず、その表で材料を手配すると足りなくなっていた。
+    """
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    flows = [
+        StageFlowConfig("ANT", -4),
+        StageFlowConfig("TAL", -4),
+        StageFlowConfig("HAL", 0),
+        StageFlowConfig("MIL", 2),
+    ]
+    demands = [DemandItem("A", 450000, date(2026, 7, 31), order_id="L1")]
+    result = plan_bottleneck(demands, days, CAPS, stage_flows=flows)
+
+    # 表示軸は前に4稼働日・後ろに2稼働日ぶん伸びている
+    assert result.stage_days[0] < days[0]
+    assert result.stage_days[-1] > days[-1]
+    assert len(result.stage_days) == len(days) + 6
+
+    # どの工程もHALと同じ総数量を保持している(期間端で消えない)
+    totals: dict[str, float] = {}
+    for c in result.stage_allocation:
+        totals[c.stage_id] = totals.get(c.stage_id, 0.0) + c.quantity
+    assert round(totals["ANT"]) == round(totals["HAL"]) == 450000
+    assert round(totals["MIL"]) == 450000
+    # 期間外に出た警告はもう出ない
+    assert not any("計画期間の外" in w for w in result.warnings)
+
+
+def test_stage_days_respect_holidays():
+    """伸ばした軸も同じカレンダー(祝日)で稼働日を数える。"""
+    days = working_days_in_range(
+        date(2026, 8, 12), date(2026, 8, 21), holidays={date(2026, 8, 14)}
+    )
+    flows = [StageFlowConfig("TAL", -2), StageFlowConfig("HAL", 0)]
+    demands = [DemandItem("A", 90000, date(2026, 8, 21), order_id="L1")]
+    result = plan_bottleneck(
+        demands, days, CAPS, stage_flows=flows, holidays={date(2026, 8, 14)}
+    )
+    assert date(2026, 8, 14) not in result.stage_days  # 祝日は軸にも入らない
+    assert result.stage_days[0] == date(2026, 8, 10)  # 8/12の2稼働日前(8/11,8/10)

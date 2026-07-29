@@ -75,7 +75,9 @@ def _add_summary(
 def _add_stage_matrix(wb: Workbook, result: BottleneckPlanResult, stage_order: list[str]) -> None:
     """機種×工程 × 日 の日次台数マトリクス(TA1_生産計画 の形)。"""
     ws = wb.create_sheet("生産計画(機種×日)")
-    days = result.working_days
+    # 列は工程展開の軸(上流の前倒し・下流の後ろ倒しを含む)。ここを working_days に
+    # すると、はみ出した ANT/TAL/MIL の台数が表から抜け落ちる。
+    days = result.stage_days or result.working_days
 
     # (product, stage, day) -> qty
     agg: dict[tuple[str, str, date], float] = {}
@@ -223,7 +225,7 @@ def _add_changeovers(wb: Workbook, result: BottleneckPlanResult, stage_order: li
     camps = sorted(
         result.campaigns, key=lambda c: (order.get(c.stage_id, 99), c.start_day, c.product)
     )
-    wd_index = {d: i for i, d in enumerate(result.working_days)}
+    wd_index = {d: i for i, d in enumerate(result.stage_days or result.working_days)}
     for c in camps:
         span = wd_index.get(c.end_day, 0) - wd_index.get(c.start_day, 0) + 1
         ws.append([

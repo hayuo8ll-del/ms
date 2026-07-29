@@ -127,7 +127,7 @@ def parse_felica_plan(file_obj: BinaryIO) -> dict[str, FelicaLot]:
 
 @dataclass
 class ComparisonReport:
-    matched: int
+    matched: int  # 完成日を突き合わせられた製番数
     completion_mae: float  # 完成日の平均絶対誤差(稼働日)
     completion_bias: float  # 平均符号付き差(our - felica; 正=遅い)
     start_mae: float  # 投入日の平均絶対誤差(稼働日)
@@ -139,6 +139,10 @@ class ComparisonReport:
     # 機種別 予実タイミング差: {呼称: {"completion_bias/mae", "start_bias/mae", "n"}}
     # bias>0 = ourが遅い(モデルが後ろ倒し), <0 = ourが早い(前倒し)
     timing_by_product: dict[str, dict] = field(default_factory=dict)
+    # 照合の母数(MAEがどれだけの範囲を代表しているかを画面で示すため)
+    start_matched: int = 0  # 投入日を突き合わせられた製番数
+    felica_lots: int = 0  # FeliCaの製番行数
+    felica_active_lots: int = 0  # うち当該期間に台数がある(=照合対象になりうる)製番数
 
 
 def _wd_index_map(working_days: list[date]) -> dict[date, int]:
@@ -146,11 +150,17 @@ def _wd_index_map(working_days: list[date]) -> dict[date, int]:
 
 
 def _nearest_index(d: date, wd_index: dict[date, int], working_days: list[date]) -> int | None:
+    """日付を稼働日インデックスへ変換する。計画期間外は None(照合の母数から外す)。
+
+    以前は期間外の日付も端の稼働日へ丸めていたため、前月からの繰り越しロットなど
+    まったく別の時期の製番が「照合できた」ことになり、しかも誤差が計画期間の幅で
+    頭打ちになってMAEが実力より小さく出ていた。
+    """
     if d in wd_index:
         return wd_index[d]
-    # 稼働日でない日(土日)は直近の稼働日インデックスへ丸める
-    if not working_days:
+    if not working_days or d < working_days[0] or d > working_days[-1]:
         return None
+    # 期間内だが稼働日でない日(土日・祝日)は直近の稼働日インデックスへ丸める
     return min(range(len(working_days)), key=lambda i: abs((working_days[i] - d).days))
 
 
@@ -295,6 +305,11 @@ def compare_plans(
         line_in_daily_mae=round(_windowed_daily_mae(our_ant_daily, fel_li_daily)[0], 0),
         daily_shape_by_product=daily_shape_by_product,
         timing_by_product=timing_by_product,
+        start_matched=len(start_diffs),
+        felica_lots=len(felica),
+        felica_active_lots=sum(
+            1 for fl in felica.values() if fl.line_in_daily or fl.completion_daily
+        ),
     )
 
 
@@ -360,8 +375,19 @@ class CalibrationResult:
 
 
 def _with_offsets(stage_flows: list[StageFlowConfig], offsets: dict[str, int]) -> list[StageFlowConfig]:
+    """グローバルオフセットだけ差し替えた stage_flows を作る。
+
+    `lead_offset_by_product`(機種別オフセット上書き)も引き継ぐこと。落とすと、較正が
+    「現行config」として評価する計画が、実際に立案される計画と別物になる。
+    """
     return [
-        StageFlowConfig(f.stage_id, offsets.get(f.stage_id, f.lead_offset_days), f.daily_capacity, f.input_unit)
+        StageFlowConfig(
+            f.stage_id,
+            offsets.get(f.stage_id, f.lead_offset_days),
+            f.daily_capacity,
+            f.input_unit,
+            f.lead_offset_by_product,
+        )
         for f in stage_flows
     ]
 
@@ -372,16 +398,24 @@ def calibrate(
     shift_capacities: dict[str, float],
     plan_kwargs: dict,
     felica: dict[str, FelicaLot],
-    ant_range=(-3, -2, -1),
-    tal_range=(-2, -1),
-    mil_range=(0, 1, 2),
-    a_fractions=(0.4, 0.5, 0.6),
+    ant_range=(-5, -4, -3, -2, -1, 0),
+    tal_range=(-5, -4, -3, -2, -1, 0),
+    mil_range=(0, 1, 2, 3, 4, 5),
+    a_fractions=(0.3, 0.4, 0.5, 0.6, 0.7),
 ) -> CalibrationResult:
     """オフセット/A勤割合をグリッド探索し、完成日+投入日MAE 最小の推奨値を返す。
 
     HAL は 0 固定(ボトルネック基準)。設備停止は照合では無効化する。
     plan_kwargs は base の plan_bottleneck キーワード引数(stage_flows/equipment_stops 等)。
     shift_capacities はライン日次能力({モード: 台/日})。
+
+    **工程順の単調性を強制する**: 工程は ANT→TAL→HAL→MIL の直列なので、オフセットは
+    ANT ≤ TAL ≤ HAL(=0) ≤ MIL でなければならない。これを課さないと「TALがANTより先に
+    投入される」ような物理的にありえない組み合わせが最良値として選ばれる
+    (実際、以前の較正は ANT -1 / TAL -2 を推奨していた)。
+
+    探索範囲は各パラメータの推奨値が端に貼りつかない広さを取ってある。端に貼りついた
+    結果は「範囲内での最良」でしかなく、収束した値ではない。
     """
     base_flows = plan_kwargs["stage_flows"]
     # stage_flows / equipment_stops / a_shift_fraction は明示指定するので除外
@@ -399,6 +433,8 @@ def calibrate(
     best: tuple[float, dict, float, ComparisonReport] | None = None
     for ant in ant_range:
         for tal in tal_range:
+            if ant > tal:
+                continue  # ANTはTALの上流。ANTがTALより後ろに来ることはありえない
             for mil in mil_range:
                 offsets = {"ANT": ant, "TAL": tal, "HAL": 0, "MIL": mil}
                 flows = _with_offsets(base_flows, offsets)

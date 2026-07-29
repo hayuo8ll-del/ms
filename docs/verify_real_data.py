@@ -194,7 +194,9 @@ def main() -> None:
         demands, _w = apply_actuals(demands, actuals)
     remaining = sum(d.quantity for d in demands)
 
-    def build(a_switch=True, hol=None, s=start, e=end, dem=None):
+    config_holidays = set(cfg.non_working_days or ())
+
+    def build(a_switch=True, hol=config_holidays, s=start, e=end, dem=None):
         wd = working_days_in_range(s, e, holidays=hol or None)
         return wd, plan_bottleneck(
             dem if dem is not None else demands, wd, cfg.line_daily_capacities,
@@ -273,7 +275,7 @@ def main() -> None:
 
     # ---------------------------------------------------------------- 5
     hdr("5. 祝日(FeliCa灰色セル)の反映有無による工程別の欠損")
-    for lbl, hol in (("祝日なし(現行config)", None), ("FeliCaの祝日を反映", set(holidays))):
+    for lbl, hol in (("祝日を無視した場合", None), ("祝日を反映(現行config)", config_holidays or set(holidays))):
         wd, r = build(hol=hol)
         st: dict[str, float] = {}
         for c in r.stage_allocation:
