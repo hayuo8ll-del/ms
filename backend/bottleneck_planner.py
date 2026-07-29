@@ -176,6 +176,29 @@ class DailyCell:
     product: str
     quantity: float
     order_id: str = ""
+    machine_id: str = ""  # 号機マスタを与えたときのみ埋まる(どの号機に載せたか)
+
+
+@dataclass
+class MachineSlot:
+    """ある号機の、あるシフトモードでの日次能力と生産可能機種(CAP表 由来)。
+
+    `eligibility` は {呼称: "○"(生産可) / "△"(条件付き)}。× は入れない。
+    設備×機種の可否は 機種別キャパ に畳み込まれた数字だけでは表現できない
+    (どの号機が空いているかで、同日に何機種を並行できるかが決まる)ため、
+    号機の粒度で持つ。
+    """
+
+    machine_id: str
+    stage_id: str
+    daily_capacity: float
+    eligibility: dict[str, str] = field(default_factory=dict)
+
+    def can_run(self, product: str, allow_conditional: bool = True) -> bool:
+        mark = self.eligibility.get(product)
+        if mark is None:
+            return False
+        return mark == "○" or (allow_conditional and mark == "△")
 
 
 @dataclass
@@ -575,6 +598,85 @@ def _sequence_lots(
     return [item for _key, item in sorted(zip(slack, ordered), key=lambda pair: pair[0])]
 
 
+def _assign_to_machines(
+    *,
+    product: str,
+    lot_remaining: float,
+    machines: list[MachineSlot],
+    machine_today: dict[str, list],
+    line_remaining: float,
+    product_cap_left: float | None,
+    input_unit: float | None,
+    a_shift_only_switch: bool,
+    a_shift_fraction: float,
+    continuing: bool,
+    day: date,
+    order_id: str,
+    allocation: list[DailyCell],
+    deferrals: dict[str, list[date]],
+) -> float:
+    """1ロットぶんを、その機種が使える空き号機へ載せる。載せた合計台数を返す。
+
+    号機の選び方は「既に同じ機種が載っている号機 → 終日空いている号機 → 別機種が
+    使っている号機」の順。最後のケースだけが日中の段取り替えで、A勤限定制約の対象。
+    終日空いている号機は朝(A勤)に段取りできるので、いつでも立ち上げられる
+    (これが現場のTA1計画に毎日3〜5機種が並ぶ理由)。
+    `△`(条件付き)の号機は ○ をすべて使い切ってから回す。
+    """
+    remaining = lot_remaining
+    taken = 0.0
+    deferred = False
+
+    def rank(slot: MachineSlot) -> tuple:
+        state = machine_today[slot.machine_id]
+        same = state[0] == product
+        free = state[0] is None
+        conditional = slot.eligibility.get(product) == "△"
+        # 継続 > 空き > 奪取、その中では条件付きを後回し、能力の大きい号機を先に
+        return (0 if same else 1 if free else 2, 1 if conditional else 0, -slot.daily_capacity)
+
+    for slot in sorted(
+        (m for m in machines if m.can_run(product)), key=rank
+    ):
+        if remaining <= 0 or line_remaining - taken <= 0:
+            break
+        if product_cap_left is not None and product_cap_left - taken <= 0:
+            break
+        state = machine_today[slot.machine_id]
+        free_on_machine = slot.daily_capacity - state[1]
+        if free_on_machine <= 0:
+            continue
+
+        if state[0] is not None and state[0] != product:
+            # 稼働中の号機を奪う = 日中の段取り替え。A勤を過ぎていたら翌朝へ。
+            if a_shift_only_switch and not continuing:
+                if state[1] / slot.daily_capacity > a_shift_fraction:
+                    deferred = True
+                    continue
+
+        room = min(remaining, free_on_machine, line_remaining - taken)
+        if product_cap_left is not None:
+            room = min(room, product_cap_left - taken)
+        # 投入単位(リール等)の倍数へ切り下げ。残が1単位未満のときだけ端数を許す。
+        if input_unit and remaining >= input_unit:
+            room = int(room // input_unit) * input_unit
+        if room <= 0:
+            continue
+
+        allocation.append(
+            DailyCell(day=day, product=product, quantity=room, order_id=order_id,
+                      machine_id=slot.machine_id)
+        )
+        state[0] = product
+        state[1] += room
+        remaining -= room
+        taken += room
+
+    if taken <= 0 and deferred:
+        deferrals.setdefault(product, []).append(day)
+    return taken
+
+
 def allocate_bottleneck(
     demands: list[DemandItem],
     working_days: list[date],
@@ -585,11 +687,16 @@ def allocate_bottleneck(
     daily_capacity_by_day: dict[date, float] | None = None,
     input_unit: float | None = None,
     product_daily_caps_by_day: dict[date, dict[str, float]] | None = None,
+    machines: list[MachineSlot] | None = None,
 ) -> tuple[list[DailyCell], dict[str, date], list[str]]:
     """ボトルネック工程の日次能力を上限に、機種別台数を稼働日へ割り付ける。
 
     `daily_capacity_by_day` を渡すと、該当日はその値をライン日次能力として使う
     (設備停止マスタによる能力補正)。
+
+    `machines`(CAP表の号機マスタ)を渡すと **号機単位で割り付ける**。どの号機が空いて
+    いるかで同日に並行できる機種数が決まるため、機種別キャパだけの近似より現場の
+    TA1_生産計画に近い形になる。この場合の切替判定は号機ごと(下記)。
 
     - 稼働日を1日ずつ埋めていく。各日はEDD(納期の早いロット)順に投入するため、
       機種ごとにまとまったキャンペーンが自然に形成される。
@@ -598,11 +705,12 @@ def allocate_bottleneck(
       キャパを超えない。キャパの小さい機種(例: Lite-S)が残したライン能力は、同日に
       別機種が別号機グループで並行して使う(現場のTA1_生産計画と同じ形)。
     - `a_shift_only_switch=True` のとき、機種切替(管理者が実施)はA勤中しかできない
-      制約を反映する: **前稼働日から継続していない機種** がその日に新規に立ち上がる
-      場合、その時点までのライン消化率が `a_shift_fraction`(既定=日能力の半分=A勤相当)
-      を超えていたら開始を翌稼働日の朝(A勤)へ繰り下げる。前日から続く機種は号機の
-      段取りが済んでいるため対象外。工程展開は稼働日単位のオフセットなので、この
-      境界はTAL/MILにも同じ位置で伝播する。
+      制約を反映する。**号機マスタがある場合**は号機ごとに判定する: その日まだ何も
+      流していない号機は朝から段取りできるので新機種を立ち上げられる。既に別機種が
+      流れている号機を奪う場合だけ、その号機の消化率が `a_shift_fraction` を超えて
+      いたら翌稼働日の朝へ繰り下げる。**号機マスタが無い場合**はライン全体の
+      機種別キャパ合計で「別号機グループが空いているか」を近似する。
+      いずれも前日から続く機種は段取り済みなので対象外。
     戻り値: (割付セル一覧, 機種->投入完了日, 警告一覧)。
     """
     allocation: list[DailyCell] = []
@@ -630,6 +738,10 @@ def allocate_bottleneck(
         today_products: set[str] = set()
         product_used_today: dict[str, float] = {}
         blocked_today: set[str] = set()
+        # 号機マスタがあるときの当日の号機状態: 号機 -> [載せた機種, 消化台数]
+        machine_today: dict[str, list] = (
+            {m.machine_id: [None, 0.0] for m in machines} if machines else {}
+        )
 
         for i, item in enumerate(queue):
             if line_remaining <= 0:
@@ -638,6 +750,38 @@ def allocate_bottleneck(
                 continue
             product = item.product
             if product in blocked_today:
+                continue
+
+            if machines is not None:
+                take = _assign_to_machines(
+                    product=product,
+                    lot_remaining=lot_remaining[i],
+                    machines=machines,
+                    machine_today=machine_today,
+                    line_remaining=line_remaining,
+                    product_cap_left=(
+                        None if caps_today is None or caps_today.get(product) is None
+                        else caps_today[product] - product_used_today.get(product, 0.0)
+                    ),
+                    input_unit=input_unit,
+                    a_shift_only_switch=a_shift_only_switch,
+                    a_shift_fraction=a_shift_fraction,
+                    continuing=product in prev_day_products,
+                    day=day,
+                    order_id=item.order_id,
+                    allocation=allocation,
+                    deferrals=deferrals,
+                )
+                if take <= 0:
+                    continue
+                lot_remaining[i] -= take
+                line_remaining -= take
+                total_left -= take
+                product_used_today[product] = product_used_today.get(product, 0.0) + take
+                today_products.add(product)
+                if lot_remaining[i] <= 0:
+                    lot_completion[i] = day
+                    completion[product] = day
                 continue
 
             if (
@@ -1025,6 +1169,7 @@ def plan_bottleneck(
     high_mode: str | None = None,
     high_mode_days: int = 0,
     holidays: set[date] | None = None,
+    machines_by_mode: dict[str, list[MachineSlot]] | None = None,
 ) -> BottleneckPlanResult:
     """Step 1(シフト/レート決定)＋Step 2(HAL日次配分)を実行する。
 
@@ -1038,6 +1183,9 @@ def plan_bottleneck(
     能力・機種別キャパを使う(納期遅れ解消の「22Hを◯日」検討用)。
     holidays は working_days を作ったときの非稼働日。工程展開の表示軸(`stage_days`)を
     計画期間の前後へ伸ばすときに、同じカレンダーで稼働日を数えるために使う。
+    machines_by_mode({モード: [MachineSlot]}, CAP表由来)を渡すと、選択したモードの
+    ボトルネック工程の号機で号機単位に割り付ける(同日に並行できる機種数が号機の
+    空きで決まる)。
     """
     pre_warnings: list[str] = []
     if product_caps_by_mode:
@@ -1115,6 +1263,28 @@ def plan_bottleneck(
         if high_pcaps:
             pcaps_by_day = {d: high_pcaps for d in high_days}
 
+    # 号機マスタと機種別キャパの整合チェック。ボトルネック工程の号機を足しても
+    # 機種別キャパに届かない機種は、表に載っていない号機がある(CAP表の注記に
+    # 「HAL#1/HAL#2優先で生産中」とある機種など)。黙って少ない能力で組むと
+    # その機種だけ後ろへずれるので、数量を挙げて知らせる。
+    bottleneck_machines = [
+        m for m in (machines_by_mode or {}).get(shift_mode, []) if m.stage_id == bottleneck_stage
+    ]
+    if bottleneck_machines:
+        mode_caps = (product_caps_by_mode or {}).get(shift_mode, {})
+        for product in sorted({d.product for d in demands}):
+            stated = mode_caps.get(product)
+            if not stated:
+                continue
+            usable = sum(m.daily_capacity for m in bottleneck_machines if m.can_run(product))
+            if usable + 1e-6 < stated:
+                result.warnings.append(
+                    f"{product}: 機種別キャパ {stated:,.0f}/日 に対し、号機マスタで"
+                    f"{bottleneck_stage}に使える号機の合計は {usable:,.0f}/日 しかありません"
+                    f"(不足 {stated - usable:,.0f})。設備表に載っていない号機があるはずなので"
+                    f"確認してください。この機種はこのままだと計画が後ろへずれます。"
+                )
+
     allocation, completion, warnings = allocate_bottleneck(
         demands,
         working_days,
@@ -1127,6 +1297,13 @@ def plan_bottleneck(
             (f.input_unit for f in (stage_flows or []) if f.stage_id == bottleneck_stage), None
         ),
         product_daily_caps_by_day=pcaps_by_day,
+        machines=(
+            [
+                m for m in (machines_by_mode or {}).get(shift_mode, [])
+                if m.stage_id == bottleneck_stage
+            ]
+            or None
+        ),
     )
     result.allocation = allocation
     result.completion = completion

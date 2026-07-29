@@ -43,6 +43,7 @@ from thm_ledger_import import (  # noqa: E402
 )
 
 # TA1_投入計画の機種コード -> 呼称(config の productAliases は RC- 付きなので別途持つ)
+# レシピコード -> 呼称。config の recipeCodes(CAP表 機種一覧 由来)を優先し、無ければこれ。
 TA1_CODE_TO_NAME = {
     "A02F": "さそり金融", "S100": "さそり金融",
     "A05A": "さそり交通", "S103": "さそり交通",
@@ -156,6 +157,10 @@ def main() -> None:
     start, end = date.fromisoformat(args.start), date.fromisoformat(args.end)
 
     cfg = load_bottleneck_planning()
+    # TA1の機種コード列はCAP表の工程別レシピコード。config にあればそれを使う。
+    code_to_name = dict(TA1_CODE_TO_NAME)
+    code_to_name.update(cfg.recipe_codes or {})
+    TA1_CODE_TO_NAME.update(code_to_name)
     ledger_bytes = Path(args.ledger).read_bytes()
 
     # ---------------------------------------------------------------- 1
@@ -196,7 +201,7 @@ def main() -> None:
 
     config_holidays = set(cfg.non_working_days or ())
 
-    def build(a_switch=True, hol=config_holidays, s=start, e=end, dem=None):
+    def build(a_switch=True, hol=config_holidays, s=start, e=end, dem=None, machines=True):
         wd = working_days_in_range(s, e, holidays=hol or None)
         return wd, plan_bottleneck(
             dem if dem is not None else demands, wd, cfg.line_daily_capacities,
@@ -204,6 +209,8 @@ def main() -> None:
             a_shift_only_switch=a_switch, a_shift_fraction=cfg.a_shift_fraction,
             product_caps_by_mode=cfg.product_daily_caps_by_mode,
             bottleneck_stage=cfg.bottleneck_stage, machine_counts=cfg.machine_counts,
+            holidays=hol or None,
+            machines_by_mode=(cfg.machines_by_mode or None) if machines else None,
         )
 
     # ---------------------------------------------------------------- 2
@@ -237,12 +244,13 @@ def main() -> None:
                   f"立上げ+切替 {changeovers(m)}回")
 
     # ---------------------------------------------------------------- 3
-    hdr("3. A勤限定切替 ON/OFF の影響")
-    for lbl, sw in (("ON(現行)", True), ("OFF", False)):
-        _wd, r = build(a_switch=sw)
+    hdr("3. A勤限定切替 ON/OFF と 号機マスタ有無の影響")
+    for lbl, sw, mac in (("ON+号機マスタ(現行)", True, True), ("ON/号機マスタ無し", True, False),
+                         ("OFF+号機マスタ", False, True)):
+        _wd, r = build(a_switch=sw, machines=mac)
         h = hal_by_day(r)
         idle = sum(max(0.0, r.daily_capacity - sum(v.values())) for v in h.values())
-        print(f"  A勤限定切替 {lbl:<8} 納期遅れ {sum(1 for l in r.mil_lots if not l.on_time):>3}製番 / "
+        print(f"  {lbl:<20} 納期遅れ {sum(1 for l in r.mil_lots if not l.on_time):>3}製番 / "
               f"遊休能力 {idle:>10,.0f}台 / 平均並行機種数 "
               f"{sum(len(v) for v in h.values()) / len(h):.2f} / "
               f"繰下げ警告 {sum(1 for w in r.warnings if A_SHIFT_DEFERRAL_TAG in w):>3}件")

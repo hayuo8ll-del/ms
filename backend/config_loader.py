@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
@@ -76,6 +76,10 @@ class BottleneckPlanningConfig:
     product_daily_caps_by_mode: dict[str, dict[str, float]]
     non_working_days: list[date]  # 平日の非稼働日(祝日/計画休); 週末は別途除外
     shipment_buffer_days: int  # 完成目標=出荷日−この日数(暦日)。既定2
+    # CAP表由来の号機マスタ {シフトモード: [MachineSlot]}。空なら機種別キャパのみで近似する。
+    machines_by_mode: dict = field(default_factory=dict)
+    # 工程別レシピコード -> 呼称(TA1_投入計画の機種コード列がこれ)
+    recipe_codes: dict = field(default_factory=dict)
 
     @property
     def stage_order(self) -> list[str]:
@@ -84,7 +88,7 @@ class BottleneckPlanningConfig:
 
 def load_bottleneck_planning() -> BottleneckPlanningConfig:
     """ボトルネック計画パラメータを読み込む。ファイルが無ければ組み込み既定値を使う。"""
-    from bottleneck_planner import StageFlowConfig
+    from bottleneck_planner import MachineSlot, StageFlowConfig
     from thm_ledger_import import PRODUCT_ALIASES, PRODUCT_DAILY_CAPS_BY_MODE
 
     path = CONFIG_DIR / "bottleneck_planning.json"
@@ -123,6 +127,19 @@ def load_bottleneck_planning() -> BottleneckPlanningConfig:
         },
         non_working_days=[date.fromisoformat(d) for d in data.get("nonWorkingDays", [])],
         shipment_buffer_days=int(data.get("shipmentBufferDays", 2)),
+        machines_by_mode={
+            mode: [
+                MachineSlot(
+                    machine_id=m["machineId"],
+                    stage_id=m["stageId"],
+                    daily_capacity=float(m["dailyCapacity"]),
+                    eligibility=dict(m.get("eligibility") or {}),
+                )
+                for m in slots
+            ]
+            for mode, slots in (data.get("machinesByMode") or {}).items()
+        },
+        recipe_codes=dict(data.get("recipeCodes") or {}),
     )
 
 

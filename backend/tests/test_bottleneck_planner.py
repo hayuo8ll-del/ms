@@ -8,6 +8,7 @@ from bottleneck_planner import (  # noqa: E402
     DailyCell,
     DemandItem,
     EquipmentStop,
+    MachineSlot,
     StageDailyCell,
     StageFlowConfig,
     allocate_bottleneck,
@@ -771,3 +772,85 @@ def test_stage_days_respect_holidays():
     )
     assert date(2026, 8, 14) not in result.stage_days  # 祝日は軸にも入らない
     assert result.stage_days[0] == date(2026, 8, 10)  # 8/12の2稼働日前(8/11,8/10)
+
+
+# --- 号機マスタ(CAP表)を使った割り付け ------------------------------------------
+
+
+def _hal(machine_id, cap, **elig):
+    return MachineSlot(machine_id, "HAL", cap, dict(elig))
+
+
+def test_machine_master_allows_parallel_products_on_free_machines():
+    """空いている号機は朝から段取りできるので、同日に別機種を立ち上げられる。
+
+    現場のTA1計画が毎日3〜5機種を並行させているのはこれ。機種別キャパだけの近似では
+    「ラインが埋まっているか」しか見えず、並行度が出なかった。
+    """
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    machines = [
+        _hal("HAL#5", 30000, A="○"), _hal("HAL#6", 30000, A="○"),
+        _hal("HAL#7", 30000, B="○"), _hal("HAL#8", 30000, B="○", C="○"),
+    ]
+    demands = [
+        DemandItem("A", 180000, date(2026, 7, 10), order_id="L1"),
+        DemandItem("B", 120000, date(2026, 7, 15), order_id="L2"),
+        DemandItem("C", 30000, date(2026, 7, 20), order_id="L3"),
+    ]
+    alloc, _c, warnings = allocate_bottleneck(
+        demands, days, 120000, a_shift_only_switch=True, a_shift_fraction=0.4,
+        machines=machines,
+    )
+    day1 = {c.product for c in alloc if c.day == date(2026, 7, 1)}
+    assert day1 == {"A", "B"}  # 初日からA(HAL#5/#6)とB(HAL#7/#8)が並行
+    assert not any("A勤" in w for w in warnings)
+    # どの号機に載せたかが残る
+    assert {c.machine_id for c in alloc if c.day == date(2026, 7, 1)} == {
+        "HAL#5", "HAL#6", "HAL#7", "HAL#8"
+    }
+
+
+def test_machine_master_respects_eligibility_and_machine_capacity():
+    """生産できない号機には載らず、号機1台の日次能力も超えない。"""
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    machines = [_hal("HAL#5", 30000, A="○"), _hal("HAL#9", 30000, B="○")]
+    demands = [DemandItem("A", 200000, date(2026, 7, 31), order_id="L1")]
+    alloc, _c, _w = allocate_bottleneck(demands, days, 120000, machines=machines)
+
+    assert {c.machine_id for c in alloc} == {"HAL#5"}  # HAL#9はAを作れない
+    per_day = {}
+    for c in alloc:
+        per_day[c.day] = per_day.get(c.day, 0) + c.quantity
+    assert all(q <= 30000 + 1e-6 for q in per_day.values())  # 1台ぶんが上限
+
+
+def test_machine_master_defers_midday_takeover_past_a_shift():
+    """稼働中の号機を奪う場合だけA勤限定制約が効く(空き号機があるなら効かない)。"""
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    machines = [_hal("HAL#5", 30000, A="○", B="○")]  # 1台しかないので必ず奪い合いになる
+    demands = [
+        DemandItem("A", 25000, date(2026, 7, 3), order_id="L1"),   # 初日に83%消化
+        DemandItem("B", 30000, date(2026, 7, 10), order_id="L2"),
+    ]
+    alloc, _c, warnings = allocate_bottleneck(
+        demands, days, 120000, a_shift_only_switch=True, a_shift_fraction=0.4,
+        machines=machines,
+    )
+    b_first = min(c.day for c in alloc if c.product == "B")
+    assert b_first == date(2026, 7, 2)  # 7/1中には奪えない
+    assert any("A勤" in w for w in warnings)
+
+
+def test_warns_when_machines_cannot_reach_the_stated_product_cap():
+    """機種別キャパに号機の合計が届かない=表に載っていない号機がある、を警告する。"""
+    days = working_days_in_range(date(2026, 7, 1), date(2026, 7, 31))
+    flows = [StageFlowConfig("HAL", 0)]
+    demands = [DemandItem("A", 300000, date(2026, 7, 31), order_id="L1")]
+    result = plan_bottleneck(
+        demands, days, CAPS, stage_flows=flows,
+        product_caps_by_mode={"16h": {"A": 90000}, "22h": {"A": 120000}},
+        machines_by_mode={"16h": [_hal("HAL#5", 20000, A="○")],
+                          "22h": [_hal("HAL#5", 30000, A="○")]},
+    )
+    warning = next(w for w in result.warnings if "号機マスタ" in w)
+    assert "機種別キャパ" in warning and "不足" in warning

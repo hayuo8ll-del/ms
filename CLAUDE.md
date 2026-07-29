@@ -133,9 +133,24 @@ directly by FastAPI's `StaticFiles` mount.
   完成目標 `due_date`=出荷日−buffer / `ship_date`=出荷日 / on-time = completion ≤ 完成目標 when
   demands carry them), attached as `mil_lots` and surfaced as the per-製番 completion table
   (THM 短期投入予定表 form); lots missing the 完成目標 also raise warnings.
+  **Machine-level assignment** (`MachineSlot` / `allocate_bottleneck(..., machines=[...])`,
+  fed by `plan_bottleneck(..., machines_by_mode=...)` from the CAP表): with the 号機 master
+  the bottleneck allocation runs **per machine** rather than against an opaque 機種別キャパ —
+  each 号機 has its own daily capacity and its own list of producible 機種, and `DailyCell`
+  records which 号機 a cell landed on. Machines are picked in the order *already running this
+  機種 → idle all day → running another 機種* (`△` conditional machines last), which is what
+  makes the A-shift rule below meaningful: only the last case is a mid-day takeover.
+  Measured on the real files this raises same-day parallel 機種 from 2.55 to 2.82 (the real
+  line runs 3.38). `plan_bottleneck` also **cross-checks the two halves of the CAP表**: when
+  a 機種's eligible bottleneck machines can't sum to its stated 機種別キャパ it warns with the
+  shortfall, since that means the matrix is missing a machine and that 機種 will otherwise be
+  planned late.
   **A-shift-only changeover** (`allocate_bottleneck(..., a_shift_only_switch=True,
   a_shift_fraction=0.5)`): product changeovers (performed by supervisors on TAL/MIL) can
-  only happen during the day shift. The rule only bites when **the line is already
+  only happen during the day shift. With a 号機 master the test is per machine — a machine
+  idle since the morning can always be set up, only taking over a machine already running
+  another 機種 past `a_shift_fraction` of its own day is deferred. Without one, the rule
+  falls back to approximating that from whether **the line is already
   saturated** — i.e. the 機種別キャパ of the products already running that day sum to at
   least the line capacity, so a new product must take over a busy machine group; if the
   running products can't fill the line, another machine group is idle all day and its
@@ -187,6 +202,22 @@ directly by FastAPI's `StaticFiles` mount.
   from `stage_allocation` (all stages) or, without stage expansion, the bottleneck stage.
   The A-shift-only switch deferrals stay as warnings tagged `A_SHIFT_DEFERRAL_TAG` (module
   constant, counted for the summary).
+- `backend/cap_import.py` — reads the real **CAP表** (`THM設備Cap/機種対応表`) into the
+  equipment master. `parse_machine_master` → `{shift mode: [MachineSlot]}` (per-号機 stage,
+  daily capacity, and product eligibility ○/△ from the 機種×号機 matrix — × dropped);
+  `parse_product_daily_caps` → the 機種別キャパ column per mode; `parse_product_aliases` →
+  RC-code → 呼称 from the `機種一覧` sheet, registering **both** the full model name and
+  its **root code** (`RC-S103` alongside `RC-S103/JW16　INLAY`) because `resolve_product`
+  is longest-*prefix*: full names alone stop matching the ledger's shorter forms and 31 of
+  101 ledger rows silently go unmapped. `parse_recipe_codes` → the per-stage recipe code
+  (`A02F`, `982F`, …) → 呼称, which is what the TA1_投入計画's 機種 column holds.
+  `derive_product_caps` recomputes 機種別キャパ from the machines (min over stages of
+  eligible-machine capacity) — on the real file it reproduces the sheet's own column for
+  6 of 8 products, and the two that differ (さそり金融/SuicaⅢ, 90k derived vs 120k stated)
+  are the HAL#1/HAL#2 machines the sheet's note mentions but the matrix omits.
+  The parsed output is written into `config/bottleneck_planning.json`
+  (`machinesByMode` / `productAliases` / `productDailyCapsByMode` / `recipeCodes` /
+  `machineCounts`), so swapping in a new CAP表 is a config refresh, not a code change.
 - `backend/thm_ledger_import.py` — converts the real **THM 生産台帳** (`.xlsx`, orders with
   完成品名/完成予定数/完成予定日) into `DemandItem`s for the bottleneck planner. The lot
   identifier (`order_id`) is the **製番 column** (same key as the shop-floor MIL tables;
@@ -494,10 +525,17 @@ directly by FastAPI's `StaticFiles` mount.
   FeliCa's grey cells; refresh it per period via 「非稼働日カレンダー取込(FeliCa)」 — an empty
   list silently schedules full production on holidays), but the discrete `scheduler.py` still
   only skips weekends.
-- The A-shift-only changeover rule approximates "is a machine group free" from the
-  per-product daily caps summing to the line capacity. It has no explicit machine-group
-  model, so it cannot express "two products share one group" or limit how many setups the
-  supervisors can do in one morning.
+- The 号機 master covers the CAP表's own matrix only. Its HAL section omits HAL#1/HAL#2
+  (the sheet's note says Suica3 runs on them), so さそり金融/SuicaⅢ are planned against
+  90k/day instead of their stated 120k 機種別キャパ and finish late; the planner warns about
+  the gap rather than guessing. Adding the missing row drops completion MAE 8.70 → 7.91.
+  There is still no limit on how many setups the supervisors can do in one morning, and the
+  model assumes a machine can be handed over mid-day at any fill fraction below
+  `aShiftFraction`.
+- `config/bottleneck_planning.json`'s `lineDailyCapacities` (16H 90k / 22H 120k) are the
+  practical planning rates and sit below the CAP表's machine sums (16H 100k / 22H 150k for
+  HAL), so the line ceiling — not the 号機 — is usually what binds. They are maintained by
+  hand, not derived from the machine master.
 - Lot sequencing is least-slack against each product's own capacity. It has no notion of
   material arrival or customer priority, so a 機種 the real planner front-loads for reasons
   outside the ledger will still be scheduled late (さそり金融 on the July-August files).

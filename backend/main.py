@@ -211,6 +211,7 @@ async def _build_bottleneck_plan(
         bottleneck_stage=cfg.bottleneck_stage,
         machine_counts=cfg.machine_counts,
         holidays=holidays or None,
+        machines_by_mode=cfg.machines_by_mode or None,
     )
     result = plan_bottleneck(demands, working_days, cfg.line_daily_capacities, **plan_kwargs)
     result.warnings.extend(actual_warnings)
