@@ -20,13 +20,25 @@ from datetime import date, timedelta
 # 警告文の生成と、その件数集計(main.py)の両方でこの定数を使う。
 A_SHIFT_DEFERRAL_TAG = "機種切替(管理者作業)はA勤のみ"
 
+def _record_deferral(deferrals: dict, product: str, day) -> None:
+    """A勤限定切替の繰り下げを機種×日で1回だけ記録する(ロットごとに数えない)。"""
+    days = deferrals.setdefault(product, [])
+    if not days or days[-1] != day:
+        days.append(day)
+
+
+# 完成目標を超過する製番の警告を何件まで個別に出すか(残りは1行へ集約)。
+# 遅延が数十件あるとき全部並べると、他の警告が読めなくなる。
+_LATE_WARNING_LIMIT = 10
+
 
 @dataclass
 class DemandItem:
     """一定期間に生産すべき機種と数量・納期。
 
-    `due_date` は**完成目標日**(=出荷日−出荷前バッファ)。EDD並べ替え・遅れ判定はこれを使う。
-    `ship_date` は本当の納期=出荷日(表示用。台帳に出荷日が無い行は None)。
+    `due_date` は**完成目標日**(=台帳の完成予定日)。EDD/スラック並べ替え・遅れ判定はこれ。
+    `ship_date` は台帳の出荷日(表示用)。出荷日はこのラインの後工程(内製カードのカード化
+    など)を経た先の日付なので、完成目標には使わない。台帳に出荷日が無い行は None。
     """
 
     product: str
@@ -155,8 +167,8 @@ def apply_equipment_stops(
 class MilLotCompletion:
     """MIL(最終工程)を製番(出荷ロット)単位で見た完成日と納期充足。
 
-    `due_date` は完成目標日(出荷日−出荷前バッファ)。`on_time` は完成日<=完成目標日。
-    `ship_date` は本当の納期=出荷日(表示用)。
+    `due_date` は完成目標日(台帳の完成予定日)。`on_time` は完成日<=完成目標日。
+    `ship_date` は台帳の出荷日(表示用。後工程を経た先の日付)。
     """
 
     order_id: str
@@ -673,7 +685,7 @@ def _assign_to_machines(
         taken += room
 
     if taken <= 0 and deferred:
-        deferrals.setdefault(product, []).append(day)
+        _record_deferral(deferrals, product, day)
     return taken
 
 
@@ -804,7 +816,7 @@ def allocate_bottleneck(
                     used_fraction = 1.0 - line_remaining / cap_today
                     if used_fraction > a_shift_fraction:
                         blocked_today.add(product)
-                        deferrals.setdefault(product, []).append(day)
+                        _record_deferral(deferrals, product, day)
                         continue
 
             available = line_remaining
@@ -1336,11 +1348,24 @@ def plan_bottleneck(
 
         if any(f.stage_id == mil_stage_id for f in stage_flows):
             result.mil_lots = mil_completion_by_order(stage_cells, demands, mil_stage_id)
-            late = [lot for lot in result.mil_lots if lot.on_time is False]
-            for lot in late:
+            # 遅れロットは遅れ日数の大きい順。全件は 製番別MIL シート/表で追えるので、
+            # 警告欄には上位だけ出し、残りは1行にまとめる(数十行あると他が読めない)。
+            late = sorted(
+                (lot for lot in result.mil_lots if lot.on_time is False),
+                key=lambda lot: (lot.completion_day - lot.due_date).days,
+                reverse=True,
+            )
+            head, rest = late[:_LATE_WARNING_LIMIT], late[_LATE_WARNING_LIMIT:]
+            for lot in head:
                 result.warnings.append(
                     f"製番{lot.order_id}({lot.product}): MIL完成予定 {lot.completion_day.isoformat()} が "
-                    f"納期 {lot.due_date.isoformat()} を超過します。"
+                    f"完成目標 {lot.due_date.isoformat()} を "
+                    f"{(lot.completion_day - lot.due_date).days}日 超過します。"
+                )
+            if rest:
+                result.warnings.append(
+                    f"完成目標を超過する製番は他に {len(rest)}件 あります"
+                    f"(合計 {sum(l.quantity for l in late):,.0f}台)。全件は製番別MILの表で確認してください。"
                 )
 
     # 段取り(切替)キャンペーン: 工程展開があれば全工程、無ければボトルネック工程のみ。

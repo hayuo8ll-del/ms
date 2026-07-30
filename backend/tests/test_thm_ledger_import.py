@@ -92,27 +92,34 @@ def test_parse_ledger_filters_future_due_and_lines():
     assert [d.order_id for d in demands] == ["THM2"]
 
 
-def test_due_date_is_ship_date_minus_buffer():
-    # 出荷日=真の納期。完成目標=出荷日−2日(暦日, 既定)。完成予定日(7/15)は使わない。
+def test_due_date_is_the_completion_date_not_the_ship_date():
+    """完成目標=台帳の完成予定日。出荷日はこのラインの後工程を経た先の日付なので使わない。
+
+    内製カードのモデル(RC-S100/S127系など)はMILの後にカード化工程があり、出荷日は
+    カードの出荷日。実データでは完成予定日との差が中央値52暦日あり、出荷日を完成目標に
+    すると1〜3か月遅く計画してしまう。
+    """
     rows = [
         ["THM1", "CTA1", "RC-SA02F/5", None, None, "S1", None, None, None, date(2026, 7, 15), 12000, date(2026, 8, 7)],
     ]
     demands, _ = parse_thm_ledger(_ledger_workbook(rows))
     d = demands[0]
-    assert d.ship_date == date(2026, 8, 7)
-    assert d.due_date == date(2026, 8, 5)  # 8/7 − 2日
+    assert d.due_date == date(2026, 7, 15)   # 完成予定日
+    assert d.ship_date == date(2026, 8, 7)   # 出荷日は表示用に保持
 
 
-def test_buffer_is_configurable_and_falls_back_to_completion_when_no_ship():
+def test_due_date_falls_back_to_ship_minus_buffer_without_completion_date():
     rows = [
-        ["THM1", "CTA1", "RC-SA02F/5", None, None, "S1", None, None, None, date(2026, 7, 15), 100, date(2026, 8, 10)],
-        ["THM2", "CTA1", "RC-SA05A/5", None, None, "S2", None, None, None, date(2026, 7, 20), 200, None],  # 出荷日なし
+        # 完成予定日なし → 出荷日 8/10 − 3日
+        ["THM1", "CTA1", "RC-SA02F/5", None, None, "S1", None, None, None, None, 100, date(2026, 8, 10)],
+        # 出荷日なし → 完成予定日をそのまま使う
+        ["THM2", "CTA1", "RC-SA05A/5", None, None, "S2", None, None, None, date(2026, 7, 20), 200, None],
     ]
     demands, _ = parse_thm_ledger(_ledger_workbook(rows), shipment_buffer_days=3)
     by = {d.order_id: d for d in demands}
-    assert by["S1"].due_date == date(2026, 8, 7)   # 8/10 − 3日
+    assert by["S1"].due_date == date(2026, 8, 7)
     assert by["S2"].ship_date is None
-    assert by["S2"].due_date == date(2026, 7, 20)  # 出荷日なし → 完成予定日にフォールバック(バッファ無し)
+    assert by["S2"].due_date == date(2026, 7, 20)
 
 
 def _with_actuals_sheet(buf, rows):
@@ -349,3 +356,28 @@ def test_parse_thm_shortterm_daily_actuals_forward_fills_date_columns():
     daily = parse_thm_shortterm_daily_actuals(buf)
     assert daily["TAL"] == {date(2026, 7, 1): 150.0}          # 100+50、黒字は除外
     assert daily["MIL"] == {date(2026, 7, 1): 200.0, date(2026, 7, 2): 300.0}
+
+
+def test_period_filter_uses_ship_date_not_completion_date():
+    """完成予定日を過ぎたロットは最優先の仕掛かり。期間の絞り込みは出荷日で見る。
+
+    完成予定日で切ると、実データでは1,094,940台の遅延分が黙って計画から消える。
+    """
+    rows = [
+        # 完成予定日は過ぎているが出荷日はこれから → 残さなければならない
+        ["THM1", "CTA1", "RC-SA02F/5", None, None, "S1", None, None, None,
+         date(2026, 5, 30), 100, date(2026, 9, 3)],
+        # 出荷日も過ぎている → 終わった仕事として除外
+        ["THM2", "CTA1", "RC-SA05A/5", None, None, "S2", None, None, None,
+         date(2026, 5, 30), 200, date(2026, 6, 10)],
+        # 両方これから
+        ["THM3", "CTA1", "RC-SA06A", None, None, "S3", None, None, None,
+         date(2026, 8, 20), 300, date(2026, 9, 10)],
+    ]
+    demands, _ = parse_thm_ledger(
+        _ledger_workbook(rows), only_due_on_or_after=date(2026, 7, 29)
+    )
+    by = {d.order_id: d for d in demands}
+    assert set(by) == {"S1", "S3"}
+    # 残した遅延ロットの完成目標は過去日のまま(=最優先で並ぶ)
+    assert by["S1"].due_date == date(2026, 5, 30)

@@ -178,7 +178,7 @@ def test_mil_lot_due_date_overrun_is_flagged_and_warned():
 
     late = [lot for lot in result.mil_lots if lot.on_time is False]
     assert any(lot.order_id == "L2" for lot in late)
-    assert any("製番L2" in w and "納期" in w for w in result.warnings)
+    assert any("製番L2" in w and "完成目標" in w for w in result.warnings)
 
 
 def test_apply_actuals_reduces_remaining_and_drops_completed():

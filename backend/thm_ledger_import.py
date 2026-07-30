@@ -144,12 +144,19 @@ def parse_thm_ledger(
 ) -> tuple[list[DemandItem], list[UnmappedRow]]:
     """台帳ワークブックを需要(DemandItem)一覧へ変換する。
 
-    **納期の捉え方**: 本当の納期は台帳の**出荷日**。完成はその `shipment_buffer_days`(既定2)
-    日前に済ませたいので、EDD・遅れ判定に使う `due_date`(完成目標日)=出荷日−バッファ(暦日)
-    とする。出荷日が無い行のみ**完成予定日**へフォールバック(この場合バッファは掛けない)。
-    `ship_date` には出荷日(表示用の真の納期)を入れる。
+    **納期の捉え方**: EDD・遅れ判定に使う `due_date`(完成目標日)は台帳の**完成予定日**。
+    出荷日は**このラインの後工程を経た先の日付**なので完成目標には使えない
+    (内製カードのモデル=CAP表「カード内製」列の RC-S100/S104/S106/S127/S136/S140 系は
+    MILの後にカード化工程があり、その投入予定は別管理。出荷日はカードの出荷日で、
+    完成予定日との差は実データで中央値52暦日・最大76暦日ある)。
+    実データ照合でも、台帳の完成予定日は実計画(FeliCa)の完成日と **33製番すべてで完全一致**
+    (MAE 0.0稼働日)だったのに対し、出荷日−2暦日 は 15.7稼働日 遅かった。
+    完成予定日が無い行だけ 出荷日 − `shipment_buffer_days`(既定2, 暦日)へフォールバックする。
+    `ship_date` には出荷日(表示用)を入れる。
 
-    - `only_due_on_or_after`: 完成目標日(=出荷日−バッファ)がこの日以降の受注だけ対象にする。
+    - `only_due_on_or_after`: **出荷日**がこの日以降の受注だけ対象にする(出荷日が無ければ
+      完成目標日で代用)。完成予定日で切ってはいけない — 完成予定日を過ぎたロットは
+      最優先で作るべき仕掛かりであって、対象外ではない。
     - `lines`: ライン名の集合を渡すと、その受注だけに絞る(例: {"CTA1", "CTA2"})。
     戻り値: (需要一覧, 呼称解決できなかった行一覧)。
     """
@@ -193,14 +200,16 @@ def parse_thm_ledger(
         qty = ws.cell(row=r, column=c_qty).value if c_qty else None
         ship = _as_date(ws.cell(row=r, column=c_ship).value) if c_ship else None
         comp = _as_date(ws.cell(row=r, column=c_comp).value) if c_comp else None
-        # 完成目標日 = 出荷日 − バッファ。出荷日が無ければ完成予定日にフォールバック。
-        if ship is not None:
-            due = ship - buffer
-        else:
-            due = comp
+        # 完成目標日 = 台帳の**完成予定日**。出荷日はこのラインの後工程(内製カードなら
+        # カード化、外部委託なら委託先)を経た先の日付なので、完成目標には使えない。
+        # 完成予定日が無い行だけ 出荷日−バッファ にフォールバックする。
+        due = comp if comp is not None else (ship - buffer if ship is not None else None)
         if not isinstance(qty, (int, float)) or qty <= 0 or due is None:
             continue
-        if only_due_on_or_after and due < only_due_on_or_after:
+        # 対象期間の絞り込みは**出荷日**で見る。完成予定日を過ぎたロットはむしろ最優先で
+        # 作らなければならないので、完成予定日で切ると1,094,940台(実データ)の遅延分が
+        # 黙って計画から消える。出荷日まで過ぎている行だけが「終わった仕事」。
+        if only_due_on_or_after and (ship or due) < only_due_on_or_after:
             continue
 
         name = ws.cell(row=r, column=c_name).value if c_name else None

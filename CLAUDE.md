@@ -64,8 +64,8 @@ directly by FastAPI's `StaticFiles` mount.
   `productDailyCapsByMode` (機種別キャパ) and `nonWorkingDays` (ISO dates — weekday
   非稼働日/祝日/計画休 that `working_days_in_range` excludes on top of weekends; populated from
   the FeliCa 短期投入予定表's grey cells via `/api/bottleneck/apply-calendar`) and
-  `shipmentBufferDays` (完成目標 = 出荷日 − this many calendar days; default 2 — the 納期 model,
-  see `thm_ledger_import`). Swapping capacities/aliases needs only this file.
+  `shipmentBufferDays` (fallback only: 完成目標 = 出荷日 − this many calendar days, default 2,
+  used when a ledger row has no 完成予定日 — see the 納期 model in `thm_ledger_import`). Swapping capacities/aliases needs only this file.
 - `config/changeover_matrix.json` — per-stage, per-product-pair changeover minutes, plus
   `aShiftOnlyTransitions` (some product transitions on some stages may only start during
   the day shift).
@@ -244,12 +244,18 @@ directly by FastAPI's `StaticFiles` mount.
   `PRODUCT_ALIASES` (RC-code → 呼称, derived from the CAP 機種一覧; the ICチップ column is
   deliberately not used since it can't distinguish さそり金融/交通). `parse_thm_ledger`
   reads the 台帳 sheet (header row 2), optionally filters to future-due orders and specific
-  production lines, and returns `(demands, unmapped_rows)`. **納期の捉え方**: the true 納期 is
-  the ledger's **出荷日**; completion should finish `shipment_buffer_days` (default 2, calendar
-  days) earlier, so each `DemandItem.due_date` (= completion target used for EDD / lateness) =
-  出荷日 − buffer, and `ship_date` carries the raw 出荷日 for display. Rows with no 出荷日 fall
-  back to 完成予定日 (no buffer). The future-due filter (`only_due_on_or_after`) is applied to
-  this completion target. `parse_actuals` reads an
+  production lines, and returns `(demands, unmapped_rows)`. **納期の捉え方**: the completion target
+  (`DemandItem.due_date`, used for slack ordering and lateness) is the ledger's **完成予定日**.
+  出荷日 is *not* usable as a completion target because it lies beyond this line's downstream
+  processes — for the CAP表's `カード内製` models (RC-S100/S104/S106/S127/S136/S140 roots) MIL
+  is followed by in-house **carding**, planned separately, so 出荷日 is the *card's* ship date:
+  on the real ledger it sits a median of **52 calendar days** (max 76) after 完成予定日.
+  Verified against the real files: 完成予定日 matches FeliCa's completion day for **all 33
+  matched 製番, MAE 0.0 working days**, while 出荷日−2 was 15.7 working days late. Rows with no
+  完成予定日 fall back to 出荷日 − `shipment_buffer_days` (default 2, calendar). `ship_date`
+  carries 出荷日 for display. The period filter (`only_due_on_or_after`) is applied to
+  **出荷日**, not the completion target — a lot past its 完成予定日 is the most urgent work in
+  the shop, and filtering on the target silently dropped 1,094,940 units of real backlog. `parse_actuals` reads an
   optional 「実績」 sheet (columns 製番/実績数, duplicates summed) from the same workbook,
   feeding `apply_actuals` for plan revision against actuals. `parse_daily_actuals` reads an
   optional 「日次実績」 sheet (日付/[工程]/実績数, summed per day across stages) for the
