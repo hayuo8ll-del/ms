@@ -610,6 +610,61 @@ def _sequence_lots(
     return [item for _key, item in sorted(zip(slack, ordered), key=lambda pair: pair[0])]
 
 
+def _release_indices(
+    queue: list[DemandItem],
+    working_days: list[date],
+    product_daily_caps: dict[str, float] | None,
+    look_ahead_days: int = 0,
+    line_daily_capacity: float | None = None,
+) -> dict[int, int]:
+    """ロットごとの「これ以上遅らせられない着手稼働日」インデックスを返す。
+
+    素の前詰め(初日から能力いっぱいに埋める)だと、能力に余裕がある期間では全ロットが
+    可能な限り早く完成してしまう。実データでは全機種いっせいに約7稼働日 早く完成し、
+    完成予定日に合わせて平準化している現場の計画とずれた。
+
+    ロットごとに
+        着手期限 = 完成目標までの稼働日index − 自機種キャパでの所要日数 − 前倒し許容
+    を出し、その日より前には着手しない(=納期に合わせた後ろ詰め)。所要日数は同一機種で
+    自分より納期の早い分の累積で数えるので、同じ機種のロットは順に並ぶ。
+    完成目標を過ぎているロットの着手期限は0(=初日から最優先)になる。
+    機種別キャパが無い機種はライン日次能力(`line_daily_capacity`)で所要日数を数える
+    — どの機種もラインより速くは流せないので、これが最短の所要日数になる。
+    戻り値: {queue内のindex: 着手できる最早の稼働日index}。
+    """
+    if not working_days:
+        return {}
+    n = len(working_days)
+
+    due_cache: dict[date, int] = {}
+
+    def due_index(due: date) -> int:
+        """完成目標日以前の最後の稼働日index(期間より前なら0、後ろなら最終日)。"""
+        if due not in due_cache:
+            i = -1
+            for k, d in enumerate(working_days):
+                if d <= due:
+                    i = k
+                else:
+                    break
+            due_cache[due] = i if i >= 0 else 0
+        return due_cache[due]
+
+    # 所要日数は「同一機種・納期の早い順」の累積で数える(順番に流すため)
+    position = {id(item): k for k, item in enumerate(queue)}
+    cumulative: dict[str, float] = {}
+    release: dict[int, int] = {}
+    for item in sorted(queue, key=lambda d: (d.due_date, d.product)):
+        cap = (product_daily_caps or {}).get(item.product) or line_daily_capacity
+        cum = cumulative.get(item.product, 0.0) + item.quantity
+        cumulative[item.product] = cum
+        # 所要日数は最低1日(0日で作れるロットは無い)。切り上げ。
+        need_days = max(1, int(-(-cum // cap))) if cap else 1
+        start = due_index(item.due_date) - need_days + 1 - look_ahead_days
+        release[position[id(item)]] = max(0, min(start, n - 1))
+    return release
+
+
 def _assign_to_machines(
     *,
     product: str,
@@ -700,6 +755,8 @@ def allocate_bottleneck(
     input_unit: float | None = None,
     product_daily_caps_by_day: dict[date, dict[str, float]] | None = None,
     machines: list[MachineSlot] | None = None,
+    pace_to_due_dates: bool = True,
+    pace_look_ahead_days: int = 3,
 ) -> tuple[list[DailyCell], dict[str, date], list[str]]:
     """ボトルネック工程の日次能力を上限に、機種別台数を稼働日へ割り付ける。
 
@@ -723,6 +780,15 @@ def allocate_bottleneck(
       いたら翌稼働日の朝へ繰り下げる。**号機マスタが無い場合**はライン全体の
       機種別キャパ合計で「別号機グループが空いているか」を近似する。
       いずれも前日から続く機種は段取り済みなので対象外。
+    - `pace_to_due_dates=True`(既定)のとき、各ロットは「完成目標に間に合う最も遅い
+      着手日」(`_release_indices`)より前には着手しない = 納期に合わせた後ろ詰め。
+      ラインが余った日は前倒しを許すので能力は遊ばせない。素の前詰めだと能力に余裕が
+      ある期間に全ロットを作り切ってしまい、実データでは全機種いっせいに約7稼働日
+      早く完成して現場の平準化された計画とずれた。`pace_look_ahead_days` は着手期限を
+      何稼働日ぶん前倒しして良いかの余裕。厳密に期限どおり(0日)だと早く流せる能力を
+      捨てるため後半の競合で遅れが増える(実データで納期遅れ 3→19製番)。実データで
+      振ったところ **+3稼働日** が最適で、遅れは前詰めと同じ3製番のまま
+      完成日MAEが 7.12→4.82 稼働日 まで下がった。
     戻り値: (割付セル一覧, 機種->投入完了日, 警告一覧)。
     """
     allocation: list[DailyCell] = []
@@ -736,8 +802,16 @@ def allocate_bottleneck(
     prev_day_products: set[str] = set()
     # A勤限定切替で開始を繰り下げた日を機種ごとにためる(警告は最後に1機種1行へ集約)
     deferrals: dict[str, list[date]] = {}
+    # 納期に合わせた後ろ詰め: ロットごとの着手期限(この日より前には着手しない)
+    release = (
+        _release_indices(
+            queue, working_days, product_daily_caps, pace_look_ahead_days,
+            line_daily_capacity=daily_capacity,
+        )
+        if pace_to_due_dates else {}
+    )
 
-    for day in working_days:
+    for day_index, day in enumerate(working_days):
         if total_left <= 0:
             break
         cap_today = (daily_capacity_by_day or {}).get(day, daily_capacity)
@@ -755,37 +829,96 @@ def allocate_bottleneck(
             {m.machine_id: [None, 0.0] for m in machines} if machines else {}
         )
 
-        for i, item in enumerate(queue):
+        # 1巡目は着手期限が来たロットだけ。ラインが余ったら2巡目で前倒しを許す
+        # (能力を遊ばせるより早く作るほうがよい。ただし順番は納期順のまま)。
+        for pull_forward in (False, True):
             if line_remaining <= 0:
                 break
-            if lot_remaining[i] <= 0:
-                continue
-            product = item.product
-            if product in blocked_today:
-                continue
+            if pull_forward and pace_to_due_dates:
+                break  # 後ろ詰めのときは前倒ししない(着手期限が来たロットだけ流す)
+            for i, item in enumerate(queue):
+                if line_remaining <= 0:
+                    break
+                if lot_remaining[i] <= 0:
+                    continue
+                # 1巡目=着手期限が来たロットのみ / 2巡目=残り(前倒し)のみ
+                if (release.get(i, 0) <= day_index) == pull_forward:
+                    continue
+                product = item.product
+                if product in blocked_today:
+                    continue
 
-            if machines is not None:
-                take = _assign_to_machines(
-                    product=product,
-                    lot_remaining=lot_remaining[i],
-                    machines=machines,
-                    machine_today=machine_today,
-                    line_remaining=line_remaining,
-                    product_cap_left=(
-                        None if caps_today is None or caps_today.get(product) is None
-                        else caps_today[product] - product_used_today.get(product, 0.0)
-                    ),
-                    input_unit=input_unit,
-                    a_shift_only_switch=a_shift_only_switch,
-                    a_shift_fraction=a_shift_fraction,
-                    continuing=product in prev_day_products,
-                    day=day,
-                    order_id=item.order_id,
-                    allocation=allocation,
-                    deferrals=deferrals,
-                )
+                if machines is not None:
+                    take = _assign_to_machines(
+                        product=product,
+                        lot_remaining=lot_remaining[i],
+                        machines=machines,
+                        machine_today=machine_today,
+                        line_remaining=line_remaining,
+                        product_cap_left=(
+                            None if caps_today is None or caps_today.get(product) is None
+                            else caps_today[product] - product_used_today.get(product, 0.0)
+                        ),
+                        input_unit=input_unit,
+                        a_shift_only_switch=a_shift_only_switch,
+                        a_shift_fraction=a_shift_fraction,
+                        continuing=product in prev_day_products,
+                        day=day,
+                        order_id=item.order_id,
+                        allocation=allocation,
+                        deferrals=deferrals,
+                    )
+                    if take <= 0:
+                        continue
+                    lot_remaining[i] -= take
+                    line_remaining -= take
+                    total_left -= take
+                    product_used_today[product] = product_used_today.get(product, 0.0) + take
+                    today_products.add(product)
+                    if lot_remaining[i] <= 0:
+                        lot_completion[i] = day
+                        completion[product] = day
+                    continue
+
+                if (
+                    a_shift_only_switch
+                    and product not in today_products
+                    and product not in prev_day_products
+                ):
+                    # 号機グループの空きを見る。既に流している機種の機種別キャパ合計が
+                    # ライン能力に届かないなら、別の号機グループが終日空いている =
+                    # その機種の段取りは朝(A勤)から可能なので、A勤限定制約の対象外。
+                    # (キャパ未定義=ライン全体を使いうる機種として扱う → 従来どおり飽和扱い)
+                    if caps_today is None:
+                        running_cap = cap_today if today_products else 0.0
+                    else:
+                        running_cap = sum(
+                            caps_today.get(p, cap_today) for p in today_products
+                        )
+                    if running_cap >= cap_today:
+                        # ラインは既に埋まっている → 新機種は稼働中の号機を奪う=段取り替え
+                        used_fraction = 1.0 - line_remaining / cap_today
+                        if used_fraction > a_shift_fraction:
+                            blocked_today.add(product)
+                            _record_deferral(deferrals, product, day)
+                            continue
+
+                available = line_remaining
+                if caps_today is not None:
+                    cap = caps_today.get(product)
+                    if cap is not None:
+                        available = min(available, cap - product_used_today.get(product, 0.0))
+                if available <= 0:
+                    continue
+
+                take = min(lot_remaining[i], available)
+                # 投入単位(例: HALはリール1本=10,000)の倍数に切り下げる。
+                # ロット残が1単位未満のときだけ端数投入を許す(機種の台数による調整)。
+                if input_unit and lot_remaining[i] >= input_unit:
+                    take = int(take // input_unit) * input_unit
                 if take <= 0:
                     continue
+                allocation.append(DailyCell(day=day, product=product, quantity=take, order_id=item.order_id))
                 lot_remaining[i] -= take
                 line_remaining -= take
                 total_left -= take
@@ -794,55 +927,6 @@ def allocate_bottleneck(
                 if lot_remaining[i] <= 0:
                     lot_completion[i] = day
                     completion[product] = day
-                continue
-
-            if (
-                a_shift_only_switch
-                and product not in today_products
-                and product not in prev_day_products
-            ):
-                # 号機グループの空きを見る。既に流している機種の機種別キャパ合計が
-                # ライン能力に届かないなら、別の号機グループが終日空いている =
-                # その機種の段取りは朝(A勤)から可能なので、A勤限定制約の対象外。
-                # (キャパ未定義=ライン全体を使いうる機種として扱う → 従来どおり飽和扱い)
-                if caps_today is None:
-                    running_cap = cap_today if today_products else 0.0
-                else:
-                    running_cap = sum(
-                        caps_today.get(p, cap_today) for p in today_products
-                    )
-                if running_cap >= cap_today:
-                    # ラインは既に埋まっている → 新機種は稼働中の号機を奪う=段取り替え
-                    used_fraction = 1.0 - line_remaining / cap_today
-                    if used_fraction > a_shift_fraction:
-                        blocked_today.add(product)
-                        _record_deferral(deferrals, product, day)
-                        continue
-
-            available = line_remaining
-            if caps_today is not None:
-                cap = caps_today.get(product)
-                if cap is not None:
-                    available = min(available, cap - product_used_today.get(product, 0.0))
-            if available <= 0:
-                continue
-
-            take = min(lot_remaining[i], available)
-            # 投入単位(例: HALはリール1本=10,000)の倍数に切り下げる。
-            # ロット残が1単位未満のときだけ端数投入を許す(機種の台数による調整)。
-            if input_unit and lot_remaining[i] >= input_unit:
-                take = int(take // input_unit) * input_unit
-            if take <= 0:
-                continue
-            allocation.append(DailyCell(day=day, product=product, quantity=take, order_id=item.order_id))
-            lot_remaining[i] -= take
-            line_remaining -= take
-            total_left -= take
-            product_used_today[product] = product_used_today.get(product, 0.0) + take
-            today_products.add(product)
-            if lot_remaining[i] <= 0:
-                lot_completion[i] = day
-                completion[product] = day
 
         prev_day_products = today_products
 
@@ -1182,6 +1266,8 @@ def plan_bottleneck(
     high_mode_days: int = 0,
     holidays: set[date] | None = None,
     machines_by_mode: dict[str, list[MachineSlot]] | None = None,
+    pace_to_due_dates: bool = True,
+    pace_look_ahead_days: int = 3,
 ) -> BottleneckPlanResult:
     """Step 1(シフト/レート決定)＋Step 2(HAL日次配分)を実行する。
 
@@ -1198,6 +1284,8 @@ def plan_bottleneck(
     machines_by_mode({モード: [MachineSlot]}, CAP表由来)を渡すと、選択したモードの
     ボトルネック工程の号機で号機単位に割り付ける(同日に並行できる機種数が号機の
     空きで決まる)。
+    pace_to_due_dates / pace_look_ahead_days は納期に合わせた後ろ詰め
+    (`allocate_bottleneck` 参照)。
     """
     pre_warnings: list[str] = []
 
@@ -1331,6 +1419,8 @@ def plan_bottleneck(
             ]
             or None
         ),
+        pace_to_due_dates=pace_to_due_dates,
+        pace_look_ahead_days=pace_look_ahead_days,
     )
     result.allocation = allocation
     result.completion = completion

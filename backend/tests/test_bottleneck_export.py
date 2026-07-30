@@ -26,7 +26,7 @@ def _make_result():
         DemandItem("SuicaⅢ", 90000, date(2026, 7, 1), order_id="L2"),  # 納期7/1・MIL完成7/2→超過
     ]
     flows = [StageFlowConfig(s, off) for s, off in [("ANT", -2), ("TAL", -1), ("HAL", 0), ("MIL", 1)]]
-    result = plan_bottleneck(demands, days, CAPS, stage_flows=flows)
+    result = plan_bottleneck(demands, days, CAPS, stage_flows=flows, pace_to_due_dates=False)
     return result, demands
 
 

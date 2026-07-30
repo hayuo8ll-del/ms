@@ -80,6 +80,9 @@ class BottleneckPlanningConfig:
     machines_by_mode: dict = field(default_factory=dict)
     # 工程別レシピコード -> 呼称(TA1_投入計画の機種コード列がこれ)
     recipe_codes: dict = field(default_factory=dict)
+    # 納期に合わせた後ろ詰め(平準化)と、その着手期限の前倒し許容(稼働日)
+    pace_to_due_dates: bool = True
+    pace_look_ahead_days: int = 3
 
     @property
     def stage_order(self) -> list[str]:
@@ -140,6 +143,8 @@ def load_bottleneck_planning() -> BottleneckPlanningConfig:
             for mode, slots in (data.get("machinesByMode") or {}).items()
         },
         recipe_codes=dict(data.get("recipeCodes") or {}),
+        pace_to_due_dates=bool(data.get("paceToDueDates", True)),
+        pace_look_ahead_days=int(data.get("paceLookAheadDays", 3)),
     )
 
 

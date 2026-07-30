@@ -212,6 +212,8 @@ async def _build_bottleneck_plan(
         machine_counts=cfg.machine_counts,
         holidays=holidays or None,
         machines_by_mode=cfg.machines_by_mode or None,
+        pace_to_due_dates=cfg.pace_to_due_dates,
+        pace_look_ahead_days=cfg.pace_look_ahead_days,
     )
     result = plan_bottleneck(demands, working_days, cfg.line_daily_capacities, **plan_kwargs)
     result.warnings.extend(actual_warnings)
@@ -377,6 +379,8 @@ async def validate_bottleneck_plan(
         machine_counts=cfg.machine_counts,
         holidays={d for d in cfg.non_working_days if working_days and working_days[0] <= d <= working_days[-1]} or None,
         machines_by_mode=cfg.machines_by_mode or None,
+        pace_to_due_dates=cfg.pace_to_due_dates,
+        pace_look_ahead_days=cfg.pace_look_ahead_days,
     )
     cal = calibrate(demands, working_days, cfg.line_daily_capacities, plan_kwargs, felica)
     # 機種別 日次形状(重複窓): calibrate は aliases を通さないので base に直接1回かける

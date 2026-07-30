@@ -60,7 +60,8 @@ directly by FastAPI's `StaticFiles` mount.
   feed (機種の台数による調整); TAL/MIL batching is front-loaded per lot in `expand_to_stages`
   so cumulative upstream input never starves the next stage and the lot's completion day is
   preserved), `machineCounts` (per-machine share approximation for stop
-  deductions), `aShiftFraction`, `productAliases` (RC-code → 呼称),
+  deductions), `aShiftFraction`, `paceToDueDates`/`paceLookAheadDays` (due-date pacing —
+  see `allocate_bottleneck`), `productAliases` (RC-code → 呼称),
   `productDailyCapsByMode` (機種別キャパ) and `nonWorkingDays` (ISO dates — weekday
   非稼働日/祝日/計画休 that `working_days_in_range` excludes on top of weekends; populated from
   the FeliCa 短期投入予定表's grey cells via `/api/bottleneck/apply-calendar`) and
@@ -103,7 +104,17 @@ directly by FastAPI's `StaticFiles` mount.
   shift mode that covers it, e.g. 16H=90k/day vs 22H=120k/day; when per-product caps are supplied it also checks each product can
   finish within the horizon at that mode's per-product rate, escalating otherwise) and
   Step 2 (`allocate_bottleneck`: fill each working day up to the
-  bottleneck/HAL daily capacity, **least-slack order** across lots (`_sequence_lots`:
+  bottleneck/HAL daily capacity, **due-date-paced (backward scheduled)**: each lot gets a
+  release day (`_release_indices`: 完成目標までの稼働日index − 自機種キャパでの所要日数,
+  cumulative over the same 機種's earlier-due lots, line rate as the fallback cap) and is not
+  started before it. Plain forward-filling made every 機種 finish ~7 working days early
+  whenever capacity was slack, against a shop plan that paces to 完成予定日. Lots already
+  past 完成目標 release immediately. `pace_look_ahead_days` (config `paceLookAheadDays`,
+  default 3) lets a lot start that many days early: strictly on-time (0) throws away early
+  capacity and late lots rose 3→19 on the real files, while +3 holds lateness at the
+  forward-fill level (3) and cuts completion MAE 7.12→4.82 / start MAE 8.84→6.13 working
+  days. A lot still runs as a **campaign on consecutive days** — pacing moves it later, it
+  does not slice it thinly across the horizon. Within a day, lots go in **least-slack order** (`_sequence_lots`:
   slack = working days until due − days needed at the product's own 機種別キャパ, counting
   the same product's earlier-due lots; degrades to plain EDD when no per-product caps are
   given) — campaigns form naturally; with
