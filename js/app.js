@@ -17,8 +17,10 @@ function freshProfile() {
     owned: { avatars: ["kid"], themes: ["orange"] },
     avatar: "kid",
     theme: "orange",
-    settings: { sound: true, speak: null, perRound: QUESTIONS_PER_ROUND, attackTime: 60, difficulty: "normal", voiceURI: null },
+    settings: { sound: true, speak: null, perRound: QUESTIONS_PER_ROUND, attackTime: 60, difficulty: "normal", voiceURI: null, miniGames: true },
     bestAttack: 0,      // タイムアタックの最高正解数
+    games: { touch: 0, memory: 0, mole: 0 },  // ミニゲームのベスト記録
+    gameCoins: null,    // {date, got} ゲームで もらったコイン（1日ぶん）
   };
 }
 const DIFF = { easy: "やさしい", normal: "ふつう", hard: "むずかしい" };
@@ -31,6 +33,9 @@ function migrate(p, grade) {
   if (p.settings.attackTime === undefined) p.settings.attackTime = 60;
   if (p.settings.difficulty === undefined) p.settings.difficulty = "normal";
   if (p.settings.voiceURI === undefined) p.settings.voiceURI = null;
+  if (p.settings.miniGames === undefined) p.settings.miniGames = true;
+  if (!p.games) p.games = { touch: 0, memory: 0, mole: 0 };
+  for (const k of ["touch", "memory", "mole"]) if (p.games[k] === undefined) p.games[k] = 0;
   if (!p.owned) p.owned = { avatars: ["kid"], themes: ["orange"] };
   if (!p.owned.avatars) p.owned.avatars = ["kid"];
   if (!p.owned.themes) p.owned.themes = ["orange"];
@@ -203,6 +208,7 @@ function checkBadges(roundResult) {
   if (p.owned.avatars.length + p.owned.themes.length > 2) grant("shopper");
   if (p.writeCount >= 20) grant("writer");
   if (p.bestAttack >= 15) grant("speed");
+  if (p.games && ["touch", "memory", "mole"].every(k => p.games[k] > 0)) grant("gamer");
   return earned;
 }
 
@@ -219,7 +225,7 @@ function refreshTop() {
 
 /* ========== 画面：グレード選択 ========== */
 function showGradeSelect() {
-  clearAttackTimer();
+  leaveScreen();
   render(`
     <h1 class="title">だれが べんきょうする？ 🌻</h1>
     <p class="subtitle">なつやすみ、いっしょに たのしく べんきょうしよう！</p>
@@ -240,7 +246,7 @@ function showGradeSelect() {
 
 /* ========== 画面：ホーム（教科えらび） ========== */
 function showHome() {
-  clearAttackTimer();
+  leaveScreen();
   refreshTop();
   const p = prof();
   const subjects = SUBJECTS[state.grade];
@@ -254,6 +260,8 @@ function showHome() {
   const streakMsg = p.streak > 0 ? `🔥 ${p.streak}日れんぞく！ すごい！` : "きょうも がんばろう！";
   const reviewBtn = p.wrong.length > 0
     ? `<button class="big-btn red-btn" id="reviewBtn">🩹 にがてを ふくしゅう（${p.wrong.length}）</button>` : "";
+  const gamesBtn = p.settings.miniGames !== false
+    ? `<button class="big-btn purple" id="gamesBtn">🎮 ミニゲーム（すきま時間に）</button>` : "";
 
   render(`
     <div class="hero">
@@ -273,6 +281,7 @@ function showHome() {
     <div class="grid">${cards}</div>
     <button class="big-btn blue" id="attackBtn">⏱️ タイムアタック（コイン2ばい！）</button>
     <button class="big-btn" id="writeBtn">✍️ かきとり れんしゅう</button>
+    ${gamesBtn}
     ${reviewBtn}
     <div class="grid" style="margin-top:14px">
       <button class="big-btn ghost" id="badgeBtn" style="margin:0">🏅 バッジ</button>
@@ -285,6 +294,7 @@ function showHome() {
     b.onclick = () => { prof().settings.difficulty = b.dataset.diff; saveState(); showHome(); });
   document.getElementById("attackBtn").onclick = showAttackMenu;
   document.getElementById("writeBtn").onclick = showWritingMenu;
+  if (gamesBtn) document.getElementById("gamesBtn").onclick = showGames;
   document.getElementById("badgeBtn").onclick = showBadges;
   document.getElementById("shopBtn").onclick = showShop;
   if (p.wrong.length > 0) document.getElementById("reviewBtn").onclick = startReview;
@@ -297,6 +307,9 @@ function clearAttackTimer() {
   if (attackTimer) { clearInterval(attackTimer); attackTimer = null; }
   if (round && round.nextTimer) { clearTimeout(round.nextTimer); round.nextTimer = null; }
 }
+/* 画面を はなれるときの かたづけ：うごいている タイマーを ぜんぶ とめる
+   （タイムアタック＋ミニゲーム）。画面を きりかえる まえに かならず よぶ。 */
+function leaveScreen() { clearAttackTimer(); clearGameTimers(); }
 function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; }
   return arr;
@@ -324,7 +337,7 @@ function drawFromBank(grade, subject, n) {
 }
 
 function startRound(subject) {
-  clearAttackTimer();
+  leaveScreen();
   const n = prof().settings.perRound || QUESTIONS_PER_ROUND;
   let questions;
   if (subject === "math") {
@@ -336,7 +349,7 @@ function startRound(subject) {
   showQuestion();
 }
 function startReview() {
-  clearAttackTimer();
+  leaveScreen();
   const p = prof();
   const n = p.settings.perRound || QUESTIONS_PER_ROUND;
   const pool = shuffle(p.wrong.map(w => ({ ...w })));
@@ -347,7 +360,7 @@ function startReview() {
 
 /* ========== タイムアタック ========== */
 function showAttackMenu() {
-  clearAttackTimer();
+  leaveScreen();
   const p = prof();
   const subs = SUBJECTS[state.grade];
   const cards = subs.map(s => `
@@ -387,7 +400,7 @@ function buildAttackQuestions(subject, n) {
 }
 
 function startTimeAttack(subject) {
-  clearAttackTimer();
+  leaveScreen();
   const p = prof();
   const secs = p.settings.attackTime || 60;
   const questions = buildAttackQuestions(subject, 120);
@@ -412,7 +425,7 @@ function startTimeAttack(subject) {
 function finishTimeAttack() {
   if (round.ended) return;
   round.ended = true;
-  clearAttackTimer();
+  leaveScreen();
   const p = prof();
   const base = round.correct * 10;
   const doubled = base * 2;                         // コイン2倍
@@ -949,7 +962,7 @@ function finishWriting(newBadges) {
 
 /* ========== 画面：ほごしゃ ========== */
 function showParent() {
-  clearAttackTimer();
+  leaveScreen();
   const p = prof();
   const subjects = SUBJECTS[state.grade];
   const statRows = subjects.map(s => {
@@ -994,6 +1007,15 @@ function showParent() {
     </div>
 
     <div class="panel">
+      <h3>🎮 ミニゲーム</h3>
+      ${GAMES.map(g => `<div class="stat-row"><span>${g.emoji} ${g.name}</span><b>${bestLabel(g.id)}</b></div>`).join("")}
+      <div class="hint" style="margin-top:8px">
+        ミニゲームは 学習の記録（正答率・れんぞく日数）には 入りません。
+        もらえるコインは 1日 ${GAME_COIN_CAP}🪙 まで（きょうの のこり ${gameCoinLeft()}🪙）。
+      </div>
+    </div>
+
+    <div class="panel">
       <h3>📝 さいきんの記録</h3>
       ${recent}
     </div>
@@ -1033,6 +1055,13 @@ function showParent() {
         </select>
       </div>
       <div class="setting-row">
+        <span>ミニゲーム</span>
+        <select id="miniGames">
+          <option value="on" ${p.settings.miniGames !== false ? "selected" : ""}>つかう</option>
+          <option value="off" ${p.settings.miniGames === false ? "selected" : ""}>かくす</option>
+        </select>
+      </div>
+      <div class="setting-row">
         <span>こえの しゅるい</span>
         <select id="voice">
           <option value="">おまかせ（自動で いちばん 自然な こえ）</option>
@@ -1065,6 +1094,7 @@ function showParent() {
     if (p.settings.speak) speak("よみあげを おんに しました", true);
   };
   document.getElementById("attackTime").onchange = e => { p.settings.attackTime = +e.target.value; saveState(); };
+  document.getElementById("miniGames").onchange = e => { p.settings.miniGames = e.target.value === "on"; saveState(); };
   document.getElementById("voice").onchange = e => { p.settings.voiceURI = e.target.value || null; saveState(); speak("こんにちは。この こえで よみあげます。", true); };
   document.getElementById("voiceTest").onclick = () => speak("こんにちは。いっしょに べんきょう しましょう。", true);
   document.getElementById("resetBtn").onclick = () => {
@@ -1078,8 +1108,8 @@ function showParent() {
 }
 
 /* ---------- ヘッダーのボタン ---------- */
-document.getElementById("homeBtn").onclick = () => { clearAttackTimer(); showGradeSelect(); };
-document.getElementById("parentBtn").onclick = () => { clearAttackTimer(); showParent(); };
+document.getElementById("homeBtn").onclick = () => { leaveScreen(); showGradeSelect(); };
+document.getElementById("parentBtn").onclick = () => { leaveScreen(); showParent(); };
 
 /* ---------- Service Worker 登録（PWA） ---------- */
 if ("serviceWorker" in navigator) {
