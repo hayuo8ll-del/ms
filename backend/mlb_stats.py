@@ -98,6 +98,34 @@ TEAM_NAMES: dict[str, str] = {
 }
 
 
+# MLB division name -> Japanese. Used by the standings tab.
+DIVISION_NAMES: dict[str, str] = {
+    "American League East": "ア・リーグ東",
+    "American League Central": "ア・リーグ中",
+    "American League West": "ア・リーグ西",
+    "National League East": "ナ・リーグ東",
+    "National League Central": "ナ・リーグ中",
+    "National League West": "ナ・リーグ西",
+}
+
+# Leader boards to show: (API category, Japanese label, stat group).
+LEADER_CATEGORIES: list[tuple[str, str, str]] = [
+    ("homeRuns", "本塁打", "hitting"),
+    ("battingAverage", "打率", "hitting"),
+    ("runsBattedIn", "打点", "hitting"),
+    ("stolenBases", "盗塁", "hitting"),
+    ("earnedRunAverage", "防御率", "pitching"),
+    ("strikeouts", "奪三振", "pitching"),
+    ("wins", "勝利", "pitching"),
+    ("saves", "セーブ", "pitching"),
+]
+
+
+def to_japanese_division(name: str) -> str:
+    """Return the Japanese division name (English fallback)."""
+    return DIVISION_NAMES.get(name, name)
+
+
 def to_japanese(name: str) -> str:
     """Return the Japanese display name for ``name`` (English fallback)."""
     return JAPANESE_NAMES.get(name, name)
@@ -195,6 +223,7 @@ def fetch_player_stats(
 
     return {
         "team": team,
+        "team_id": (person.get("currentTeam") or {}).get("id"),
         "hitting": hitting,
         "pitching": pitching,
         "last_game": _extract_last_game(log_splits),
@@ -272,6 +301,115 @@ def fetch_game_result(
     return None
 
 
+def fetch_games(date: str, timeout: float = 20.0) -> list[dict[str, Any]]:
+    """Return every MLB game on ``date`` with its status and current score.
+
+    ``state`` is the API's abstract state: ``Preview`` (not started), ``Live``
+    or ``Final``. ``inning``/``half`` are only meaningful while live.
+    """
+    url = f"{API_BASE}/schedule?sportId=1&date={date}&hydrate=linescore"
+    data = _get_json(url, timeout=timeout)
+    games: list[dict[str, Any]] = []
+    for day in data.get("dates", []):
+        for game in day.get("games", []):
+            status = game.get("status") or {}
+            line = game.get("linescore") or {}
+            teams = game.get("teams") or {}
+            home, away = teams.get("home") or {}, teams.get("away") or {}
+            games.append(
+                {
+                    "date": day.get("date", date),
+                    "start": game.get("gameDate", ""),
+                    "state": status.get("abstractGameState", ""),
+                    "detail": status.get("detailedState", ""),
+                    "inning": line.get("currentInning"),
+                    "half": line.get("inningState", ""),
+                    "home_id": (home.get("team") or {}).get("id"),
+                    "home_name": (home.get("team") or {}).get("name", ""),
+                    "home_score": home.get("score"),
+                    "away_id": (away.get("team") or {}).get("id"),
+                    "away_name": (away.get("team") or {}).get("name", ""),
+                    "away_score": away.get("score"),
+                }
+            )
+    return games
+
+
+def fetch_standings(season: int, timeout: float = 20.0) -> list[dict[str, Any]]:
+    """Return the six divisions with each club's record."""
+    url = (
+        f"{API_BASE}/standings?leagueId=103,104&season={season}"
+        "&standingsTypes=regularSeason&hydrate=division,team"
+    )
+    data = _get_json(url, timeout=timeout)
+    divisions: list[dict[str, Any]] = []
+    for record in data.get("records", []):
+        division = (record.get("division") or {}).get("name", "")
+        teams = []
+        for row in record.get("teamRecords", []):
+            team = row.get("team") or {}
+            teams.append(
+                {
+                    "id": team.get("id"),
+                    "name": to_japanese_team(team.get("name", "")),
+                    "wins": row.get("wins"),
+                    "losses": row.get("losses"),
+                    "pct": row.get("winningPercentage", ""),
+                    "gb": row.get("gamesBack", ""),
+                }
+            )
+        if teams:
+            divisions.append({"division": to_japanese_division(division), "teams": teams})
+    return divisions
+
+
+def fetch_leaders(season: int, timeout: float = 20.0) -> list[dict[str, Any]]:
+    """Return the top ten of each leader board in :data:`LEADER_CATEGORIES`."""
+    categories = ",".join(c for c, _, _ in LEADER_CATEGORIES)
+    url = (
+        f"{API_BASE}/stats/leaders?leaderCategories={categories}"
+        f"&season={season}&sportId=1&limit=10"
+    )
+    data = _get_json(url, timeout=timeout)
+    labels = {c: (label, group) for c, label, group in LEADER_CATEGORIES}
+    boards: list[dict[str, Any]] = []
+    for board in data.get("leagueLeaders", []):
+        category = board.get("leaderCategory", "")
+        if category not in labels:
+            continue
+        label, group = labels[category]
+        rows = []
+        for leader in board.get("leaders", []):
+            person = leader.get("person") or {}
+            rows.append(
+                {
+                    "id": person.get("id"),
+                    "rank": leader.get("rank"),
+                    "name": to_japanese(person.get("fullName", "")),
+                    "team": to_japanese_team((leader.get("team") or {}).get("name", "")),
+                    "value": leader.get("value", ""),
+                }
+            )
+        if rows:
+            boards.append({"category": category, "label": label, "group": group, "rows": rows})
+    # Keep the configured order rather than whatever the API returns.
+    order = {c: i for i, (c, _, _) in enumerate(LEADER_CATEGORIES)}
+    boards.sort(key=lambda b: order.get(b["category"], 99))
+    return boards
+
+
+def _safe(what: str, call: Any, default: Any) -> Any:
+    """Run a fetcher, returning ``default`` if it fails.
+
+    One broken endpoint should cost its own section, not the whole page.
+    """
+    try:
+        return call()
+    except (urllib.error.URLError, ValueError, KeyError, TypeError) as exc:
+        logger.warning("%s unavailable: %s", what, exc)
+        return default
+
+
 def collect_stats(season: int, timeout: float = 20.0) -> dict[str, Any]:
     """Gather structured stats for every active Japanese player.
 
@@ -302,6 +440,7 @@ def collect_stats(season: int, timeout: float = 20.0) -> dict[str, Any]:
             "id": player["id"],
             "name": name,
             "team": to_japanese_team(stats["team"]),
+            "team_id": stats.get("team_id"),
         }
         if stats["hitting"]:
             hitters.append({**base, "stat": stats["hitting"]})
@@ -333,6 +472,14 @@ def collect_stats(season: int, timeout: float = 20.0) -> dict[str, Any]:
     # empty string sinks them to the bottom.
     roster.sort(key=lambda p: p.get("date") or "", reverse=True)
 
+    # US game days straddle the JST date, so look at today and yesterday and
+    # let the page pick the game that matters for each club.
+    today = datetime.now(timezone.utc).date()
+    game_days = [str(today), str(today - timedelta(days=1))]
+    games: list[dict[str, Any]] = []
+    for day in game_days:
+        games.extend(_safe(f"schedule {day}", lambda d=day: fetch_games(d, timeout), []))
+
     return {
         "date": datetime.now(JST).strftime("%Y-%m-%d"),
         "generated_at": now_stamp(),
@@ -341,6 +488,9 @@ def collect_stats(season: int, timeout: float = 20.0) -> dict[str, Any]:
         "pitchers": pitchers,
         "recent": recent,
         "players": roster,
+        "games": games,
+        "standings": _safe("standings", lambda: fetch_standings(season, timeout), []),
+        "leaders": _safe("leaders", lambda: fetch_leaders(season, timeout), []),
     }
 
 
@@ -676,6 +826,45 @@ h2::before{
 .stat b{font-weight:700}
 .stat.key b{color:var(--accent)}
 .empty{padding:1rem;color:var(--muted)}
+/* tabs */
+.tabs{display:flex;gap:.4rem;margin:0 0 1.1rem;flex-wrap:wrap}
+.tab{
+  appearance:none; cursor:pointer; font:inherit; font-size:.9rem; font-weight:700;
+  color:var(--muted); background:var(--surface2); border:1px solid var(--line);
+  padding:.42rem .9rem; border-radius:999px;
+}
+.tab[aria-selected="true"]{
+  color:#06121f; border-color:transparent;
+  background:linear-gradient(90deg,var(--accent),var(--accent2));
+}
+.panel[hidden]{display:none}
+/* game status chip */
+.status{font-size:.78rem;font-weight:700;margin-top:.25rem}
+.status.live{color:var(--accent2)}
+.status.final{color:var(--muted)}
+.status.pre{color:var(--muted)}
+.dot{
+  display:inline-block;width:.45rem;height:.45rem;border-radius:50%;
+  background:var(--lose);margin-right:.35rem;vertical-align:middle;
+}
+/* standings + leader boards */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:.75rem}
+.box{
+  background:linear-gradient(180deg,var(--surface),var(--surface2));
+  border:1px solid var(--line);border-radius:14px;padding:.85rem .95rem;
+}
+.box h3{margin:0 0 .55rem;font-size:.95rem;color:var(--accent)}
+.row{
+  display:flex;align-items:baseline;gap:.5rem;padding:.28rem 0;
+  border-bottom:1px solid var(--line);font-size:.9rem;
+}
+.row:last-child{border-bottom:none}
+.row .nm{flex:1;min-width:0;overflow-wrap:anywhere}
+.row .no{color:var(--muted);font-size:.78rem;width:1.5rem;flex:none}
+.row .vl{font-weight:700;flex:none}
+.row .sub{color:var(--muted);font-size:.78rem;flex:none}
+.row.jp{background:rgba(56,189,248,.09);border-radius:6px}
+.row.jp .nm{color:var(--accent);font-weight:700}
 footer{margin:2.6rem auto 0;max-width:1040px;padding:0 1rem;color:var(--muted);font-size:.82rem}
 footer a{color:var(--accent)}
 
@@ -712,107 +901,18 @@ def spot_url(player_id: Any) -> str:
     return SPOT_URL.format(id=player_id) if player_id else ""
 
 
-def _avatar(row: dict[str, Any], size: str) -> str:
-    """Circular portrait with the player's initial behind it as a fallback.
-
-    Photos are hotlinked from MLB, so each step can fail. The image degrades in
-    order: circular spot portrait -> cut-out headshot -> the player's initial,
-    which is why ``onerror`` swaps in the fallback before giving up.
-    """
-    initial = _esc((str(row.get("name") or "?"))[0])
-    primary = spot_url(row.get("id"))
-    fallback = photo_url(row.get("id"))
-    img = ""
-    if primary:
-        img = (
-            f'<img src="{_esc(primary)}" data-fallback="{_esc(fallback)}" alt="" '
-            'loading="lazy" referrerpolicy="no-referrer" '
-            "onerror=\"var f=this.dataset.fallback;"
-            "if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}\">"
-        )
-    return f'<span class="avatar {size}"><b>{initial}</b>{img}</span>'
-
-
-# Season figures shown on each card: (label, stat key, highlighted).
-_HIT_FIELDS = [
-    ("試合", "gamesPlayed", False), ("打率", "avg", True), ("本塁打", "homeRuns", True),
-    ("打点", "rbi", False), ("OPS", "ops", False), ("出塁率", "obp", False),
-]
-_PIT_FIELDS = [
-    ("登板", "gamesPlayed", False), ("防御率", "era", True), ("勝", "wins", False),
-    ("敗", "losses", False), ("奪三振", "strikeOuts", True), ("WHIP", "whip", False),
-    ("投球回", "inningsPitched", False),
-]
-
-
-def _stat_row(label: str, stat: dict[str, Any], fields: list[tuple[str, str, bool]]) -> str:
-    chips = []
-    for name, key, highlight in fields:
-        cls = "stat key" if highlight else "stat"
-        chips.append(
-            f'<span class="{cls}"><b>{_esc(stat.get(key))}</b><i>{_esc(name)}</i></span>'
-        )
-    return f'<div class="srow"><span class="slabel">{_esc(label)}</span>' + "".join(chips) + "</div>"
-
-
-def _season_block(player: dict[str, Any]) -> str:
-    """Season totals for a card; two-way players get both rows."""
-    rows = []
-    if player.get("hitting"):
-        rows.append(_stat_row("打撃", player["hitting"], _HIT_FIELDS))
-    if player.get("pitching"):
-        rows.append(_stat_row("投球", player["pitching"], _PIT_FIELDS))
-    if not rows:
-        return ""
-    return '<div class="season">' + "".join(rows) + "</div>"
-
-
-def _player_cards(players: list[dict[str, Any]]) -> str:
-    """One card per player: today's line and the season totals together."""
-    cards = []
-    for p in players:
-        result = _team_result(p)
-        if result.startswith("勝"):
-            badge = "badge win"
-        elif result.startswith("敗"):
-            badge = "badge lose"
-        else:
-            badge = "badge"
-        if p.get("date"):
-            meta = f'{_esc(_short_date(p.get("date")))}　{_esc(_matchup(p))}'
-            line = f'<div class="pline">{_esc(p.get("line"))}</div>'
-            badge_html = f'<span class="{badge}">{_esc(result)}</span>'
-        else:
-            meta = "直近の出場なし"
-            line = ""
-            badge_html = ""
-        cards.append(
-            '<article class="pcard">'
-            f'{_avatar(p, "lg")}'
-            '<div class="pbody">'
-            f'<div class="pname">{_esc(p["name"])}'
-            f'<span class="pteam">{_esc(p.get("team"))}</span></div>'
-            f'<div class="pmeta">{meta}</div>'
-            f"{line}"
-            f"{_season_block(p)}"
-            "</div>"
-            f"{badge_html}"
-            "</article>"
-        )
-    return '<div class="cards">\n' + "\n".join(cards) + "\n</div>"
-
-
 _PAGE_JS = r"""
-/* Refresh the page from the MLB API when it is opened.
-   The server-rendered snapshot stays on screen until fresh data arrives, so a
-   blocked API, an offline phone or a schema change simply leaves the snapshot
-   visible instead of emptying the page. */
+/* The page's only renderer.
+
+   format_html ships a data snapshot in <script id="mlb-data"> and nothing
+   else: this script draws the snapshot immediately (so the page is useful
+   offline and paints instantly), then refetches from the MLB API and redraws.
+   A failed refresh leaves the snapshot on screen. */
 (function () {
-  var cfgEl = document.getElementById("mlb-config");
-  if (!cfgEl || !window.fetch || !window.Promise) return;
-  var CFG;
-  try { CFG = JSON.parse(cfgEl.textContent); } catch (e) { return; }
-  if (!CFG.players || !CFG.players.length) return;
+  var el = document.getElementById("mlb-data");
+  if (!el) return;
+  var DATA;
+  try { DATA = JSON.parse(el.textContent); } catch (e) { return; }
 
   var API = "https://statsapi.mlb.com/api/v1";
   var app = document.getElementById("app");
@@ -820,13 +920,14 @@ _PAGE_JS = r"""
   var countsEl = document.getElementById("counts");
   var ONERR = "var f=this.dataset.fallback;if(f){this.dataset.fallback='';this.src=f;}else{this.remove();}";
 
-  /* Mirrors _HIT_FIELDS / _PIT_FIELDS in mlb_stats.py: [label, key, highlight] */
   var HIT_FIELDS = [["試合", "gamesPlayed", 0], ["打率", "avg", 1], ["本塁打", "homeRuns", 1],
                     ["打点", "rbi", 0], ["OPS", "ops", 0], ["出塁率", "obp", 0]];
   var PIT_FIELDS = [["登板", "gamesPlayed", 0], ["防御率", "era", 1], ["勝", "wins", 0],
                     ["敗", "losses", 0], ["奪三振", "strikeOuts", 1], ["WHIP", "whip", 0],
                     ["投球回", "inningsPitched", 0]];
+  var TABS = [["players", "選手"], ["standings", "順位表"], ["leaders", "個人成績"]];
 
+  /* ---------- small helpers ---------- */
   function esc(v) {
     return String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;")
       .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#x27;");
@@ -834,15 +935,28 @@ _PAGE_JS = r"""
   function cell(v) { return (v === null || v === undefined || v === "") ? "-" : String(v); }
   function ecell(v) { return esc(cell(v)); }
   function num(v) { var n = parseFloat(v); return isNaN(n) ? -1 : n; }
-  function teamJa(n) { return (CFG.teams && CFG.teams[n]) || n || ""; }
+  function teamJa(n) { return (DATA.teams && DATA.teams[n]) || n || ""; }
 
   function getJSON(url) {
-    /* Cache-buster: the study app's service worker controls this scope. */
     var u = url + (url.indexOf("?") < 0 ? "?" : "&") + "_=" + Date.now();
     return fetch(u, { cache: "no-store" }).then(function (r) {
       if (!r.ok) throw new Error("HTTP " + r.status);
       return r.json();
     });
+  }
+  function jstStamp(d) {
+    var t = new Date(d.getTime() + 9 * 3600 * 1000);
+    function z(n) { return (n < 10 ? "0" : "") + n; }
+    return t.getUTCFullYear() + "-" + z(t.getUTCMonth() + 1) + "-" + z(t.getUTCDate()) +
+      " " + z(t.getUTCHours()) + ":" + z(t.getUTCMinutes()) + " JST";
+  }
+  function jstTime(iso) {
+    if (!iso) return "";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    var t = new Date(d.getTime() + 9 * 3600 * 1000);
+    function z(n) { return (n < 10 ? "0" : "") + n; }
+    return z(t.getUTCHours()) + ":" + z(t.getUTCMinutes());
   }
 
   function avatar(row, size) {
@@ -857,6 +971,384 @@ _PAGE_JS = r"""
         '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="' + esc(ONERR) + '">';
     }
     return '<span class="avatar ' + size + '"><b>' + initial + "</b>" + img + "</span>";
+  }
+
+  /* ---------- today's game for a club ---------- */
+  var HALF = { Top: "表", Bottom: "裏", Middle: "表", End: "裏" };
+
+  function gameForTeam(teamId) {
+    if (!teamId || !DATA.games) return null;
+    var mine = DATA.games.filter(function (g) {
+      return g.home_id === teamId || g.away_id === teamId;
+    });
+    if (!mine.length) return null;
+    function pick(state) {
+      var hits = mine.filter(function (g) { return g.state === state; });
+      hits.sort(function (a, b) { return (a.start || "") < (b.start || "") ? 1 : -1; });
+      return hits[0];
+    }
+    /* A game in progress matters most, then the game just finished. */
+    return pick("Live") || pick("Final") || pick("Preview") || null;
+  }
+
+  function statusHtml(teamId) {
+    var g = gameForTeam(teamId);
+    if (!g) return "";
+    var home = g.home_id === teamId;
+    var mine = home ? g.home_score : g.away_score;
+    var theirs = home ? g.away_score : g.home_score;
+    var opp = teamJa(home ? g.away_name : g.home_name);
+    if (g.state === "Live") {
+      var half = HALF[g.half] || "";
+      var inn = g.inning ? g.inning + "回" + half : (g.detail || "");
+      return '<div class="status live"><span class="dot"></span>試合中 ' +
+        esc(inn) + " " + ecell(mine) + "-" + ecell(theirs) + " vs " + esc(opp) + "</div>";
+    }
+    if (g.state === "Final") {
+      var mark = "";
+      if (mine != null && theirs != null && num(mine) !== num(theirs)) {
+        mark = num(mine) > num(theirs) ? "勝" : "敗";
+      }
+      return '<div class="status final">試合終了 ' + esc(mark) + " " +
+        ecell(mine) + "-" + ecell(theirs) + " vs " + esc(opp) + "</div>";
+    }
+    var at = jstTime(g.start);
+    return '<div class="status pre">試合前 ' + esc(at ? at + " 開始" : g.detail) +
+      " vs " + esc(opp) + "</div>";
+  }
+
+  /* ---------- tab: players ---------- */
+  function statRow(label, stat, fields) {
+    var chips = fields.map(function (f) {
+      return '<span class="' + (f[2] ? "stat key" : "stat") + '"><b>' +
+        ecell(stat[f[1]]) + "</b><i>" + esc(f[0]) + "</i></span>";
+    }).join("");
+    return '<div class="srow"><span class="slabel">' + esc(label) + "</span>" + chips + "</div>";
+  }
+  function seasonBlock(p) {
+    var rows = [];
+    if (p.hitting) rows.push(statRow("打撃", p.hitting, HIT_FIELDS));
+    if (p.pitching) rows.push(statRow("投球", p.pitching, PIT_FIELDS));
+    return rows.length ? '<div class="season">' + rows.join("") + "</div>" : "";
+  }
+  function matchup(r) {
+    var o = cell(r.opponent);
+    return r.home === true ? "vs " + o : (r.home === false ? "@ " + o : o);
+  }
+  function shortDate(d) { var t = cell(d).split("-"); return t.length === 3 ? t[1] + "/" + t[2] : cell(d); }
+  function teamResult(r) {
+    var res = r.result || "", ts = r.team_score, os = r.opp_score;
+    if (ts != null && os != null) {
+      if (!res) {
+        var a = num(ts), b = num(os);
+        if (a >= 0 && b >= 0 && a !== b) res = a > b ? "勝" : "敗";
+      }
+      return (res + " " + ts + "-" + os).replace(/^\s+|\s+$/g, "");
+    }
+    return res || "-";
+  }
+
+  function playersPanel() {
+    if (!DATA.players || !DATA.players.length) {
+      return '<p class="empty">出場成績のある日本人選手は見つかりませんでした。</p>';
+    }
+    var cards = DATA.players.map(function (p) {
+      var res = teamResult(p);
+      var badge = res.charAt(0) === "勝" ? "badge win" : (res.charAt(0) === "敗" ? "badge lose" : "badge");
+      var meta, line, badgeHtml;
+      if (p.date) {
+        meta = esc(shortDate(p.date)) + "　" + esc(matchup(p));
+        line = '<div class="pline">' + ecell(p.line) + "</div>";
+        badgeHtml = '<span class="' + badge + '">' + esc(res) + "</span>";
+      } else {
+        meta = "直近の出場なし";
+        line = "";
+        badgeHtml = "";
+      }
+      return '<article class="pcard">' + avatar(p, "lg") +
+        '<div class="pbody"><div class="pname">' + esc(p.name) +
+        '<span class="pteam">' + esc(p.team) + "</span></div>" +
+        '<div class="pmeta">' + meta + "</div>" +
+        statusHtml(p.team_id) + line + seasonBlock(p) +
+        "</div>" + badgeHtml + "</article>";
+    });
+    return '<div class="cards">' + cards.join("") + "</div>";
+  }
+
+  /* ---------- tab: standings ---------- */
+  function jpTeamIds() {
+    var ids = {};
+    (DATA.players || []).forEach(function (p) { if (p.team_id) ids[p.team_id] = 1; });
+    return ids;
+  }
+  function standingsPanel() {
+    if (!DATA.standings || !DATA.standings.length) {
+      return '<p class="empty">順位表を取得できませんでした。</p>';
+    }
+    var jp = jpTeamIds();
+    var boxes = DATA.standings.map(function (d) {
+      var rows = d.teams.map(function (t, i) {
+        return '<div class="row' + (jp[t.id] ? " jp" : "") + '">' +
+          '<span class="no">' + (i + 1) + "</span>" +
+          '<span class="nm">' + esc(t.name) + "</span>" +
+          '<span class="vl">' + ecell(t.wins) + "-" + ecell(t.losses) + "</span>" +
+          '<span class="sub">' + ecell(t.pct) + "</span>" +
+          '<span class="sub">' + ecell(t.gb) + "</span></div>";
+      }).join("");
+      return '<div class="box"><h3>' + esc(d.division) + "</h3>" + rows + "</div>";
+    });
+    return '<div class="grid">' + boxes.join("") + "</div>";
+  }
+
+  /* ---------- tab: leaders ---------- */
+  function jpPlayerIds() {
+    var ids = {};
+    (DATA.players || []).forEach(function (p) { if (p.id) ids[p.id] = 1; });
+    return ids;
+  }
+  /* Japanese names, so a leader who joined after the last daily build — and is
+     therefore missing from the roster — is still highlighted. */
+  function jpNames() {
+    var set = {};
+    var names = DATA.names || {};
+    Object.keys(names).forEach(function (k) { set[names[k]] = 1; set[k] = 1; });
+    return set;
+  }
+  function leadersPanel() {
+    if (!DATA.leaders || !DATA.leaders.length) {
+      return '<p class="empty">個人成績を取得できませんでした。</p>';
+    }
+    var jp = jpPlayerIds(), byName = jpNames();
+    var boxes = DATA.leaders.map(function (b) {
+      var rows = b.rows.map(function (r) {
+        var mine = jp[r.id] || byName[r.name];
+        return '<div class="row' + (mine ? " jp" : "") + '">' +
+          '<span class="no">' + ecell(r.rank) + "</span>" +
+          '<span class="nm">' + esc(r.name) + "</span>" +
+          '<span class="sub">' + esc(r.team) + "</span>" +
+          '<span class="vl">' + ecell(r.value) + "</span></div>";
+      }).join("");
+      var head = b.group === "pitching" ? "投手" : "打者";
+      return '<div class="box"><h3>' + esc(head + " " + b.label) + "</h3>" + rows + "</div>";
+    });
+    return '<div class="grid">' + boxes.join("") + "</div>";
+  }
+
+  /* ---------- shell ---------- */
+  var PANELS = { players: playersPanel, standings: standingsPanel, leaders: leadersPanel };
+
+  function current() {
+    var want = (location.hash || "").replace("#", "");
+    return PANELS[want] ? want : "players";
+  }
+
+  function render() {
+    var active = current();
+    var tabs = TABS.map(function (t) {
+      return '<button class="tab" type="button" role="tab" data-tab="' + t[0] +
+        '" aria-selected="' + (t[0] === active) + '">' + esc(t[1]) + "</button>";
+    }).join("");
+    var panels = TABS.map(function (t) {
+      return '<section class="panel" id="panel-' + t[0] + '"' +
+        (t[0] === active ? "" : " hidden") + ">" + PANELS[t[0]]() + "</section>";
+    }).join("");
+    app.innerHTML = '<div class="tabs" role="tablist">' + tabs + "</div>" + panels;
+
+    app.querySelectorAll(".tab").forEach(function (b) {
+      b.addEventListener("click", function () {
+        location.hash = b.dataset.tab;
+        render();
+      });
+    });
+
+    if (countsEl) {
+      var h = 0, p = 0;
+      (DATA.players || []).forEach(function (x) { if (x.hitting) h++; if (x.pitching) p++; });
+      countsEl.textContent = "野手 " + h + "名 / 投手 " + p + "名";
+    }
+    if (stampEl) stampEl.textContent = DATA.generated_at || "";
+  }
+  window.MLBLive = { render: render, data: function () { return DATA; } };
+
+  /* ---------- live refresh ---------- */
+  function lastGame(log) {
+    var dates = log.filter(function (e) { return e[1].date; }).map(function (e) { return e[1].date; });
+    if (!dates.length) return null;
+    var latest = dates.sort()[dates.length - 1];
+    var g = { date: latest, team_id: null, opponent: "", home: null, hitting: null, pitching: null };
+    log.forEach(function (e) {
+      var grp = e[0], sp = e[1];
+      if (sp.date !== latest) return;
+      if (grp === "hitting") g.hitting = sp.stat || {};
+      else if (grp === "pitching") g.pitching = sp.stat || {};
+      if (sp.team && sp.team.id) g.team_id = sp.team.id;
+      if (sp.opponent && sp.opponent.name) g.opponent = sp.opponent.name;
+      if (sp.isHome !== undefined && sp.isHome !== null) g.home = sp.isHome;
+    });
+    return g;
+  }
+
+  function loadPlayer(p) {
+    var url = API + "/people/" + p.id + "?hydrate=stats(group=[hitting,pitching]," +
+      "type=[season,gameLog],season=" + DATA.season + "),currentTeam";
+    return getJSON(url).then(function (d) {
+      var person = (d.people || [])[0] || {};
+      var hitting = null, pitching = null, log = [];
+      (person.stats || []).forEach(function (grp) {
+        var type = (grp.type || {}).displayName, name = (grp.group || {}).displayName;
+        var splits = grp.splits || [];
+        if (type === "season") {
+          if (splits.length) {
+            if (name === "hitting") hitting = splits[0].stat;
+            else if (name === "pitching") pitching = splits[0].stat;
+          }
+        } else if (type === "gameLog") {
+          splits.forEach(function (sp) { log.push([name, sp]); });
+        }
+      });
+      var team = person.currentTeam || {};
+      return {
+        id: p.id, name: p.name, team: teamJa(team.name || ""), team_id: team.id,
+        hitting: hitting, pitching: pitching, last: lastGame(log)
+      };
+    }).catch(function () { return null; });
+  }
+
+  function loadGames(dates) {
+    return Promise.all(dates.map(function (d) {
+      return getJSON(API + "/schedule?sportId=1&date=" + d + "&hydrate=linescore")
+        .then(function (data) {
+          var out = [];
+          (data.dates || []).forEach(function (day) {
+            (day.games || []).forEach(function (g) {
+              var st = g.status || {}, ln = g.linescore || {}, tm = g.teams || {};
+              var home = tm.home || {}, away = tm.away || {};
+              out.push({
+                date: day.date, start: g.gameDate || "",
+                state: st.abstractGameState || "", detail: st.detailedState || "",
+                inning: ln.currentInning, half: ln.inningState || "",
+                home_id: (home.team || {}).id, home_name: (home.team || {}).name || "",
+                home_score: home.score,
+                away_id: (away.team || {}).id, away_name: (away.team || {}).name || "",
+                away_score: away.score
+              });
+            });
+          });
+          return out;
+        }).catch(function () { return []; });
+    })).then(function (lists) {
+      return [].concat.apply([], lists);
+    });
+  }
+
+  function loadStandings() {
+    return getJSON(API + "/standings?leagueId=103,104&season=" + DATA.season +
+      "&standingsTypes=regularSeason&hydrate=division,team").then(function (data) {
+      return (data.records || []).map(function (rec) {
+        return {
+          division: (DATA.divisions || {})[(rec.division || {}).name] || (rec.division || {}).name || "",
+          teams: (rec.teamRecords || []).map(function (row) {
+            var t = row.team || {};
+            return {
+              id: t.id, name: teamJa(t.name || ""), wins: row.wins, losses: row.losses,
+              pct: row.winningPercentage, gb: row.gamesBack
+            };
+          })
+        };
+      }).filter(function (d) { return d.teams.length; });
+    }).catch(function () { return DATA.standings || []; });
+  }
+
+  function loadLeaders() {
+    var cats = (DATA.categories || []).map(function (c) { return c[0]; }).join(",");
+    if (!cats) return Promise.resolve(DATA.leaders || []);
+    var labels = {};
+    (DATA.categories || []).forEach(function (c) { labels[c[0]] = c; });
+    return getJSON(API + "/stats/leaders?leaderCategories=" + cats + "&season=" +
+      DATA.season + "&sportId=1&limit=10").then(function (data) {
+      var boards = (data.leagueLeaders || []).filter(function (b) {
+        return labels[b.leaderCategory];
+      }).map(function (b) {
+        var meta = labels[b.leaderCategory];
+        return {
+          category: b.leaderCategory, label: meta[1], group: meta[2],
+          rows: (b.leaders || []).map(function (l) {
+            var person = l.person || {};
+            return {
+              id: person.id, rank: l.rank,
+              name: (DATA.names || {})[person.fullName] || person.fullName || "",
+              team: teamJa((l.team || {}).name || ""), value: l.value
+            };
+          })
+        };
+      }).filter(function (b) { return b.rows.length; });
+      var order = {};
+      (DATA.categories || []).forEach(function (c, i) { order[c[0]] = i; });
+      boards.sort(function (a, b) { return (order[a.category] || 99) - (order[b.category] || 99); });
+      return boards.length ? boards : (DATA.leaders || []);
+    }).catch(function () { return DATA.leaders || []; });
+  }
+
+  function utcDay(offset) {
+    var d = new Date(Date.now() - offset * 86400000);
+    function z(n) { return (n < 10 ? "0" : "") + n; }
+    return d.getUTCFullYear() + "-" + z(d.getUTCMonth() + 1) + "-" + z(d.getUTCDate());
+  }
+
+  function refresh() {
+    if (!DATA.players || !DATA.players.length) return Promise.resolve(false);
+    return Promise.all([
+      Promise.all(DATA.players.map(loadPlayer)),
+      loadGames([utcDay(0), utcDay(1)]),
+      loadStandings(),
+      loadLeaders()
+    ]).then(function (out) {
+      var people = out[0].filter(Boolean);
+      if (!people.length) throw new Error("no players");
+      var games = out[1];
+      var byDate = {};
+      games.forEach(function (g) { byDate[g.date] = 1; });
+
+      var roster = people.map(function (p) {
+        var card = {
+          id: p.id, name: p.name, team: p.team, team_id: p.team_id,
+          hitting: p.hitting, pitching: p.pitching
+        };
+        if (p.last) {
+          var res = null;
+          games.forEach(function (g) {
+            if (g.date !== p.last.date) return;
+            if (g.home_id !== p.last.team_id && g.away_id !== p.last.team_id) return;
+            var home = g.home_id === p.last.team_id;
+            res = {
+              team_score: home ? g.home_score : g.away_score,
+              opp_score: home ? g.away_score : g.home_score,
+              opponent: teamJa(home ? g.away_name : g.home_name)
+            };
+          });
+          card.date = p.last.date;
+          card.opponent = (res && res.opponent) || teamJa(p.last.opponent || "");
+          card.home = p.last.home;
+          card.team_score = res ? res.team_score : null;
+          card.opp_score = res ? res.opp_score : null;
+          card.result = "";
+          card.line = gameLine(p.last.hitting, p.last.pitching);
+        }
+        return card;
+      });
+      roster.sort(function (a, b) {
+        var x = a.date || "", y = b.date || "";
+        return x === y ? 0 : (x > y ? -1 : 1);
+      });
+
+      DATA.players = roster;
+      if (games.length) DATA.games = games;
+      DATA.standings = out[2];
+      DATA.leaders = out[3];
+      DATA.generated_at = jstStamp(new Date());
+      render();
+      return true;
+    }).catch(function () { return false; });
   }
 
   function hitLine(s) {
@@ -879,250 +1371,47 @@ _PAGE_JS = r"""
     if (h) return hitLine(h);
     return "-";
   }
-  function shortDate(d) { var t = cell(d).split("-"); return t.length === 3 ? t[1] + "/" + t[2] : cell(d); }
-  function matchup(r) {
-    var o = cell(r.opponent);
-    return r.home === true ? "vs " + o : (r.home === false ? "@ " + o : o);
-  }
-  function teamResult(r) {
-    var res = r.result || "", ts = r.team_score, os = r.opp_score;
-    if (ts != null && os != null) {
-      if (!res) {
-        var a = num(ts), b = num(os);
-        if (a >= 0 && b >= 0 && a !== b) res = a > b ? "勝" : "敗";
-      }
-      return (res + " " + ts + "-" + os).replace(/^\s+|\s+$/g, "");
-    }
-    return res || "-";
-  }
 
-  function statRow(label, stat, fields) {
-    var chips = fields.map(function (f) {
-      return '<span class="' + (f[2] ? "stat key" : "stat") + '"><b>' +
-        ecell(stat[f[1]]) + "</b><i>" + esc(f[0]) + "</i></span>";
-    }).join("");
-    return '<div class="srow"><span class="slabel">' + esc(label) + "</span>" + chips + "</div>";
-  }
-
-  function seasonBlock(p) {
-    var rows = [];
-    if (p.hitting) rows.push(statRow("打撃", p.hitting, HIT_FIELDS));
-    if (p.pitching) rows.push(statRow("投球", p.pitching, PIT_FIELDS));
-    if (!rows.length) return "";
-    return '<div class="season">' + rows.join("") + "</div>";
-  }
-
-  function renderCards(players) {
-    var out = players.map(function (p) {
-      var res = teamResult(p);
-      var badge = res.charAt(0) === "勝" ? "badge win" : (res.charAt(0) === "敗" ? "badge lose" : "badge");
-      var meta, line, badgeHtml;
-      if (p.date) {
-        meta = esc(shortDate(p.date)) + "\u3000" + esc(matchup(p));
-        line = '<div class="pline">' + ecell(p.line) + "</div>";
-        badgeHtml = '<span class="' + badge + '">' + esc(res) + "</span>";
-      } else {
-        meta = "直近の出場なし";
-        line = "";
-        badgeHtml = "";
-      }
-      return '<article class="pcard">' + avatar(p, "lg") +
-        '<div class="pbody"><div class="pname">' + esc(p.name) +
-        '<span class="pteam">' + esc(p.team) + "</span></div>" +
-        '<div class="pmeta">' + meta + "</div>" + line + seasonBlock(p) +
-        "</div>" + badgeHtml + "</article>";
-    });
-    return '<div class="cards">\n' + out.join("\n") + "\n</div>";
-  }
-
-  function render(data) {
-    if (!data.players.length) return false;
-    app.innerHTML = renderCards(data.players);
-    if (countsEl) {
-      var h = 0, p = 0;
-      data.players.forEach(function (x) { if (x.hitting) h++; if (x.pitching) p++; });
-      countsEl.textContent = "野手 " + h + "名 / 投手 " + p + "名";
-    }
-    if (stampEl) stampEl.textContent = data.generated_at;
-    return true;
-  }
-  window.MLBLive = { render: render };
-
-  function lastGame(log) {
-    var dates = log.filter(function (e) { return e[1].date; }).map(function (e) { return e[1].date; });
-    if (!dates.length) return null;
-    var latest = dates.sort()[dates.length - 1];
-    var g = { date: latest, team_id: null, opponent: "", home: null, hitting: null, pitching: null };
-    log.forEach(function (e) {
-      var grp = e[0], sp = e[1];
-      if (sp.date !== latest) return;
-      if (grp === "hitting") g.hitting = sp.stat || {};
-      else if (grp === "pitching") g.pitching = sp.stat || {};
-      if (sp.team && sp.team.id) g.team_id = sp.team.id;
-      if (sp.opponent && sp.opponent.name) g.opponent = sp.opponent.name;
-      if (sp.isHome !== undefined && sp.isHome !== null) g.home = sp.isHome;
-    });
-    return g;
-  }
-
-  function loadPlayer(p) {
-    var url = API + "/people/" + p.id + "?hydrate=stats(group=[hitting,pitching]," +
-      "type=[season,gameLog],season=" + CFG.season + "),currentTeam";
-    return getJSON(url).then(function (d) {
-      var person = (d.people || [])[0] || {};
-      var hitting = null, pitching = null, log = [];
-      (person.stats || []).forEach(function (grp) {
-        var type = (grp.type || {}).displayName, name = (grp.group || {}).displayName;
-        var splits = grp.splits || [];
-        if (type === "season") {
-          if (splits.length) {
-            if (name === "hitting") hitting = splits[0].stat;
-            else if (name === "pitching") pitching = splits[0].stat;
-          }
-        } else if (type === "gameLog") {
-          splits.forEach(function (s) { log.push([name, s]); });
-        }
-      });
-      return {
-        id: p.id, name: p.name, team: teamJa((person.currentTeam || {}).name || ""),
-        hitting: hitting, pitching: pitching, last: lastGame(log)
-      };
-    }).catch(function () { return null; });
-  }
-
-  function loadSchedules(dates) {
-    /* One request per date (all games), matched by team id client-side. */
-    return Promise.all(dates.map(function (d) {
-      return getJSON(API + "/schedule?sportId=1&date=" + d).then(function (data) {
-        var map = {};
-        (data.dates || []).forEach(function (day) {
-          (day.games || []).forEach(function (game) {
-            var t = game.teams || {}, home = t.home || {}, away = t.away || {};
-            [[home, away], [away, home]].forEach(function (pair) {
-              var side = pair[0], other = pair[1];
-              var id = (side.team || {}).id;
-              if (!id) return;
-              map[id] = {
-                team_score: side.score, opp_score: other.score,
-                result: side.isWinner === true ? "勝" : (side.isWinner === false ? "敗" : ""),
-                opponent: (other.team || {}).name || ""
-              };
-            });
-          });
-        });
-        return [d, map];
-      }).catch(function () { return [d, {}]; });
-    })).then(function (pairs) {
-      var byDate = {};
-      pairs.forEach(function (p) { byDate[p[0]] = p[1]; });
-      return byDate;
-    });
-  }
-
-  function stamp() {
-    /* JST is UTC+9 all year, so derive it from UTC instead of the device
-       clock: the time shown stays Japanese even on a phone set elsewhere. */
-    var d = new Date(Date.now() + 9 * 3600 * 1000);
-    function z(n) { return (n < 10 ? "0" : "") + n; }
-    return d.getUTCFullYear() + "-" + z(d.getUTCMonth() + 1) + "-" + z(d.getUTCDate()) +
-      " " + z(d.getUTCHours()) + ":" + z(d.getUTCMinutes()) + " JST";
-  }
-
-  function refresh() {
-    return Promise.all(CFG.players.map(loadPlayer)).then(function (players) {
-      players = players.filter(Boolean);
-      if (!players.length) throw new Error("no players");
-      var dates = {};
-      players.forEach(function (p) { if (p.last && p.last.date) dates[p.last.date] = 1; });
-      return loadSchedules(Object.keys(dates)).then(function (sched) {
-        var roster = players.map(function (p) {
-          var card = {
-            id: p.id, name: p.name, team: p.team,
-            hitting: p.hitting, pitching: p.pitching
-          };
-          if (p.last) {
-            var r = (sched[p.last.date] || {})[p.last.team_id] || {};
-            card.date = p.last.date;
-            card.opponent = teamJa(r.opponent || p.last.opponent || "");
-            card.home = p.last.home;
-            card.team_score = r.team_score;
-            card.opp_score = r.opp_score;
-            card.result = r.result || "";
-            card.line = gameLine(p.last.hitting, p.last.pitching);
-          }
-          return card;
-        });
-        /* Most recent game first; players with no game log sort last. */
-        roster.sort(function (a, b) {
-          var x = a.date || "", y = b.date || "";
-          return x === y ? 0 : (x > y ? -1 : 1);
-        });
-        return render({ players: roster, generated_at: stamp() });
-      });
-    }).catch(function () { return false; });
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", refresh);
-  } else {
-    refresh();
-  }
+  window.addEventListener("hashchange", render);
+  render();
+  if (window.fetch && window.Promise) refresh();
 })();
 """
 
 
-def _config_json(data: dict[str, Any]) -> str:
-    """Roster + team names the page's JavaScript needs to refresh itself.
+def _data_json(data: dict[str, Any]) -> str:
+    """The snapshot the page renders from, and everything it needs to refresh.
 
-    Player ids and Japanese names come from the build, so the client never has
-    to download the whole league to work out who to ask about.
+    Lookup tables travel with the page so freshly fetched data can be localised
+    client-side without another round trip.
     """
-    seen: dict[Any, str] = {}
-    # ``players`` is the canonical roster; the others are kept as a fallback so
-    # a snapshot built before that field existed still yields ids.
-    for group in ("players", "recent", "hitters", "pitchers"):
-        for row in data.get(group, []):
-            if row.get("id") and row["id"] not in seen:
-                seen[row["id"]] = row.get("name", "")
     payload = {
+        "generated_at": data.get("generated_at", ""),
         "season": data.get("season"),
-        "players": [{"id": pid, "name": name} for pid, name in seen.items()],
+        "players": data.get("players", []),
+        "games": data.get("games", []),
+        "standings": data.get("standings", []),
+        "leaders": data.get("leaders", []),
         "teams": TEAM_NAMES,
+        "divisions": DIVISION_NAMES,
+        "names": JAPANESE_NAMES,
+        "categories": [list(c) for c in LEADER_CATEGORIES],
     }
-    # "</" would end the surrounding <script> element early.
+    # "</" would close the surrounding <script> element early.
     return json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
 
 
 def format_html(data: dict[str, Any]) -> str:
-    """Render structured stats (from :func:`collect_stats`) as a standalone
-    HTML page for the GitHub Pages web app.
+    """Render the page shell: styles, the data snapshot and the renderer.
 
-    Pure function (no network at render time). The page ships this snapshot so
-    it renders instantly and works offline, and carries the script that
-    refreshes it from the MLB API when opened.
+    Pure function. All drawing happens in :data:`_PAGE_JS` — keeping a single
+    renderer means the snapshot and the refreshed view cannot drift apart.
     """
     season = data.get("season", "?")
-    hitters = data.get("hitters", [])
-    pitchers = data.get("pitchers", [])
-    recent = data.get("recent", [])
+    players = data.get("players", [])
+    n_hit = sum(1 for p in players if p.get("hitting"))
+    n_pit = sum(1 for p in players if p.get("pitching"))
     updated = _esc(data.get("generated_at", data.get("date", "")))
-
-    # Older snapshots predate ``players``; fall back to the recent list so a
-    # stale build still renders something.
-    roster = data.get("players") or recent
-    # Counted from the roster so the header matches what the refresh script
-    # recomputes client-side.
-    n_hit = sum(1 for p in roster if p.get("hitting")) or len(hitters)
-    n_pit = sum(1 for p in roster if p.get("pitching")) or len(pitchers)
-
-    body = []
-    if not roster:
-        body.append(
-            '<p class="empty">現時点で出場成績のある日本人選手は見つかりませんでした'
-            "(オフシーズン、または今シーズンの試合前の可能性があります)。</p>"
-        )
-    else:
-        body.append(_player_cards(roster))
 
     return (
         "<!doctype html>\n"
@@ -1137,14 +1426,13 @@ def format_html(data: dict[str, Any]) -> str:
         "<h1>日本人メジャーリーガー成績</h1>\n"
         f'<p class="meta">{_esc(season)}シーズン ・ 最終更新: '
         f'<span id="updated">{updated}</span></p>\n'
-        f'<p class="meta"><span id="counts">野手 {n_hit}名 / '
-        f"投手 {n_pit}名</span></p>\n"
+        f'<p class="meta"><span id="counts">野手 {n_hit}名 / 投手 {n_pit}名</span></p>\n'
         "</div></header>\n"
-        '<main id="app">\n' + "\n".join(body) + "\n</main>\n"
+        '<main id="app"></main>\n'
         "<footer>データ提供: "
         '<a href="https://statsapi.mlb.com" rel="noopener">MLB Stats API</a>'
         "・写真: MLB。ページを開くたびに最新へ更新します。</footer>\n"
-        f'<script id="mlb-config" type="application/json">{_config_json(data)}</script>\n'
+        f'<script id="mlb-data" type="application/json">{_data_json(data)}</script>\n'
         f"<script>{_PAGE_JS}</script>\n"
         "</body>\n</html>\n"
     )

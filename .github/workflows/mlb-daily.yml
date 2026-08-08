@@ -60,3 +60,41 @@ jobs:
       pages: write
       id-token: write
     uses: ./.github/workflows/pages.yml
+
+  # Nobody watches the Actions tab: in August this job failed for three days
+  # running (Pages had been disabled) and the site stayed down unnoticed.
+  # Opening an issue turns a silent failure into an email.
+  notify-failure:
+    needs: [build, publish]
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the failure issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="MLB日次ジョブが失敗しています"
+          body="日次ジョブ (MLB Daily Report) が失敗しました。
+          サイトの更新が止まっている可能性があります。
+
+          失敗したログ: $RUN_URL
+
+          よくある原因:
+          - GitHub Pages が無効になっている (リポジトリを Private にすると無効化されます)
+          - MLB API が一時的に応答しない"
+
+          # One issue per outage, not one per day: comment on the open one if
+          # it already exists.
+          existing=$(gh issue list --state open --label ci-failure \
+            --search "$title in:title" --json number --jq '.[0].number')
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "また失敗しました: $RUN_URL"
+            echo "commented on issue #$existing"
+          else
+            gh label create ci-failure --color B60205 --description "自動ジョブの失敗" 2>/dev/null || true
+            gh issue create --title "$title" --body "$body" --label ci-failure
+          fi
