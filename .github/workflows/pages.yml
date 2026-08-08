@@ -65,13 +65,6 @@ jobs:
       # accessible by integration"). Only a human can turn it back on.
       - name: Configure Pages
         uses: actions/configure-pages@v5
-        with:
-          # Create the Pages site if it does not exist, instead of failing.
-          # Pages was disabled on the repository at some point after
-          # 2026-08-04; every run then died here with "Get Pages site failed /
-          # Not Found", the deploy was skipped, and the published site went
-          # away. With this the workflow restores it by itself.
-          enablement: true
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

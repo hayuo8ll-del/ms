@@ -146,9 +146,15 @@ SAMPLE = {
 }
 
 
-def snapshot(page: str) -> str:
-    """The server-rendered body only, excluding the bundled refresh script."""
-    return page.split('<main id="app">', 1)[1].split("</main>", 1)[0]
+def payload(page: str) -> dict:
+    """The data snapshot the page renders from."""
+    raw = page.split('<script id="mlb-data" type="application/json">', 1)[1]
+    return json.loads(raw.split("</script>", 1)[0].replace("<\\/", "</"))
+
+
+def page_js(page: str) -> str:
+    """The bundled renderer source."""
+    return page.split("</script>\n<script>", 1)[1].split("</script>", 1)[0]
 
 
 class FormatReportTests(unittest.TestCase):
@@ -195,51 +201,100 @@ class FormatReportTests(unittest.TestCase):
         self.assertIn("見つかりませんでした", report)
 
 
-class FormatHtmlTests(unittest.TestCase):
-    def test_is_standalone_html_document(self) -> None:
+class PageShellTests(unittest.TestCase):
+    """The page ships a shell, a snapshot and one renderer."""
+
+    def test_is_standalone_document(self) -> None:
         page = format_html(SAMPLE)
         self.assertTrue(page.lstrip().startswith("<!doctype html"))
         self.assertIn('<html lang="ja">', page)
         self.assertIn("<style>", page)  # self-contained, no external CSS
-        self.assertIn('class="pcard"', page)
+        self.assertIn('<main id="app"></main>', page)  # filled in by the script
+        self.assertIn('<script id="mlb-data"', page)
 
-    def test_includes_players_and_stats(self) -> None:
-        body = snapshot(format_html(SAMPLE))
-        self.assertIn("Shohei Ohtani", body)
-        self.assertIn("Yoshinobu Yamamoto", body)
-        self.assertIn("打撃", body)  # season block labels
-        self.assertIn("投球", body)
-        self.assertIn("35", body)  # Ohtani home runs
-        self.assertIn("2.85", body)  # Yamamoto ERA
+    def test_header_counts_come_from_players(self) -> None:
+        page = format_html(SAMPLE)
+        self.assertIn("野手 1名 / 投手 1名", page)
 
-    def test_escapes_html_in_names(self) -> None:
+    def test_snapshot_carries_every_section(self) -> None:
+        data = payload(format_html(SAMPLE))
+        for key in ("players", "games", "standings", "leaders"):
+            self.assertIn(key, data)
+        self.assertEqual(data["season"], 2026)
+
+    def test_snapshot_carries_lookup_tables(self) -> None:
+        """Refreshed data is localised client-side, so the tables travel too."""
+        data = payload(format_html(SAMPLE))
+        self.assertEqual(data["teams"]["Los Angeles Dodgers"], "ドジャース")
+        self.assertEqual(data["divisions"]["American League East"], "ア・リーグ東")
+        self.assertEqual(data["names"]["Shohei Ohtani"], "大谷翔平")
+        self.assertIn(["homeRuns", "本塁打", "hitting"], data["categories"])
+
+    def test_players_keep_the_ids_the_page_needs(self) -> None:
         data = {
-            "date": "2026-07-25",
-            "generated_at": "2026-07-25 04:00 UTC",
-            "season": 2026,
-            "hitters": [],
-            "pitchers": [],
-            "players": [
-                {"id": 1, "name": "<script>", "team": "T & U",
-                 "hitting": {"homeRuns": 1}, "pitching": None}
-            ],
+            "date": "", "generated_at": "", "season": 2026,
+            "hitters": [], "pitchers": [], "recent": [],
+            "players": [{"id": 660271, "team_id": 119, "name": "大谷翔平",
+                         "team": "ドジャース", "hitting": {}, "pitching": None}],
         }
-        body = snapshot(format_html(data))
-        self.assertNotIn("<script>", body)
-        self.assertIn("&lt;script&gt;", body)
-        self.assertIn("T &amp; U", body)
+        player = payload(format_html(data))["players"][0]
+        self.assertEqual(player["id"], 660271)
+        # team_id is how a player is matched to today's game.
+        self.assertEqual(player["team_id"], 119)
 
-    def test_empty_data_does_not_raise(self) -> None:
+    def test_payload_cannot_close_the_script_tag(self) -> None:
         data = {
-            "date": "2026-01-15",
-            "generated_at": "2026-01-15 04:00 UTC",
-            "season": 2026,
-            "hitters": [],
-            "pitchers": [],
+            "date": "", "generated_at": "", "season": 2026,
+            "hitters": [], "pitchers": [], "recent": [],
+            "players": [{"id": 1, "name": "</script>x", "team": "T",
+                         "hitting": {}, "pitching": None}],
         }
         page = format_html(data)
-        self.assertIn("見つかりませんでした", page)
+        raw = page.split('<script id="mlb-data" type="application/json">', 1)[1]
+        self.assertNotIn("</script>", raw.split("</script>", 1)[0])
+        # …and it still round-trips to the original name.
+        self.assertEqual(payload(page)["players"][0]["name"], "</script>x")
+
+    def test_empty_data_still_renders_a_page(self) -> None:
+        data = {
+            "date": "2026-01-15", "generated_at": "2026-01-15 04:00 JST",
+            "season": 2026, "hitters": [], "pitchers": [], "recent": [],
+            "players": [],
+        }
+        page = format_html(data)
         self.assertTrue(page.lstrip().startswith("<!doctype html"))
+        self.assertEqual(payload(page)["players"], [])
+
+
+class RendererTests(unittest.TestCase):
+    """Feature coverage of the bundled renderer.
+
+    Behaviour is verified in a browser (see scratchpad/test_live_js.py); these
+    guard against a feature being dropped from the bundle entirely.
+    """
+
+    def setUp(self) -> None:
+        self.js = page_js(format_html(SAMPLE))
+
+    def test_has_the_three_tabs(self) -> None:
+        for label in ("選手", "順位表", "個人成績"):
+            self.assertIn(label, self.js)
+
+    def test_renders_game_status_states(self) -> None:
+        for label in ("試合中", "試合終了", "試合前"):
+            self.assertIn(label, self.js)
+
+    def test_keeps_the_full_season_field_set(self) -> None:
+        for label in ("出塁率", "投球回", "WHIP"):
+            self.assertIn(label, self.js)
+
+    def test_refreshes_every_section(self) -> None:
+        for endpoint in ("/schedule?sportId=1", "/standings?", "/stats/leaders?"):
+            self.assertIn(endpoint, self.js)
+
+    def test_stamps_jst(self) -> None:
+        self.assertIn('" JST"', self.js)
+        self.assertNotIn('" UTC"', self.js)
 
 
 class JapaneseNameTests(unittest.TestCase):
@@ -266,159 +321,25 @@ class JapaneseTeamTests(unittest.TestCase):
         self.assertEqual(to_japanese_team("Some New Club"), "Some New Club")
 
 
-class ReadabilityMarkupTests(unittest.TestCase):
-    """Season totals live inside each card, next to today's line."""
-
-    def test_season_block_sits_in_the_card(self) -> None:
-        body = snapshot(format_html(SAMPLE))
-        # No separate tables any more: the card carries the season figures.
-        self.assertNotIn("<table", body)
-        self.assertIn('class="season"', body)
-        self.assertIn("<i>本塁打</i>", body)
-        self.assertIn("<i>防御率</i>", body)
-        self.assertIn("<i>出塁率</i>", body)  # full field set, not a subset
-
-    def test_headline_stats_are_marked(self) -> None:
-        body = snapshot(format_html(SAMPLE))
-        # 打率 / 本塁打 for hitters, 防御率 / 奪三振 for pitchers.
-        self.assertIn('<span class="stat key"><b>.310</b><i>打率</i></span>', body)
-        self.assertIn('<span class="stat key"><b>35</b><i>本塁打</i></span>', body)
-        self.assertIn('<span class="stat key"><b>2.85</b><i>防御率</i></span>', body)
-        self.assertIn('<span class="stat key"><b>150</b><i>奪三振</i></span>', body)
-
-    def test_two_way_player_shows_both_stat_rows(self) -> None:
-        data = {
-            "date": "", "generated_at": "", "season": 2026,
-            "hitters": [], "pitchers": [],
-            "players": [{
-                "id": 660271, "name": "大谷翔平", "team": "ドジャース",
-                "hitting": {"avg": ".310", "homeRuns": 41},
-                "pitching": {"era": "2.41", "strikeOuts": 138},
-                "date": "2026-07-26", "opponent": "メッツ", "home": False,
-                "team_score": 8, "opp_score": 2, "result": "勝", "line": "投/打",
-            }],
-        }
-        body = snapshot(format_html(data))
-        self.assertIn('<span class="slabel">打撃</span>', body)
-        self.assertIn('<span class="slabel">投球</span>', body)
-
-    def test_player_without_a_game_still_renders(self) -> None:
-        data = {
-            "date": "", "generated_at": "", "season": 2026,
-            "hitters": [], "pitchers": [],
-            "players": [{"id": 5, "name": "控え選手", "team": "カブス",
-                         "hitting": {"avg": ".000"}, "pitching": None}],
-        }
-        body = snapshot(format_html(data))
-        self.assertIn("直近の出場なし", body)
-        self.assertIn("控え選手", body)
-
-    def test_recent_cards_highlight_the_player_line(self) -> None:
-        page = format_html(RECENT_SAMPLE)
-        self.assertIn('class="pline"', page)
-        self.assertIn("4打数1安打 打点1", page)
-
-    def test_page_has_phone_layout(self) -> None:
-        page = format_html(SAMPLE)
-        self.assertIn("@media (max-width: 700px)", page)
-        self.assertIn(".cards{grid-template-columns:1fr}", page)
-
-
 class PhotoTests(unittest.TestCase):
     def test_photo_url_uses_player_id(self) -> None:
         url = photo_url(660271)
         self.assertIn("/people/660271/headshot/", url)
         self.assertTrue(url.startswith("https://img.mlbstatic.com/"))
 
-    def test_photo_url_empty_without_id(self) -> None:
+    def test_spot_url_uses_player_id(self) -> None:
+        self.assertIn("/people/660271/spots/", spot_url(660271))
+
+    def test_urls_empty_without_id(self) -> None:
         self.assertEqual(photo_url(None), "")
         self.assertEqual(photo_url(0), "")
+        self.assertEqual(spot_url(None), "")
 
-    def test_spot_url_uses_player_id(self) -> None:
-        url = spot_url(660271)
-        self.assertIn("/people/660271/spots/", url)
-
-    def test_avatar_falls_back_from_spot_to_headshot(self) -> None:
-        """Photos degrade spot -> headshot -> initial, never a broken image."""
-        data = {
-            "date": "2026-07-25",
-            "generated_at": "",
-            "season": 2026,
-            "hitters": [],
-            "pitchers": [],
-            "recent": [],
-            "players": [
-                {"id": 660271, "name": "大谷翔平", "team": "ドジャース",
-                 "hitting": {}, "pitching": None}
-            ],
-        }
-        page = format_html(data)
-        self.assertIn("midfield.mlbstatic.com/v1/people/660271/spots/", page)
-        self.assertIn('data-fallback="https://img.mlbstatic.com', page)
-        self.assertIn("this.remove()", page)
-        self.assertIn("<b>大</b>", page)
-
-    def test_page_renders_headshots_when_ids_present(self) -> None:
-        data = {
-            "date": "2026-07-25",
-            "generated_at": "2026-07-25 04:00 UTC",
-            "season": 2026,
-            "hitters": [],
-            "pitchers": [],
-            "players": [
-                {
-                    "id": 660271,
-                    "name": "大谷翔平",
-                    "team": "ドジャース",
-                    "hitting": {"avg": ".310", "homeRuns": 35},
-                    "pitching": None,
-                }
-            ],
-            "recent": [
-                {
-                    "id": 808967,
-                    "name": "山本由伸",
-                    "date": "2026-07-24",
-                    "opponent": "パドレス",
-                    "home": True,
-                    "team_score": 5,
-                    "opp_score": 3,
-                    "result": "勝",
-                    "line": "7.0回 1失点 9奪三振",
-                }
-            ],
-        }
-        page = format_html(data)
-        self.assertIn("/people/660271/spots/", page)
-        self.assertIn("/people/660271/headshot/", page)  # kept as the fallback
-        # Broken images fall back to the player's initial.
-        self.assertIn("this.remove()", page)
-        self.assertIn("<b>大</b>", page)
-
-    def test_headshot_is_clipped_on_the_image_itself(self) -> None:
-        """iOS Safari does not clip a positioned child to the parent's radius,
-        so the image must carry its own border-radius or it spills out."""
-        page = format_html(SAMPLE)
-        css = page.split("<style>", 1)[1].split("</style>", 1)[0]
-        img_rule = css.split(".avatar img{", 1)[1].split("}", 1)[0]
-        self.assertIn("border-radius:50%", img_rule)
-        self.assertIn("object-fit:cover", img_rule)
-
-    def test_missing_id_still_renders_initial_without_img(self) -> None:
-        data = {
-            "date": "2026-07-25",
-            "generated_at": "",
-            "season": 2026,
-            "hitters": [],
-            "pitchers": [],
-            "recent": [],
-            "players": [{"name": "鈴木誠也", "team": "カブス",
-                         "hitting": {"avg": ".280"}, "pitching": None}],
-        }
-        body = snapshot(format_html(data))
-        self.assertIn("<b>鈴</b>", body)
-        self.assertNotIn("img.mlbstatic.com", body)
-
+    def test_renderer_degrades_spot_to_headshot_to_initial(self) -> None:
+        js = page_js(format_html(SAMPLE))
+        self.assertIn("midfield.mlbstatic.com/v1/people/", js)
+        self.assertIn("img.mlbstatic.com/mlb-photos/", js)
+        self.assertIn("this.remove()", js)
 
 class GameLineTests(unittest.TestCase):
     def test_hitter_line(self) -> None:
@@ -450,16 +371,13 @@ class RecentSectionTests(unittest.TestCase):
         self.assertIn("@ San Diego Padres", report)  # away game marker
         self.assertIn("vs St. Louis Cardinals", report)  # home game marker
 
-    def test_html_includes_recent_section(self) -> None:
-        page = format_html(RECENT_SAMPLE)
-        self.assertIn('class="pcard"', page)  # photo cards, not a table
-        self.assertIn("大谷翔平", page)
-        self.assertIn("敗 2-4", page)  # team_score-opp_score
-
-    def test_recent_cards_colour_win_and_loss(self) -> None:
-        page = format_html(RECENT_SAMPLE)
-        self.assertIn('class="badge win"', page)
-        self.assertIn('class="badge lose"', page)
+    def test_recent_games_reach_the_page(self) -> None:
+        players = payload(format_html(RECENT_SAMPLE))["players"]
+        names = [p["name"] for p in players]
+        self.assertIn("大谷翔平", names)
+        # Win/loss is derived from these scores by the renderer.
+        suzuki = [p for p in players if p["name"] == "鈴木誠也"][0]
+        self.assertEqual((suzuki["team_score"], suzuki["opp_score"]), (2, 4))
 
     def test_recent_only_data_is_not_treated_as_empty(self) -> None:
         report = format_report(RECENT_SAMPLE)
@@ -527,68 +445,6 @@ class RecentSectionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class LiveRefreshTests(unittest.TestCase):
-    """The page carries what it needs to refresh itself when opened."""
-
-    def _config(self, page: str) -> dict:
-        raw = page.split('<script id="mlb-config" type="application/json">', 1)[1]
-        return json.loads(raw.split("</script>", 1)[0].replace("<\\/", "</"))
-
-    def test_config_lists_players_with_ids(self) -> None:
-        data = {
-            "date": "2026-07-25",
-            "generated_at": "2026-07-25 04:00 UTC",
-            "season": 2026,
-            "hitters": [
-                {"id": 660271, "name": "大谷翔平", "team": "ドジャース", "stat": {}}
-            ],
-            "pitchers": [],
-            "recent": [
-                {
-                    "id": 808967, "name": "山本由伸", "date": "2026-07-24",
-                    "opponent": "パドレス", "home": True, "team_score": 5,
-                    "opp_score": 3, "result": "勝", "line": "7.0回",
-                }
-            ],
-        }
-        cfg = self._config(format_html(data))
-        self.assertEqual(cfg["season"], 2026)
-        ids = sorted(p["id"] for p in cfg["players"])
-        self.assertEqual(ids, [660271, 808967])
-        # Team names travel with the page so the client can localise fresh data.
-        self.assertEqual(cfg["teams"]["Los Angeles Dodgers"], "ドジャース")
-
-    def test_config_json_cannot_close_the_script_tag(self) -> None:
-        data = {
-            "date": "", "generated_at": "", "season": 2026,
-            "hitters": [{"id": 1, "name": "</script>x", "team": "T", "stat": {}}],
-            "pitchers": [], "recent": [],
-        }
-        page = format_html(data)
-        raw = page.split('<script id="mlb-config" type="application/json">', 1)[1]
-        self.assertNotIn("</script>", raw.split("</script>", 1)[0])
-
-    def test_page_ships_the_refresh_script(self) -> None:
-        page = format_html(SAMPLE)
-        self.assertIn('<main id="app">', page)
-        self.assertIn('id="updated"', page)
-        self.assertIn('id="counts"', page)
-        self.assertIn("statsapi.mlb.com/api/v1", page)
-        self.assertIn("window.MLBLive", page)
-
-    def test_snapshot_survives_when_refresh_cannot_run(self) -> None:
-        """No ids -> the script bails out and the snapshot stays on screen."""
-        data = {
-            "date": "", "generated_at": "", "season": 2026,
-            "hitters": [], "pitchers": [], "recent": [],
-            "players": [{"name": "鈴木誠也", "team": "カブス",
-                         "hitting": {"avg": ".280"}, "pitching": None}],
-        }
-        page = format_html(data)
-        self.assertEqual(self._config(page)["players"], [])
-        self.assertIn("鈴木誠也", snapshot(page))
 
 
 class TimestampTests(unittest.TestCase):

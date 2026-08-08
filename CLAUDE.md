@@ -44,11 +44,17 @@ touching the study app**.
 - **Data source:** public MLB Stats API (`statsapi.mlb.com`, no key), via
   `urllib` — standard library only, no `requirements.txt`.
 - **`backend/mlb_stats.py`** — network layer (`fetch_japanese_players`,
-  `fetch_player_stats`, `fetch_game_result`, `collect_stats`; auto-detects
-  players by `birthCountry == "Japan"`, pulls season totals + each player's
-  latest game and the team's win/loss & score) and a pure formatting layer
-  (`format_report` → Markdown, `format_html` → standalone HTML). Player names
-  are shown in Japanese via `JAPANESE_NAMES`/`to_japanese` (English fallback).
+  `fetch_player_stats`, `fetch_game_result`, `fetch_games`, `fetch_standings`,
+  `fetch_leaders`, `collect_stats`; auto-detects players by
+  `birthCountry == "Japan"`, pulls season totals + each player's latest game and
+  the team's win/loss & score, plus the day's schedule with live linescores, all
+  six division standings and the league leaderboards) and a pure formatting
+  layer (`format_report` → Markdown, `format_html` → standalone HTML). Player
+  names are shown in Japanese via `JAPANESE_NAMES`/`to_japanese` (English
+  fallback), teams via `TEAM_NAMES`, divisions via `DIVISION_NAMES`; the
+  leaderboards rendered are listed in `LEADER_CATEGORIES`.
+  Each extra section is fetched through `_safe`, so one endpoint failing leaves
+  that section empty instead of failing the whole run.
 - **`backend/scheduler.py`** — run `python3 scheduler.py --mlb-report` to write
   `backend/reports/{date}.md` + `latest.md` and the web page `mlb/index.html`.
   The default no-arg invocation stays offline (heartbeat only) so
@@ -56,34 +62,52 @@ touching the study app**.
 - **Tests:** `cd backend && python3 -m unittest` (offline formatter tests).
 - **Daily job:** `.github/workflows/mlb-daily.yml` (daily cron + manual) runs
   the report, commits `backend/reports/` and `mlb/index.html` to `main`, then
-  calls `pages.yml` to republish the site.
+  calls `pages.yml` to republish the site. A `notify-failure` job (`if:
+  failure()`) opens — or comments on the existing — `ci-failure` issue with the
+  run URL, so a broken daily run is noticed instead of silently taking the site
+  down for days.
 
 ### Live refresh (the page updates when opened)
 
-`mlb/index.html` is a **snapshot plus a refresh script**, not a static page:
+`mlb/index.html` is a **data snapshot plus one renderer**, not a static page:
 
-- `format_html` embeds `<script id="mlb-config">` (season, player ids +
-  Japanese names, `TEAM_NAMES`) and `_PAGE_JS`. On load the script re-fetches
-  each player from the MLB API, re-derives the same structure `collect_stats`
-  produces, and replaces `<main id="app">`.
-- The server-rendered snapshot stays visible until fresh data arrives, so a
-  blocked API, an offline phone or an API change degrades to the snapshot
-  rather than an empty page. It also keeps the page useful offline.
-- `_PAGE_JS` duplicates the rendering in JavaScript. **Change the two together**
-  — `_player_cards`/`_season_block` and `renderCards`/`seasonBlock` must emit
-  the same markup, or a refresh will silently restyle the page. `_HIT_FIELDS`/
-  `_PIT_FIELDS` are mirrored by `HIT_FIELDS`/`PIT_FIELDS` in the script.
-- The page is **one card per player**: today's line and the season totals sit
-  together, sorted by most recent game (a player with no game log sorts last).
-  `collect_stats` emits that as `players`; `hitters`/`pitchers` remain because
-  the Markdown report still renders them as tables.
-- `_config_json` reads `players` first — the roster it ships is what the client
-  asks the API about, so a player missing there never refreshes.
+- `format_html` emits only the shell: CSS, the hero, an empty
+  `<main id="app"></main>`, `<script id="mlb-data" type="application/json">`
+  (the snapshot) and `_PAGE_JS`. **JavaScript is the only renderer** — Python
+  builds no page HTML. Keep it that way: the previous design rendered the same
+  markup twice (Python + JS) and drifted apart in practice.
+- On load the script draws the embedded snapshot immediately, then re-fetches
+  players, schedule, standings and leaders from the MLB API and redraws. A
+  blocked API, an offline phone or an API change leaves the snapshot on screen
+  rather than an empty page.
+- The `mlb-data` payload keys are the contract between the two layers:
+  `generated_at, season, players, games, standings, leaders, teams, divisions,
+  names, categories`. `teams`/`divisions`/`names`/`categories` are the lookup
+  tables, shipped so the client can localise *refreshed* data too. It is
+  serialised with `</` escaped so a player name can't close the script tag.
+- The page has **three tabs** (選手 / 順位表 / 個人成績) driven by
+  `location.hash`, so a reload returns to the same tab.
+- 選手 is **one card per player**: today's line and the season totals sit
+  together, sorted by most recent game (a player with no game log sorts last),
+  with a status chip derived from `games` — `試合中 5回裏 3-2` / `試合終了 勝
+  5-3` / `試合前 08:10 開始`. A player is matched to a game by `team_id`, and
+  because the US date and JST disagree, `collect_stats` fetches **today and
+  yesterday** (UTC) and the client picks Live > latest Final > next Preview.
+- 順位表 highlights the divisions' teams that have a Japanese player
+  (`players[].team_id`); 個人成績 highlights Japanese leaders by player id, or
+  by name via the `names` table when the leader isn't in the shipped roster.
+- `collect_stats` still emits `hitters`/`pitchers`/`recent` because the Markdown
+  report renders those as tables; the page ignores them.
 - Player ids come from the daily build, so a newly arrived Japanese player
-  appears after the next daily run, not instantly.
+  appears in the 選手 tab after the next daily run, not instantly.
 - `sw.js` cooperates: it ignores cross-origin requests (otherwise the MLB API
   responses get cached and the page freezes on stale numbers) and uses
   network-first for `/mlb/`. Bump `CACHE` when changing it.
+- **Verifying the renderer:** `python3 -m unittest` only checks the payload and
+  that features are present in the bundle. Behaviour is checked in a browser —
+  build a page from a fixture snapshot, stub `window.fetch`, then dump the DOM /
+  screenshot with `/opt/pw-browsers/chromium --headless --no-sandbox
+  --virtual-time-budget=3000` at desktop and phone widths.
 
 ## Publishing (GitHub Pages)
 
