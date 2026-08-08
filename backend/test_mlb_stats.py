@@ -297,6 +297,20 @@ class RendererTests(unittest.TestCase):
         self.assertIn('" JST"', self.js)
         self.assertNotIn('" UTC"', self.js)
 
+    def test_card_states_each_fact_once(self) -> None:
+        """The card used to print the result three times.
+
+        The date/opponent line, the status chip and a win-loss badge all
+        described the same game. The chip is now the only one, so the badge and
+        the meta line must not come back.
+        """
+        page = format_html(SAMPLE)
+        for gone in ("badge", "pmeta"):
+            self.assertNotIn(gone, page)
+        # …and the chip carries the colour the badge used to.
+        self.assertIn(".status.win", page)
+        self.assertIn(".status.lose", page)
+
     def test_asks_for_one_leader_category_at_a_time(self) -> None:
         """Bundling the categories mixes stat groups — see LeaderBoardTests."""
         self.assertIn("&statGroup=", self.js)

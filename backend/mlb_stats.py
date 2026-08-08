@@ -840,14 +840,11 @@ h2::before{
 }
 .pbody{min-width:0;flex:1}
 .pname{font-weight:700;font-size:1.02rem}
-.pmeta{color:var(--muted);font-size:.8rem;margin-top:.05rem}
-.pline{margin-top:.3rem;color:var(--accent);font-weight:700;font-size:.94rem;overflow-wrap:anywhere}
-.badge{
-  flex:none; align-self:flex-start; font-size:.78rem; font-weight:700; white-space:nowrap;
-  padding:.2rem .55rem; border-radius:999px; border:1px solid var(--line); color:var(--muted);
+.pline{margin-top:.4rem;color:var(--accent);font-weight:700;font-size:.94rem;overflow-wrap:anywhere}
+.ldate{
+  display:inline-block; margin-right:.4rem; padding:0 .38rem; border-radius:999px;
+  border:1px solid var(--line); color:var(--muted); font-size:.72rem; font-weight:700;
 }
-.badge.win{color:var(--win);border-color:rgba(52,211,153,.42);background:rgba(52,211,153,.10)}
-.badge.lose{color:var(--lose);border-color:rgba(251,113,133,.42);background:rgba(251,113,133,.10)}
 .pteam{font-weight:400;font-size:.82rem;color:var(--muted);margin-left:.4rem}
 /* Season totals sit inside the card, under today's line. */
 .season{margin-top:.6rem;padding-top:.55rem;border-top:1px solid var(--line);display:grid;gap:.4rem}
@@ -873,11 +870,16 @@ h2::before{
   background:linear-gradient(90deg,var(--accent),var(--accent2));
 }
 .panel[hidden]{display:none}
-/* game status chip */
-.status{font-size:.78rem;font-weight:700;margin-top:.25rem}
-.status.live{color:var(--accent2)}
-.status.final{color:var(--muted)}
-.status.pre{color:var(--muted)}
+/* game status chip — the card's only statement about the team's game */
+.status{
+  display:inline-flex; align-items:center; flex-wrap:wrap; gap:.4rem; margin-top:.35rem;
+  padding:.18rem .55rem; border-radius:999px; border:1px solid var(--line);
+  background:var(--surface2); color:var(--muted); font-size:.78rem; font-weight:700;
+}
+.status .sdet{font-weight:400;opacity:.85}
+.status.live{color:var(--accent2);border-color:rgba(125,211,252,.42);background:rgba(56,189,248,.10)}
+.status.win{color:var(--win);border-color:rgba(52,211,153,.42);background:rgba(52,211,153,.10)}
+.status.lose{color:var(--lose);border-color:rgba(251,113,133,.42);background:rgba(251,113,133,.10)}
 .dot{
   display:inline-block;width:.45rem;height:.45rem;border-radius:50%;
   background:var(--lose);margin-right:.35rem;vertical-align:middle;
@@ -1026,30 +1028,48 @@ _PAGE_JS = r"""
     return pick("Live") || pick("Final") || pick("Preview") || null;
   }
 
-  function statusHtml(teamId) {
-    var g = gameForTeam(teamId);
-    if (!g) return "";
-    var home = g.home_id === teamId;
-    var mine = home ? g.home_score : g.away_score;
-    var theirs = home ? g.away_score : g.home_score;
-    var opp = teamJa(home ? g.away_name : g.home_name);
-    if (g.state === "Live") {
-      var half = HALF[g.half] || "";
-      var inn = g.inning ? g.inning + "回" + half : (g.detail || "");
-      return '<div class="status live"><span class="dot"></span>試合中 ' +
-        esc(inn) + " " + ecell(mine) + "-" + ecell(theirs) + " vs " + esc(opp) + "</div>";
-    }
-    if (g.state === "Final") {
-      var mark = "";
-      if (mine != null && theirs != null && num(mine) !== num(theirs)) {
-        mark = num(mine) > num(theirs) ? "勝" : "敗";
+  /* One chip per card carries the team's game — state, score and opponent.
+     Nothing else on the card repeats any of it: the date belongs to the
+     player's own stat line, which is the only other thing shown. */
+  function chip(cls, label, detail) {
+    return '<div class="status ' + cls + '">' + label +
+      (detail ? '<span class="sdet">' + detail + "</span>" : "") + "</div>";
+  }
+  function resultClass(mine, theirs) {
+    if (mine == null || theirs == null || num(mine) === num(theirs)) return "";
+    return num(mine) > num(theirs) ? " win" : " lose";
+  }
+  function gameChip(p) {
+    var g = gameForTeam(p.team_id);
+    if (g) {
+      var home = g.home_id === p.team_id;
+      var mine = home ? g.home_score : g.away_score;
+      var theirs = home ? g.away_score : g.home_score;
+      var vs = (home ? "vs " : "@ ") + esc(teamJa(home ? g.away_name : g.home_name));
+      if (g.state === "Live") {
+        var inn = g.inning ? g.inning + "回" + (HALF[g.half] || "") : (g.detail || "");
+        return { date: g.date, html: chip("live",
+          '<span class="dot"></span>試合中 ' + esc(inn) + " " +
+          ecell(mine) + "-" + ecell(theirs), vs) };
       }
-      return '<div class="status final">試合終了 ' + esc(mark) + " " +
-        ecell(mine) + "-" + ecell(theirs) + " vs " + esc(opp) + "</div>";
+      if (g.state === "Final") {
+        var mark = "";
+        if (mine != null && theirs != null && num(mine) !== num(theirs)) {
+          mark = num(mine) > num(theirs) ? "勝" : "敗";
+        }
+        return { date: g.date, html: chip("final" + resultClass(mine, theirs),
+          "試合終了 " + mark + " " + ecell(mine) + "-" + ecell(theirs), vs) };
+      }
+      var at = jstTime(g.start);
+      return { date: g.date, html: chip("pre",
+        "試合前 " + esc(at ? at + " 開始" : g.detail), vs) };
     }
-    var at = jstTime(g.start);
-    return '<div class="status pre">試合前 ' + esc(at ? at + " 開始" : g.detail) +
-      " vs " + esc(opp) + "</div>";
+    if (p.date) {
+      // The club has no game today — fall back to the player's own game log.
+      return { date: p.date, html: chip("final" + resultClass(p.team_score, p.opp_score),
+        "試合終了 " + esc(teamResult(p)), esc(matchup(p))) };
+    }
+    return { date: null, html: chip("none", "直近の出場なし", "") };
   }
 
   /* ---------- tab: players ---------- */
@@ -1088,24 +1108,17 @@ _PAGE_JS = r"""
       return '<p class="empty">出場成績のある日本人選手は見つかりませんでした。</p>';
     }
     var cards = DATA.players.map(function (p) {
-      var res = teamResult(p);
-      var badge = res.charAt(0) === "勝" ? "badge win" : (res.charAt(0) === "敗" ? "badge lose" : "badge");
-      var meta, line, badgeHtml;
-      if (p.date) {
-        meta = esc(shortDate(p.date)) + "　" + esc(matchup(p));
-        line = '<div class="pline">' + ecell(p.line) + "</div>";
-        badgeHtml = '<span class="' + badge + '">' + esc(res) + "</span>";
-      } else {
-        meta = "直近の出場なし";
-        line = "";
-        badgeHtml = "";
-      }
+      var g = gameChip(p);
+      // The date labels the stat line, which is the one thing it describes —
+      // and it is needed: a live game today can sit above yesterday's line.
+      var line = p.line
+        ? '<div class="pline"><span class="ldate">' + esc(shortDate(p.date)) +
+          "</span>" + ecell(p.line) + "</div>"
+        : "";
       return '<article class="pcard">' + avatar(p, "lg") +
         '<div class="pbody"><div class="pname">' + esc(p.name) +
         '<span class="pteam">' + esc(p.team) + "</span></div>" +
-        '<div class="pmeta">' + meta + "</div>" +
-        statusHtml(p.team_id) + line + seasonBlock(p) +
-        "</div>" + badgeHtml + "</article>";
+        g.html + line + seasonBlock(p) + "</div></article>";
     });
     return '<div class="cards">' + cards.join("") + "</div>";
   }
