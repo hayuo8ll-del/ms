@@ -21,6 +21,7 @@ from mlb_stats import (
     _pitcher_game_line,
     format_html,
     format_report,
+    merge_leader_boards,
     now_stamp,
     photo_url,
     spot_url,
@@ -295,6 +296,98 @@ class RendererTests(unittest.TestCase):
     def test_stamps_jst(self) -> None:
         self.assertIn('" JST"', self.js)
         self.assertNotIn('" UTC"', self.js)
+
+    def test_asks_for_one_leader_category_at_a_time(self) -> None:
+        """Bundling the categories mixes stat groups — see LeaderBoardTests."""
+        self.assertIn("&statGroup=", self.js)
+        self.assertNotIn("leaderCategories=\" + cats", self.js)
+
+
+def leader_board(category: str, group: str, rows: list, league: str = "") -> dict:
+    return {
+        "leaderCategory": category,
+        "statGroup": group,
+        "league": {"name": league} if league else {},
+        "leaders": [
+            {"rank": i + 1, "value": value,
+             "person": {"id": pid, "fullName": name},
+             "team": {"name": "Los Angeles Dodgers"}}
+            for i, (pid, name, value) in enumerate(rows)
+        ],
+    }
+
+
+class LeaderBoardTests(unittest.TestCase):
+    """The live run showed a catcher leading home runs.
+
+    /stats/leaders answers with a board per league *and per stat group*, so a
+    single bundled request pairs the wrong players with the wrong numbers.
+    """
+
+    def test_wrong_stat_group_is_dropped(self) -> None:
+        data = {"leagueLeaders": [
+            leader_board("homeRuns", "hitting", [(1, "Yordan Alvarez", "35")]),
+            # home runs *allowed* — a pitching board for the same category.
+            leader_board("homeRuns", "pitching", [(2, "Aaron Nola", "28")]),
+            leader_board("homeRuns", "catching", [(3, "Carson Kelly", "106")]),
+        ]}
+        rows = merge_leader_boards(data, "homeRuns", "hitting")
+        self.assertEqual([r["name"] for r in rows], ["Yordan Alvarez"])
+
+    def test_leagues_merge_into_one_board(self) -> None:
+        data = {"leagueLeaders": [
+            leader_board("homeRuns", "hitting",
+                         [(1, "AL One", "40"), (2, "AL Two", "30")], "American League"),
+            leader_board("homeRuns", "hitting",
+                         [(3, "NL One", "44"), (4, "NL Two", "20")], "National League"),
+        ]}
+        rows = merge_leader_boards(data, "homeRuns", "hitting")
+        self.assertEqual([r["name"] for r in rows],
+                         ["NL One", "AL One", "AL Two", "NL Two"])
+        self.assertEqual([r["rank"] for r in rows], [1, 2, 3, 4])
+
+    def test_a_player_listed_twice_appears_once(self) -> None:
+        """The API may return a league-wide board alongside the per-league ones."""
+        data = {"leagueLeaders": [
+            leader_board("homeRuns", "hitting", [(1, "Shohei Ohtani", "44")]),
+            leader_board("homeRuns", "hitting", [(1, "Shohei Ohtani", "44")], "National League"),
+        ]}
+        rows = merge_leader_boards(data, "homeRuns", "hitting")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["name"], "大谷翔平")  # …and it is localised
+
+    def test_era_ranks_smallest_first(self) -> None:
+        data = {"leagueLeaders": [leader_board("earnedRunAverage", "pitching", [
+            (1, "High", "3.90"), (2, "Low", "1.63"), (3, "Mid", "2.41"),
+        ])]}
+        rows = merge_leader_boards(data, "earnedRunAverage", "pitching")
+        self.assertEqual([r["name"] for r in rows], ["Low", "Mid", "High"])
+
+    def test_batting_average_sorts_numerically(self) -> None:
+        data = {"leagueLeaders": [leader_board("battingAverage", "hitting", [
+            (1, "Weak", ".216"), (2, "Best", ".331"), (3, "Good", ".291"),
+        ])]}
+        rows = merge_leader_boards(data, "battingAverage", "hitting")
+        self.assertEqual([r["name"] for r in rows], ["Best", "Good", "Weak"])
+
+    def test_board_is_capped_at_ten_despite_ties(self) -> None:
+        """limit=10 is not honoured when values tie — the live run returned 16."""
+        data = {"leagueLeaders": [leader_board(
+            "wins", "pitching", [(i, f"P{i}", str(20 - i)) for i in range(16)])]}
+        rows = merge_leader_boards(data, "wins", "pitching")
+        self.assertEqual(len(rows), 10)
+        self.assertEqual(rows[-1]["rank"], 10)
+
+    def test_missing_values_sink_in_both_directions(self) -> None:
+        for category, expected in (("homeRuns", "Real"), ("earnedRunAverage", "Real")):
+            data = {"leagueLeaders": [leader_board(category, "pitching", [
+                (1, "Blank", "-"), (2, "Real", "2.00"),
+            ])]}
+            rows = merge_leader_boards(data, category, "pitching")
+            self.assertEqual(rows[0]["name"], expected)
+
+    def test_empty_response_gives_no_rows(self) -> None:
+        self.assertEqual(merge_leader_boards({}, "homeRuns", "hitting"), [])
 
 
 class JapaneseNameTests(unittest.TestCase):

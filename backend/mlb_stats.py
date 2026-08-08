@@ -120,6 +120,9 @@ LEADER_CATEGORIES: list[tuple[str, str, str]] = [
     ("saves", "セーブ", "pitching"),
 ]
 
+# Categories where a *smaller* number is the better one.
+ASCENDING_CATEGORIES: set[str] = {"earnedRunAverage"}
+
 
 def to_japanese_division(name: str) -> str:
     """Return the Japanese division name (English fallback)."""
@@ -364,38 +367,70 @@ def fetch_standings(season: int, timeout: float = 20.0) -> list[dict[str, Any]]:
 
 
 def fetch_leaders(season: int, timeout: float = 20.0) -> list[dict[str, Any]]:
-    """Return the top ten of each leader board in :data:`LEADER_CATEGORIES`."""
-    categories = ",".join(c for c, _, _ in LEADER_CATEGORIES)
-    url = (
-        f"{API_BASE}/stats/leaders?leaderCategories={categories}"
-        f"&season={season}&sportId=1&limit=10"
-    )
-    data = _get_json(url, timeout=timeout)
-    labels = {c: (label, group) for c, label, group in LEADER_CATEGORIES}
+    """Return the top ten of each leader board in :data:`LEADER_CATEGORIES`.
+
+    One request per category. Asking for every category at once looks cheaper
+    but the API answers with a board per league *and per stat group*, which is
+    how the first live run ended up showing a catcher leading home runs and
+    Kyle Schwarber leading strikeouts (his batting strikeouts).
+    """
     boards: list[dict[str, Any]] = []
-    for board in data.get("leagueLeaders", []):
-        category = board.get("leaderCategory", "")
-        if category not in labels:
-            continue
-        label, group = labels[category]
-        rows = []
-        for leader in board.get("leaders", []):
-            person = leader.get("person") or {}
-            rows.append(
-                {
-                    "id": person.get("id"),
-                    "rank": leader.get("rank"),
-                    "name": to_japanese(person.get("fullName", "")),
-                    "team": to_japanese_team((leader.get("team") or {}).get("name", "")),
-                    "value": leader.get("value", ""),
-                }
-            )
+    for category, label, group in LEADER_CATEGORIES:
+        url = (
+            f"{API_BASE}/stats/leaders?leaderCategories={category}"
+            f"&statGroup={group}&season={season}&sportId=1&limit=10"
+        )
+        data = _safe(f"leaders/{category}", lambda: _get_json(url, timeout=timeout), {})
+        rows = merge_leader_boards(data, category, group)
         if rows:
             boards.append({"category": category, "label": label, "group": group, "rows": rows})
-    # Keep the configured order rather than whatever the API returns.
-    order = {c: i for i, (c, _, _) in enumerate(LEADER_CATEGORIES)}
-    boards.sort(key=lambda b: order.get(b["category"], 99))
     return boards
+
+
+def merge_leader_boards(data: dict, category: str, group: str) -> list[dict[str, Any]]:
+    """Flatten the API's per-league boards into one MLB-wide top ten.
+
+    Pure so it can be tested against a captured response. The API may answer
+    with a league-wide board *and* one per league, so players are de-duplicated
+    by id and the ranks are recomputed from the values.
+    """
+    seen: dict[Any, dict[str, Any]] = {}
+    rows: list[dict[str, Any]] = []
+    for board in data.get("leagueLeaders", []):
+        if board.get("leaderCategory") != category:
+            continue
+        if board.get("statGroup") not in (None, "", group):
+            continue
+        for leader in board.get("leaders", []):
+            person = leader.get("person") or {}
+            pid = person.get("id")
+            row = {
+                "id": pid,
+                "rank": leader.get("rank"),
+                "name": to_japanese(person.get("fullName", "")),
+                "team": to_japanese_team((leader.get("team") or {}).get("name", "")),
+                "value": leader.get("value", ""),
+            }
+            if pid is not None and pid in seen:
+                continue
+            if pid is not None:
+                seen[pid] = row
+            rows.append(row)
+
+    ascending = category in ASCENDING_CATEGORIES
+    worst = float("inf") if ascending else float("-inf")
+
+    def sort_key(row: dict[str, Any]) -> float:
+        try:
+            return float(row["value"])
+        except (TypeError, ValueError):
+            return worst  # unparseable values sink, whichever way we sort
+
+    rows.sort(key=sort_key, reverse=not ascending)
+    rows = rows[:10]
+    for i, row in enumerate(rows):
+        row["rank"] = i + 1
+    return rows
 
 
 def _safe(what: str, call: Any, default: Any) -> Any:
@@ -1259,34 +1294,54 @@ _PAGE_JS = r"""
     }).catch(function () { return DATA.standings || []; });
   }
 
+  /* One request per category, mirroring fetch_leaders: asking for all of them
+     at once returns a board per league AND per stat group, which pairs the
+     wrong players with the wrong numbers. */
+  var ASCENDING = { earnedRunAverage: 1 };
+  function mergeBoard(data, category, group) {
+    var seen = {}, rows = [];
+    (data.leagueLeaders || []).forEach(function (b) {
+      if (b.leaderCategory !== category) return;
+      if (b.statGroup && b.statGroup !== group) return;
+      (b.leaders || []).forEach(function (l) {
+        var person = l.person || {}, id = person.id;
+        if (id != null && seen[id]) return;
+        if (id != null) seen[id] = 1;
+        rows.push({
+          id: id, rank: l.rank,
+          name: (DATA.names || {})[person.fullName] || person.fullName || "",
+          team: teamJa((l.team || {}).name || ""), value: l.value
+        });
+      });
+    });
+    var asc = !!ASCENDING[category], worst = asc ? Infinity : -Infinity;
+    rows.sort(function (a, b) {
+      var x = parseFloat(a.value), y = parseFloat(b.value);
+      if (isNaN(x)) x = worst;
+      if (isNaN(y)) y = worst;
+      return asc ? x - y : y - x;
+    });
+    rows = rows.slice(0, 10);
+    rows.forEach(function (r, i) { r.rank = i + 1; });
+    return rows;
+  }
   function loadLeaders() {
-    var cats = (DATA.categories || []).map(function (c) { return c[0]; }).join(",");
-    if (!cats) return Promise.resolve(DATA.leaders || []);
-    var labels = {};
-    (DATA.categories || []).forEach(function (c) { labels[c[0]] = c; });
-    return getJSON(API + "/stats/leaders?leaderCategories=" + cats + "&season=" +
-      DATA.season + "&sportId=1&limit=10").then(function (data) {
-      var boards = (data.leagueLeaders || []).filter(function (b) {
-        return labels[b.leaderCategory];
-      }).map(function (b) {
-        var meta = labels[b.leaderCategory];
-        return {
-          category: b.leaderCategory, label: meta[1], group: meta[2],
-          rows: (b.leaders || []).map(function (l) {
-            var person = l.person || {};
-            return {
-              id: person.id, rank: l.rank,
-              name: (DATA.names || {})[person.fullName] || person.fullName || "",
-              team: teamJa((l.team || {}).name || ""), value: l.value
-            };
-          })
-        };
-      }).filter(function (b) { return b.rows.length; });
-      var order = {};
-      (DATA.categories || []).forEach(function (c, i) { order[c[0]] = i; });
-      boards.sort(function (a, b) { return (order[a.category] || 99) - (order[b.category] || 99); });
+    var cats = DATA.categories || [];
+    if (!cats.length) return Promise.resolve(DATA.leaders || []);
+    return Promise.all(cats.map(function (c) {
+      return getJSON(API + "/stats/leaders?leaderCategories=" + c[0] +
+        "&statGroup=" + c[2] + "&season=" + DATA.season + "&sportId=1&limit=10")
+        .then(function (data) {
+          var rows = mergeBoard(data, c[0], c[2]);
+          return rows.length
+            ? { category: c[0], label: c[1], group: c[2], rows: rows }
+            : null;
+        })
+        .catch(function () { return null; });
+    })).then(function (boards) {
+      boards = boards.filter(Boolean);
       return boards.length ? boards : (DATA.leaders || []);
-    }).catch(function () { return DATA.leaders || []; });
+    });
   }
 
   function utcDay(offset) {
