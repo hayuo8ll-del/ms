@@ -56,6 +56,13 @@ jobs:
           echo "--- staged files ---"
           ls -a _site
 
+      # Requires Pages to be enabled on the repository (Settings -> Pages,
+      # Source: "GitHub Actions"). If it is switched off this step fails with
+      # "Get Pages site failed ... Not Found", the deploy is skipped, and the
+      # published site disappears — that is what happened after 2026-08-04.
+      # `enablement: true` does NOT help here: creating a Pages site needs
+      # admin rights, which GITHUB_TOKEN cannot be granted ("Resource not
+      # accessible by integration"). Only a human can turn it back on.
       - name: Configure Pages
         uses: actions/configure-pages@v5
         with:

@@ -87,8 +87,13 @@ touching the study app**.
 
 ## Publishing (GitHub Pages)
 
-The repository's Pages source is **"GitHub Actions"**, so nothing goes live
-unless a workflow deploys it. **`.github/workflows/pages.yml` is the single
+The repository's Pages source must be **"GitHub Actions"** (Settings → Pages),
+and nothing goes live unless a workflow deploys it. **If Pages is switched off,
+only a human can turn it back on** — `Configure Pages` then fails with "Get
+Pages site failed … Not Found", the deploy is skipped and the whole site (study
+app included) stops loading. `enablement: true` cannot fix it: creating a Pages
+site needs admin rights that `GITHUB_TOKEN` cannot hold. This happened after
+2026-08-04 and took the site down until it was re-enabled by hand. **`.github/workflows/pages.yml` is the single
 publisher** for the whole site and serves both apps from one deployment:
 
 | URL | Content |
