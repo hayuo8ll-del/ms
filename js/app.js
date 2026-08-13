@@ -284,7 +284,13 @@ function checkBadges(roundResult) {
 const screen = () => document.getElementById("screen");
 function render(html) { screen().innerHTML = html; window.scrollTo(0, 0); }
 function refreshTop() {
-  document.getElementById("coinCount").textContent = prof().coins;
+  const coinEl = document.getElementById("coinCount");
+  const before = +coinEl.textContent || 0;
+  if (prof().coins > before) {                 // コインが ふえたら ぴょこっと
+    const chip = coinEl.closest(".stat");
+    if (chip) { chip.classList.remove("bumped"); void chip.offsetWidth; chip.classList.add("bumped"); }
+  }
+  coinEl.textContent = prof().coins;
   document.getElementById("streakCount").textContent = prof().streak;
   document.getElementById("gradePill").textContent =
     (state.grade === "g1" ? "1年生 " : "5年生 ") + avatarEmoji(prof().avatar);
@@ -325,16 +331,21 @@ function showHome() {
       <span class="desc">${s.desc}</span>
     </button>`).join("");
 
-  const streakMsg = p.streak > 0 ? `🔥 ${p.streak}日れんぞく！ すごい！` : "きょうも がんばろう！";
-  const reviewBtn = p.wrong.length > 0
-    ? `<button class="big-btn red-btn" id="reviewBtn">🩹 にがてを ふくしゅう（${p.wrong.length}）</button>` : "";
+  const hour = new Date().getHours();
+  const hello = hour < 11 ? "おはよう！" : hour < 18 ? "こんにちは！" : "こんばんは！";
+  const streakMsg = p.streak > 0 ? `🔥 ${p.streak}日れんぞく つづいてるよ` : "きょうから はじめよう";
+  const reviewTile = p.wrong.length > 0 ? `
+    <button class="tile warn full" id="reviewBtn">
+      <span class="t-emoji">🩹</span>
+      <span><span class="t-name">にがてを ふくしゅう</span><span class="t-sub">${p.wrong.length}問 のこってる</span></span>
+    </button>` : "";
 
   render(`
     <div class="hero">
       <div class="hero-avatar">${avatarEmoji(p.avatar)}</div>
-      <div>
-        <h1 class="title" style="margin:0">きょうの べんきょう ✏️</h1>
-        <p class="subtitle" style="margin:4px 0 0">${streakMsg}</p>
+      <div class="hero-text">
+        <div class="hero-hello">${hello} ${state.grade === "g1" ? "1年生" : "5年生"}さん</div>
+        <div class="hero-sub">${streakMsg}</div>
       </div>
     </div>
     <div class="diff-select">
@@ -343,14 +354,26 @@ function showHome() {
         ${["easy", "normal", "hard"].map(k => `<button class="seg-btn ${difficulty() === k ? "on" : ""}" data-diff="${k}">${DIFF[k]}</button>`).join("")}
       </div>
     </div>
-    <p class="subtitle">教科を えらんでね</p>
+
+    <div class="section-label">きょうの べんきょう</div>
     <div class="grid">${cards}</div>
-    <button class="big-btn blue" id="attackBtn">⏱️ タイムアタック（コイン2ばい！）</button>
-    <button class="big-btn" id="writeBtn">✍️ かきとり れんしゅう</button>
-    ${reviewBtn}
-    <div class="grid" style="margin-top:14px">
-      <button class="big-btn ghost" id="badgeBtn" style="margin:0">🏅 バッジ</button>
-      <button class="big-btn ghost" id="shopBtn" style="margin:0">🛍️ ショップ</button>
+
+    <div class="section-label">チャレンジ</div>
+    <div class="tile-row">
+      <button class="tile accent" id="attackBtn">
+        <span class="t-emoji">⏱️</span>
+        <span><span class="t-name">タイムアタック</span><span class="t-sub">コイン2ばい！</span></span>
+      </button>
+      <button class="tile" id="writeBtn">
+        <span class="t-emoji">✍️</span>
+        <span><span class="t-name">かきとり</span><span class="t-sub">書き順も みられる</span></span>
+      </button>
+      ${reviewTile}
+    </div>
+
+    <div class="chip-row">
+      <button class="chip" id="badgeBtn">🏅 バッジ ${p.badges.length}/${BADGES.length}</button>
+      <button class="chip" id="shopBtn">🛍️ ショップ</button>
     </div>
   `);
   screen().querySelectorAll("[data-subject]").forEach(b =>
@@ -747,6 +770,27 @@ function showExplain(q, onNext) {
   if (!round.timed) speak(readable);   // よみあげ設定が オンなら かいせつも 読む
 }
 
+/* せいかい率の リング（結果画面） */
+function scoreRing(correct, total) {
+  const pct = total ? correct / total : 0;
+  const r = 70, c = 2 * Math.PI * r;
+  return `<div class="score-ring">
+    <svg viewBox="0 0 168 168" aria-hidden="true">
+      <circle class="track" cx="84" cy="84" r="${r}"></circle>
+      <circle class="bar" cx="84" cy="84" r="${r}"
+        stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${c.toFixed(1)}" data-off="${(c * (1 - pct)).toFixed(1)}"></circle>
+    </svg>
+    <div class="ring-in">
+      <div class="ring-num">${Math.round(pct * 100)}<span style="font-size:20px">%</span></div>
+      <div class="ring-sub">せいかい</div>
+    </div>
+  </div>`;
+}
+function animateRing() {
+  const bar = screen().querySelector(".score-ring .bar");
+  if (bar) requestAnimationFrame(() => { bar.style.strokeDashoffset = bar.dataset.off; });
+}
+
 /* ========== ラウンド終了 ========== */
 function finishRound() {
   const p = prof();
@@ -781,9 +825,12 @@ function finishRound() {
 
   render(`
     <div class="result">
-      <div class="big-emoji">${emoji}</div>
-      <div class="score">${round.correct} / ${round.questions.length} 問せいかい</div>
-      <div class="reward">コインを ${gained}🪙 ゲット！${perfect ? "（ぜんもん正かいボーナス+20）" : ""}</div>
+      <div class="result-card">
+        <div class="big-emoji">${emoji}</div>
+        ${scoreRing(round.correct, round.questions.length)}
+        <div class="score">${round.correct} / ${round.questions.length} 問せいかい</div>
+        <div class="reward">コインを <b>${gained}🪙</b> ゲット！${perfect ? "<br>（ぜんもん正かいボーナス +20）" : ""}</div>
+      </div>
       ${reviewNote}
       ${badgeHtml}
       ${againDisabled
@@ -792,6 +839,7 @@ function finishRound() {
       <button class="big-btn blue" id="otherBtn">ホームに もどる</button>
     </div>
   `);
+  animateRing();
   if (!againDisabled) document.getElementById("againBtn").onclick = () => round.review ? startReview() : startRound(round.subject);
   document.getElementById("otherBtn").onclick = showHome;
 }
