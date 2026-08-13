@@ -76,40 +76,72 @@ function beep(type) {
 
 /* ---------- 音声よみあげ（SpeechSynthesis） ---------- */
 /* 記号・単位を 日本語として 自然に 読める 文字列に なおす */
-const READ_RULES = [
-  // 単位（長いものから 先に）
+// 単位記号 → よみ（英字の かたまり ぜんたいが 一致した ときだけ 置きかえる）
+const UNIT_WORDS = {
+  km: "キロメートル", cm: "センチメートル", mm: "ミリメートル", m: "メートル",
+  kg: "キログラム", g: "グラム", mg: "ミリグラム",
+  L: "リットル", dL: "デシリットル", mL: "ミリリットル",
+};
+// 面積・体積は 英字1文字ずつの 置きかえより 先に 処理する
+const AREA_RULES = [
   [/cm²/g, "へいほうセンチメートル"], [/m²/g, "へいほうメートル"],
   [/cm³/g, "りっぽうセンチメートル"], [/m³/g, "りっぽうメートル"],
-  [/km/g, "キロメートル"], [/cm/g, "センチメートル"], [/mm/g, "ミリメートル"],
-  [/kg/g, "キログラム"], [/dL/g, "デシリットル"], [/mL/g, "ミリリットル"],
-  [/(\d)\s*L(?![a-zA-Z])/g, "$1リットル"], [/(\d)\s*g(?![a-zA-Z])/g, "$1グラム"],
-  [/(\d)\s*m(?![a-zA-Zメ])/g, "$1メートル"],
-  // 記号
-  [/(\d+)\s*:\s*(\d+)/g, "$1たい$2"],
+];
+const READ_RULES = [
+  // 記号（比は ÷ より 先に 見るが、数字どうしに はさまれた ものだけ）
+  [/(\d)\s*[:：]\s*(\d)/g, "$1たい$2"],
   [/\s*\+\s*/g, " たす "], [/\s*×\s*/g, " かける "], [/\s*÷\s*/g, " わる "],
   [/\s*−\s*/g, " ひく "], [/(\d)\s*-\s*(\d)/g, "$1 ひく $2"],
-  [/\s*=\s*/g, " は "], [/□/g, "なに"], [/%/g, "パーセント"],
-  [/〜/g, "から"], [/[（(]/g, "、"], [/[）)]/g, "、"], [/[・･]/g, "、"],
-  [/。\s*。/g, "。"],
+  [/「\s*[=＝]\s*」/g, "「イコール」"],
+  [/\s*[=＝]\s*/g, " は "],
+  [/□/g, "なに"], [/%/g, "パーセント"],
+  [/[＞>]/g, "だいなり"], [/[＜<]/g, "しょうなり"],
+  [/\s*[→⇒]\s*/g, "、つぎは "], [/\s*／\s*/g, "。 "], [/\s*：\s*/g, "は "],
+  [/(\d)\s*〜\s*(\d)/g, "$1から$2"], [/〜/g, "から"],
+  // 「なに＋たんい」は 日本語として「なん〜」と 読む
+  [/なに分/g, "なんぷん"], [/なに秒/g, "なんびょう"], [/なに円/g, "なんえん"],
+  [/なに時間/g, "なんじかん"], [/なにこ/g, "なんこ"],
+  [/[（(]/g, "、"], [/[）)]/g, "、"], [/[・･]/g, "、"],
+  // 仕上げ（よみやすさ）
+  [/、\s*、/g, "、"], [/。\s*。/g, "。"], [/、\s*。/g, "。"],
+  [/([？！?!])\s*。/g, "$1"], [/、\s*」/g, "」"],
 ];
 function toReadable(q) {
   let body = q.q || "";
-  // 「よみ／読み」を答える問題は、「」内の文字を読み上げない（答えを言ってしまうため）
-  if (/よみ|読み/.test(body)) body = body.replace(/「[^」]*」/g, "この かん字");
+  // 「よみ／読み」を答える問題は 答えを 先に 言わない：さいしょの「」だけ ふせて、
+  // 2つめ以降は 「その中の 字」（例:「団結」の「団」…）。かっこ内の 読みがなも ふせる。
+  if (/よみ|読み/.test(body)) {
+    let i = 0;
+    body = body.replace(/「[^」]*」/g, () => (i++ === 0 ? "この ことば" : " その 字 "));
+    body = body.replace(/[（(][^）)]*[）)]/g, "");
+  }
   // 見出しの（cm²）（LCM）などの 単位・記号だけの かっこは 読まない
   let head = (q.prompt || "").replace(/[（(][A-Za-z0-9²³%・\s]+[）)]/g, "").trim();
   let t = (head ? head + "。 " : "") + body;
-  t = t.replace(/(\d+)\/(\d+)/g, "$2ぶんの$1");           // 分数
+  t = t.replace(/(\d+)\/(\d+)/g, "$2ぶんの$1");                    // 分数
+  for (const [re, rep] of AREA_RULES) t = t.replace(re, rep);      // cm² など（英字置換より先）
+  t = t.replace(/[A-Za-z]+/g, w => UNIT_WORDS[w] || w);            // 単位記号（かたまり一致のみ）
   for (const [re, rep] of READ_RULES) t = t.replace(re, rep);
-  return t.replace(/\s+/g, " ").replace(/、\s*。/g, "。").trim();
+  return t.replace(/\s+/g, " ").trim();
 }
-/* 日本語と英語の かたまりに 分ける（英単語を 日本語ボイスで 読ませない ため） */
+/* 日本語と英語の かたまりに 分ける（英単語を 日本語ボイスで 読ませない ため）。
+   記号だけの きれはしは 前後の 日本語に くっつけて、ぶつ切りに ならないように する。 */
 function splitSpeech(text) {
-  return String(text)
-    .split(/([A-Za-z][A-Za-z'’.\-]*(?:\s+[A-Za-z][A-Za-z'’.\-]*)*)/g)
+  const raw = String(text)
+    .split(/([A-Za-z][A-Za-z'’.\-]*(?:\s+[A-Za-z][A-Za-z'’.\-]*)*[?!]?)/g)
     .map(s => (s || "").trim())
     .filter(Boolean)
-    .map(s => ({ text: s, en: /^[A-Za-z][A-Za-z'’.\-\s]*$/.test(s) && /[A-Za-z]{2,}/.test(s) }));
+    .map(s => ({ text: s, en: /^[A-Za-z][A-Za-z'’.\-\s]*[?!]?$/.test(s) && /[A-Za-z]{2,}/.test(s) }));
+  const out = [];
+  for (const seg of raw) {
+    const symbolOnly = !seg.en && !/[\p{L}\p{N}]/u.test(seg.text);   // 「 や 。 だけ の きれはし
+    const prev = out[out.length - 1];
+    if (symbolOnly && prev && !prev.en) { prev.text += seg.text; continue; }
+    if (symbolOnly && !prev) continue;                                // 先頭の 「 などは 読まない
+    if (!seg.en && prev && !prev.en) { prev.text += seg.text; continue; }
+    out.push({ ...seg });
+  }
+  return out.filter(s => /[\p{L}\p{N}]/u.test(s.text));
 }
 /* 日本語の音声を列挙し、より自然な（高品質な）ものを優先して選ぶ */
 function jaVoices() {
@@ -689,8 +721,9 @@ function explainFor(q) {
   if ((m = text.match(/「(.+?)」を\s*ひらがな/))) return `「${m[1]}」を ひらがなで 書くと 「${a}」。`;
   if ((m = text.match(/四字熟語「(.+?)」/))) return `□に 入るのは 「${a}」。正しくは 「${m[1].replace("□", a)}」。`;
   if ((m = text.match(/「(.+?)」の 部首/))) return `「${m[1]}」の 部首は 「${a}」。`;
-  if ((m = text.match(/しりとり:「(.+?)」/))) return `「${m[1]}」の さいごの 字から はじまる ことばは 「${a}」。`;
-  if ((m = text.match(/^「(.+?)」/))) return `こたえは 「${a}」。「${m[1]}」と セットで おぼえよう。`;
+  if ((m = text.match(/しりとり[:：]「(.+?)」/))) return `「${m[1]}」の さいごの 字から はじまる ことばは 「${a}」。`;
+  if ((m = text.match(/「(.+?)」の\s*総画数/))) return `「${m[1]}」は ぜんぶで ${a}。ゆっくり かぞえて みよう。`;
+  if ((m = text.match(/^「(.+?)」/)) && m[1] !== a) return `こたえは 「${a}」。「${m[1]}」と セットで おぼえよう。`;
   return `こたえは 「${a}」。`;
 }
 function showExplain(q, onNext) {
@@ -706,10 +739,12 @@ function showExplain(q, onNext) {
     ${round.timed ? "" : `<button class="big-btn green" id="whyNext" style="margin-top:12px">わかった！ つぎへ ➡️</button>`}`;
   fb.after(box);
   box.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  document.getElementById("whySpeak").onclick = () => speak(`こたえは、${q.answer}。${why}`, true);
+  // かいせつも 記号・単位を なおしてから 読む（生のままだと「＝」「cm²」が 読めない）
+  const readable = toReadable({ q: `こたえは、${q.answer}。${why}` });
+  document.getElementById("whySpeak").onclick = () => speak(readable, true);
   const nextBtn = document.getElementById("whyNext");
   if (nextBtn) nextBtn.onclick = onNext;
-  if (!round.timed) speak(why);   // よみあげ設定が オンなら かいせつも 読む
+  if (!round.timed) speak(readable);   // よみあげ設定が オンなら かいせつも 読む
 }
 
 /* ========== ラウンド終了 ========== */
