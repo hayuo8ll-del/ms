@@ -24,13 +24,15 @@
   --tint: rgba(255, 138, 61, .10);
   --ring: 0 0 0 4px rgba(255, 138, 61, .38);
   --ink-faint: rgba(0, 0, 0, .45);
+  --grid: rgba(0, 0, 0, .055);      /* 方眼ノートの線 */
+  --sheen: rgba(255, 255, 255, .72); /* もちもちボタンの ハイライト */
 
   /* 奥行き */
-  --shadow: 0 1px 2px rgba(30, 20, 8, .06), 0 4px 12px rgba(30, 20, 8, .09);
-  --shadow-lg: 0 2px 6px rgba(30, 20, 8, .08), 0 14px 30px rgba(30, 20, 8, .13);
+  --shadow: 0 1px 2px rgba(30, 20, 8, .05), 0 6px 16px rgba(30, 20, 8, .09);
+  --shadow-lg: 0 2px 6px rgba(30, 20, 8, .07), 0 18px 36px rgba(30, 20, 8, .14);
 
-  /* かたち・余白 */
-  --r-sm: 12px; --r-md: 16px; --r-lg: 20px; --r-xl: 26px;
+  /* かたち・余白（まるっと やわらかく） */
+  --r-sm: 14px; --r-md: 18px; --r-lg: 24px; --r-xl: 30px;
   --s1: 6px; --s2: 10px; --s3: 14px; --s4: 18px; --s5: 24px; --s6: 32px;
 
   /* 文字 */
@@ -45,6 +47,8 @@
     --tint: color-mix(in srgb, var(--orange) 12%, transparent);
     --ring: 0 0 0 4px color-mix(in srgb, var(--orange) 40%, transparent);
     --ink-faint: color-mix(in srgb, var(--ink) 55%, transparent);
+    --grid: color-mix(in srgb, var(--ink) 8%, transparent);
+    --sheen: color-mix(in srgb, var(--card) 75%, transparent);
   }
 }
 
@@ -59,26 +63,56 @@ body {
   -webkit-font-smoothing: antialiased;
   font-size: var(--t-md);
 }
-/* なつの光のような ごく淡い ドット。テーマの文字色に なじませる */
+/* 自由帳の 方眼 */
 body::before {
   content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
-  color: var(--ink); opacity: .04;
-  background-image: radial-gradient(currentColor 1px, transparent 1.2px);
-  background-size: 24px 24px;
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 28px 28px;
+  opacity: .85;
+}
+/* なつの日ざしの にじみ（画面ぜんたいに ふわっと。円に 見えないよう 大きく ぼかす） */
+body::after {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  /* 減衰を 画面の外まで のばして、輪郭が 見えないようにする */
+  background:
+    radial-gradient(180% 100% at 0% -30%, color-mix(in srgb, var(--orange) 7%, transparent), transparent 100%),
+    radial-gradient(150% 90% at 100% -20%, color-mix(in srgb, var(--blue) 5%, transparent), transparent 100%);
+}
+@supports not (color: color-mix(in srgb, red, blue)) {
+  body::after { background: radial-gradient(180% 100% at 0% -30%, var(--tint), transparent 100%); }
 }
 #app { position: relative; z-index: 1; max-width: 720px; margin: 0 auto; min-height: 100%; display: flex; flex-direction: column; }
 
 /* キーボード操作の目印（アクセシビリティ） */
 :where(button, select, [tabindex]):focus-visible { outline: none; box-shadow: var(--ring), var(--shadow); }
 
-/* 押しごこち（共通） */
+/* ===== もちもち（押しごこち）=====
+   ボタン類は 下に あつみ（かたい影）を もたせて、押すと しずむ。
+   カード類は ふわっと 浮かせる。この2つで 役わりを 見わける。 */
 .pressable, .card, .big-btn, .icon-btn, .key, .choice, .tile, .chip,
 .shop-tab, .shop-btn, .seg-btn, .memo-toggle, .speak-btn, .speak-inline {
-  transition: transform .08s ease, box-shadow .12s ease, background-color .12s ease;
+  transition: transform .1s cubic-bezier(.3,1.4,.5,1), box-shadow .12s ease, background-color .14s ease;
 }
-.card:active, .big-btn:active, .icon-btn:active, .key:active, .choice:active,
-.tile:active, .chip:active, .memo-toggle:active {
-  transform: translateY(2px); box-shadow: 0 1px 2px rgba(30,20,8,.10);
+.mochi, .big-btn, .key, .choice, .tile, .chip, .icon-btn, .memo-toggle {
+  --edge: var(--line);
+  box-shadow: 0 4px 0 var(--edge), var(--shadow);
+}
+.mochi:active, .big-btn:active, .key:active, .choice:active,
+.tile:active, .chip:active, .icon-btn:active, .memo-toggle:active {
+  transform: translateY(4px); box-shadow: 0 0 0 var(--edge), 0 2px 6px rgba(30,20,8,.10);
+}
+.card:active { transform: translateY(3px) scale(.985); box-shadow: 0 2px 8px rgba(30,20,8,.10); }
+@supports (color: color-mix(in srgb, red, blue)) {
+  .big-btn { --edge: color-mix(in srgb, var(--orange-d) 78%, #000 14%); }
+  .big-btn.green { --edge: color-mix(in srgb, var(--green-d) 82%, #000 12%); }
+  .big-btn.blue { --edge: color-mix(in srgb, var(--blue) 62%, #000 22%); }
+  .big-btn.red-btn { --edge: color-mix(in srgb, var(--red) 62%, #000 22%); }
+  .big-btn.ghost, .key, .choice, .tile, .chip, .icon-btn, .memo-toggle { --edge: color-mix(in srgb, var(--ink) 12%, transparent); }
+  .tile.accent { --edge: color-mix(in srgb, var(--blue) 62%, #000 22%); }
+  .tile.warn { --edge: color-mix(in srgb, var(--red) 62%, #000 22%); }
+  .key.ok { --edge: color-mix(in srgb, var(--green-d) 82%, #000 12%); }
 }
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
@@ -121,12 +155,18 @@ body::before {
 main { flex: 1; padding: var(--s4) var(--s3) var(--s6); }
 .title { font-size: var(--t-2xl); font-weight: 900; margin: var(--s1) 2px var(--s3); letter-spacing: .01em; text-wrap: balance; }
 .subtitle { color: var(--ink-soft); margin: calc(-1 * var(--s2)) 2px var(--s3); font-size: var(--t-sm); line-height: 1.6; }
+/* 見出しは ノートに はった マスキングテープ ふう */
 .section-label {
   display: flex; align-items: center; gap: var(--s2);
   font-size: var(--t-xs); font-weight: 800; color: var(--ink-soft);
-  letter-spacing: .12em; margin: var(--s5) 2px var(--s2);
+  letter-spacing: .12em; margin: var(--s5) 2px var(--s3);
 }
-.section-label::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.section-label::before {
+  content: ""; width: 30px; height: 14px; flex: none; border-radius: 3px;
+  background: repeating-linear-gradient(45deg, var(--tint) 0 5px, transparent 5px 10px), var(--tint);
+  border: 1px solid var(--line); transform: rotate(-7deg);
+}
+.section-label::after { content: ""; flex: 1; height: 2px; border-radius: 2px; background: var(--line); }
 
 .grid { display: grid; gap: var(--s3); grid-template-columns: repeat(2, 1fr); }
 .card {
@@ -135,16 +175,28 @@ main { flex: 1; padding: var(--s4) var(--s3) var(--s6); }
   color: var(--ink); font-family: inherit; position: relative; overflow: hidden;
 }
 .card::after {   /* うっすら 上からの光 */
-  content: ""; position: absolute; inset: 0 0 auto; height: 42%;
+  content: ""; position: absolute; inset: 0 0 auto; height: 46%; border-radius: inherit;
   background: linear-gradient(180deg, var(--tint), transparent); pointer-events: none;
 }
-.card .emoji { font-size: 42px; display: block; margin-bottom: var(--s2); line-height: 1; }
+.hero {
+  background:
+    radial-gradient(120% 140% at 100% 0%, var(--tint), transparent 60%),
+    var(--card);
+}
+/* カードは ぽんっと 出てくる（順番に すこしずつ） */
+@keyframes popIn { from { opacity: 0; transform: translateY(12px) scale(.94); } to { opacity: 1; transform: none; } }
+.grid .card { animation: popIn .34s cubic-bezier(.2, .9, .3, 1.25) backwards; }
+.grid .card:nth-child(2) { animation-delay: .05s; }
+.grid .card:nth-child(3) { animation-delay: .1s; }
+.grid .card:nth-child(4) { animation-delay: .15s; }
+.card .emoji { font-size: 42px; display: block; margin-bottom: var(--s2); line-height: 1; filter: drop-shadow(0 3px 4px rgba(0,0,0,.14)); }
 .card .name { display: block; font-size: var(--t-lg); font-weight: 900; }
 .card .desc { display: block; font-size: var(--t-xs); color: var(--ink-soft); margin-top: 4px; line-height: 1.5; }
 
 /* 中くらいの モードタイル（タイムアタック・かきとり） */
 .tile-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--s3); }
 .tile {
+  position: relative; overflow: hidden;   /* つやの ::before を タイルの中に とどめる */
   display: flex; align-items: center; gap: var(--s1); text-align: left;
   border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--s3) var(--s2);
   background: var(--card); color: var(--ink); box-shadow: var(--shadow);
@@ -170,15 +222,22 @@ main { flex: 1; padding: var(--s4) var(--s3) var(--s6); }
 
 /* 大きいボタン */
 .big-btn {
-  display: block; width: 100%; border: none; border-radius: var(--r-lg);
+  position: relative; display: block; width: 100%; border: none; border-radius: var(--r-lg);
   background: var(--orange); color: #fff; font-size: var(--t-xl); font-weight: 900;
-  padding: 16px; box-shadow: 0 2px 10px color-mix(in srgb, var(--orange) 40%, transparent), var(--shadow);
-  cursor: pointer; margin-top: var(--s3); font-family: inherit;
+  padding: 16px; cursor: pointer; margin-top: var(--s3); font-family: inherit;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, .14); overflow: hidden;
 }
-.big-btn.green { background: var(--green); box-shadow: var(--shadow); }
-.big-btn.blue { background: var(--blue); box-shadow: var(--shadow); }
-.big-btn.ghost { background: var(--card); color: var(--ink); border: 1px solid var(--line); box-shadow: var(--shadow); }
-.big-btn.red-btn { background: var(--red); box-shadow: var(--shadow); }
+/* うわ面の つや（もちもち感） */
+.big-btn::before, .tile.accent::before, .tile.warn::before, .key.ok::before {
+  content: ""; position: absolute; left: 8%; right: 8%; top: 5px; height: 34%;
+  border-radius: 999px; background: linear-gradient(180deg, rgba(255,255,255,.42), transparent);
+  pointer-events: none;
+}
+.big-btn.green { background: var(--green); }
+.big-btn.blue { background: var(--blue); }
+.big-btn.ghost { background: var(--card); color: var(--ink); text-shadow: none; }
+.big-btn.ghost::before { display: none; }
+.big-btn.red-btn { background: var(--red); }
 
 /* むずかしさ 切替（セグメント） */
 .diff-select { display: flex; flex-direction: column; gap: var(--s1); margin: 2px 2px var(--s3); }
@@ -202,8 +261,13 @@ main { flex: 1; padding: var(--s4) var(--s3) var(--s6); }
 }
 .hero-avatar {
   font-size: 34px; width: 58px; height: 58px; flex: none; line-height: 1;
-  background: var(--tint); border-radius: var(--r-md);
-  display: grid; place-items: center;
+  background: var(--tint); border: 2px solid var(--card); border-radius: 44% 56% 52% 48% / 52% 48% 56% 44%;
+  display: grid; place-items: center; box-shadow: 0 3px 10px rgba(0,0,0,.10);
+  animation: bob 3.4s ease-in-out infinite;
+}
+@keyframes bob {
+  0%, 100% { transform: translateY(0) rotate(-3deg); }
+  50% { transform: translateY(-5px) rotate(3deg); }
 }
 .hero-text { min-width: 0; }
 .hero-hello { font-size: var(--t-lg); font-weight: 900; }
@@ -255,6 +319,7 @@ main { flex: 1; padding: var(--s4) var(--s3) var(--s6); }
 }
 .keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s2); }
 .key {
+  position: relative; overflow: hidden;   /* つやの ::before を キーの中に とどめる */
   border: 1px solid var(--line); background: var(--card); color: var(--ink);
   border-radius: var(--r-md); font-size: var(--t-2xl); font-weight: 800;
   padding: 14px 0; box-shadow: var(--shadow); cursor: pointer; font-family: inherit;
