@@ -75,17 +75,41 @@ function beep(type) {
 }
 
 /* ---------- 音声よみあげ（SpeechSynthesis） ---------- */
+/* 記号・単位を 日本語として 自然に 読める 文字列に なおす */
+const READ_RULES = [
+  // 単位（長いものから 先に）
+  [/cm²/g, "へいほうセンチメートル"], [/m²/g, "へいほうメートル"],
+  [/cm³/g, "りっぽうセンチメートル"], [/m³/g, "りっぽうメートル"],
+  [/km/g, "キロメートル"], [/cm/g, "センチメートル"], [/mm/g, "ミリメートル"],
+  [/kg/g, "キログラム"], [/dL/g, "デシリットル"], [/mL/g, "ミリリットル"],
+  [/(\d)\s*L(?![a-zA-Z])/g, "$1リットル"], [/(\d)\s*g(?![a-zA-Z])/g, "$1グラム"],
+  [/(\d)\s*m(?![a-zA-Zメ])/g, "$1メートル"],
+  // 記号
+  [/(\d+)\s*:\s*(\d+)/g, "$1たい$2"],
+  [/\s*\+\s*/g, " たす "], [/\s*×\s*/g, " かける "], [/\s*÷\s*/g, " わる "],
+  [/\s*−\s*/g, " ひく "], [/(\d)\s*-\s*(\d)/g, "$1 ひく $2"],
+  [/\s*=\s*/g, " は "], [/□/g, "なに"], [/%/g, "パーセント"],
+  [/〜/g, "から"], [/[（(]/g, "、"], [/[）)]/g, "、"], [/[・･]/g, "、"],
+  [/。\s*。/g, "。"],
+];
 function toReadable(q) {
   let body = q.q || "";
   // 「よみ／読み」を答える問題は、「」内の文字を読み上げない（答えを言ってしまうため）
   if (/よみ|読み/.test(body)) body = body.replace(/「[^」]*」/g, "この かん字");
-  let t = (q.prompt ? q.prompt + "。 " : "") + body;
+  // 見出しの（cm²）（LCM）などの 単位・記号だけの かっこは 読まない
+  let head = (q.prompt || "").replace(/[（(][A-Za-z0-9²³%・\s]+[）)]/g, "").trim();
+  let t = (head ? head + "。 " : "") + body;
   t = t.replace(/(\d+)\/(\d+)/g, "$2ぶんの$1");           // 分数
-  t = t.replace(/\s*\+\s*/g, " たす ").replace(/\s*×\s*/g, " かける ")
-       .replace(/\s*÷\s*/g, " わる ").replace(/\s*-\s*/g, " ひく ")
-       .replace(/\s*=\s*/g, " は ").replace(/□/g, "なに")
-       .replace(/²/g, "へいほう").replace(/%/g, "パーセント");
-  return t.trim();
+  for (const [re, rep] of READ_RULES) t = t.replace(re, rep);
+  return t.replace(/\s+/g, " ").replace(/、\s*。/g, "。").trim();
+}
+/* 日本語と英語の かたまりに 分ける（英単語を 日本語ボイスで 読ませない ため） */
+function splitSpeech(text) {
+  return String(text)
+    .split(/([A-Za-z][A-Za-z'’.\-]*(?:\s+[A-Za-z][A-Za-z'’.\-]*)*)/g)
+    .map(s => (s || "").trim())
+    .filter(Boolean)
+    .map(s => ({ text: s, en: /^[A-Za-z][A-Za-z'’.\-\s]*$/.test(s) && /[A-Za-z]{2,}/.test(s) }));
 }
 /* 日本語の音声を列挙し、より自然な（高品質な）ものを優先して選ぶ */
 function jaVoices() {
@@ -117,16 +141,34 @@ function chooseVoice() {
   for (const name of PREFERRED_VOICES) { const v = list.find(x => x.name.includes(name)); if (v) return v; }
   return list.find(v => v.localService) || list[0];  // 端末内→先頭
 }
+/* 英語ボイス（英単語の 問題を 日本語ボイスで 読ませない ため） */
+function enVoice() {
+  if (!("speechSynthesis" in window)) return null;
+  const list = speechSynthesis.getVoices().filter(v => /^en(\b|-|_)/i.test(v.lang));
+  if (!list.length) return null;
+  for (const n of ["Samantha", "Google US English", "Microsoft Aria", "Ava", "Allison", "Daniel"]) {
+    const v = list.find(x => x.name.includes(n)); if (v) return v;
+  }
+  return list.find(v => v.localService) || list[0];
+}
+/* 日本語と英語が まざった 文を、それぞれの ボイスで 順に 読む */
 function speak(text, force) {
   if (!force && !prof().settings.speak) return;
   try {
-    if (!("speechSynthesis" in window)) return;
+    if (!("speechSynthesis" in window) || !text) return;
     speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    const v = chooseVoice();
-    if (v) { u.voice = v; u.lang = v.lang; } else { u.lang = "ja-JP"; }
-    u.rate = 0.92; u.pitch = 1.0;   // より自然な読み上げ
-    speechSynthesis.speak(u);
+    const ja = chooseVoice(), en = enVoice();
+    const rate = state.grade === "g1" ? 0.88 : 0.95;   // 1年生は ゆっくり
+    for (const seg of splitSpeech(text)) {
+      const u = new SpeechSynthesisUtterance(seg.text);
+      const v = seg.en ? en : ja;
+      u.lang = seg.en ? (en ? en.lang : "en-US") : (ja ? ja.lang : "ja-JP");
+      u.rate = seg.en ? Math.min(1, rate + 0.05) : rate;
+      u.pitch = 1.0;
+      // ボイス代入に 失敗しても 読み上げ自体は 続ける
+      if (v) { try { u.voice = v; } catch (e) {} }
+      speechSynthesis.speak(u);
+    }
   } catch (e) {}
 }
 // ボイス一覧は非同期で読み込まれるため、変化時に確保しておく
@@ -612,8 +654,7 @@ function finishQuestion(ok) {
   // 統計（タイムアタックは除外して純粋な学習ログを保つ）
   if (!round.timed && p.stats[subj]) { p.stats[subj].a++; if (ok) p.stats[subj].c++; }
 
-  const delay = round.timed ? (ok ? 450 : 800) : (ok ? 900 : 1600);
-  round.nextTimer = setTimeout(() => {
+  const goNext = () => {
     if (round.ended) return;
     round.idx++;
     if (round.timed) {
@@ -621,7 +662,54 @@ function finishQuestion(ok) {
       showQuestion();
     } else if (round.idx < round.questions.length) showQuestion();
     else finishRound();
-  }, delay);
+  };
+
+  // まちがえたら かいせつを 出す（タイムアタック以外は 読んでから 自分で すすむ）
+  if (!ok) {
+    showExplain(q, goNext);
+    if (round.timed) round.nextTimer = setTimeout(goNext, 1500);
+    return;
+  }
+  round.nextTimer = setTimeout(goNext, round.timed ? 450 : 900);
+}
+
+/* ---------- かいせつ ---------- */
+function explainFor(q) {
+  if (q.why) return q.why;                                   // 算数など、生成時に付いたもの
+  const text = q.q || "";
+  for (const k of Object.keys(WHY)) if (text.includes(k)) return WHY[k];
+  const a = q.answer;
+  let m;
+  if ((m = text.match(/「(.+?)」の\s*(?:よみ|読み)/))) return `「${m[1]}」は 「${a}」と 読みます。`;
+  if ((m = text.match(/「(.+?)」は\s*(?:えいご|英語)で/))) return `「${m[1]}」は 英語で 「${a}」。`;
+  if ((m = text.match(/「(.+?)」の\s*(?:いみ|意味)/))) return `「${m[1]}」は 「${a}」という いみ。`;
+  if ((m = text.match(/「(.+?)」の\s*(?:はんたい|対義語)/))) return `「${m[1]}」の はんたいは 「${a}」。`;
+  if ((m = text.match(/「(.+?)」の\s*類義語/))) return `「${m[1]}」と にた いみの ことばは 「${a}」。`;
+  if ((m = text.match(/「(.+?)」を\s*カタカナ/))) return `「${m[1]}」を カタカナで 書くと 「${a}」。`;
+  if ((m = text.match(/「(.+?)」を\s*ひらがな/))) return `「${m[1]}」を ひらがなで 書くと 「${a}」。`;
+  if ((m = text.match(/四字熟語「(.+?)」/))) return `□に 入るのは 「${a}」。正しくは 「${m[1].replace("□", a)}」。`;
+  if ((m = text.match(/「(.+?)」の 部首/))) return `「${m[1]}」の 部首は 「${a}」。`;
+  if ((m = text.match(/しりとり:「(.+?)」/))) return `「${m[1]}」の さいごの 字から はじまる ことばは 「${a}」。`;
+  if ((m = text.match(/^「(.+?)」/))) return `こたえは 「${a}」。「${m[1]}」と セットで おぼえよう。`;
+  return `こたえは 「${a}」。`;
+}
+function showExplain(q, onNext) {
+  const fb = document.getElementById("feedback");
+  if (!fb) return;
+  const why = explainFor(q);
+  const box = document.createElement("div");
+  box.className = "explain";
+  box.innerHTML = `
+    <div class="explain-head">💡 かいせつ<button class="speak-inline" id="whySpeak" title="よみあげ">🔊</button></div>
+    <div class="explain-ans">こたえ： <b>${q.answer}</b></div>
+    <div class="explain-body">${why}</div>
+    ${round.timed ? "" : `<button class="big-btn green" id="whyNext" style="margin-top:12px">わかった！ つぎへ ➡️</button>`}`;
+  fb.after(box);
+  box.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  document.getElementById("whySpeak").onclick = () => speak(`こたえは、${q.answer}。${why}`, true);
+  const nextBtn = document.getElementById("whyNext");
+  if (nextBtn) nextBtn.onclick = onNext;
+  if (!round.timed) speak(why);   // よみあげ設定が オンなら かいせつも 読む
 }
 
 /* ========== ラウンド終了 ========== */

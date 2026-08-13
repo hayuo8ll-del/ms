@@ -172,8 +172,8 @@ main { flex: 1; padding: 16px; }
   background: #fff; border-radius: var(--radius); box-shadow: var(--shadow);
   padding: 26px 20px; text-align: center; margin-bottom: 16px;
 }
-.question-card .prompt { font-size: 18px; color: var(--ink-soft); margin-bottom: 8px; }
-.question-card .q { font-size: 40px; font-weight: 900; line-height: 1.3; word-break: break-word; }
+.question-card .prompt { font-size: 18px; color: var(--ink-soft); margin-bottom: 8px; padding: 0 44px; }
+.question-card .q { font-size: 40px; font-weight: 900; line-height: 1.3; word-break: break-word; padding: 0 44px; }
 .question-card .q.small { font-size: 28px; }
 .question-card svg { max-width: 220px; height: auto; margin: 6px auto 0; display: block; }
 
@@ -233,6 +233,19 @@ main { flex: 1; padding: 16px; }
 .calendar { display:grid; grid-template-columns: repeat(7,1fr); gap:6px; }
 .cal-cell { aspect-ratio:1; border-radius:10px; background:#f4ece0; display:flex; align-items:center; justify-content:center; font-size:18px; }
 .cal-cell.done { background:#fff3d6; }
+
+/* かいせつ（まちがえた とき） */
+.explain {
+  background: var(--card); border-radius: 18px; box-shadow: var(--shadow);
+  padding: 16px; margin-top: 10px; border-left: 8px solid var(--orange);
+  animation: explainIn .22s ease-out;
+}
+@keyframes explainIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .explain { animation: none; } }
+.explain-head { display: flex; align-items: center; gap: 10px; font-weight: 900; color: var(--orange-d); margin-bottom: 8px; }
+.explain-ans { font-size: 20px; font-weight: 800; margin-bottom: 8px; }
+.explain-ans b { color: var(--green-d); }
+.explain-body { font-size: 17px; line-height: 1.7; }
 
 /* けいさん用メモ */
 .memo-toggle {
