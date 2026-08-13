@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <!-- viewport-fit=cover が env(safe-area-inset-*) を有効にする。
+       user-scalable=no は Safari では無視されるが、他ブラウザには効く。
+       実際にピンチ/ダブルタップズームを止めるのは CSS の touch-action:none と
+       gesturestart の preventDefault（core.js）。 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#06070f" />
+  <meta name="color-scheme" content="dark" />
+  <!-- スコアの数字が電話番号としてリンク化されるのを防ぐ -->
+  <meta name="format-detection" content="telephone=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="GRAVIX" />
+  <meta name="description" content="GRAVIX — タップで重力を反転させて進む、ワンタップ・アクション。" />
+  <title>GRAVIX — 重力反転ランナー</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="stylesheet" href="css/game.css" />
+</head>
+<body>
+  <!-- セーフエリアの実寸を JS から読むためのプローブ。
+       canvas の座標系では env() が使えないので、padding 経由で数値を取り出す。 -->
+  <div id="safeprobe" aria-hidden="true"></div>
+
+  <div id="wrap">
+    <canvas id="canvas"></canvas>
+
+    <!-- メニュー類だけ DOM。プレイ中の数値は canvas に描く（毎フレームの DOM 書き換えを避ける） -->
+    <div id="ui" aria-live="polite"></div>
+  </div>
+
+  <script src="js/core.js"></script>
+  <script src="js/world.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>

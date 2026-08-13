@@ -1,0 +1,229 @@
+/* ===== GRAVIX =====
+   学習アプリの css/style.css とは独立したトークン。共有しない。
+   ここでの CSS の仕事は 3 つだけ：
+   1) ページを「スクロールしない全画面の板」にする（iOS のゴムバンド／引っぱって更新を殺す）
+   2) セーフエリアを尊重した DOM オーバーレイ（メニュー）を置く
+   3) canvas を全画面フルブリードで敷く
+   ゲーム中の数値表示は canvas 側。ここには無い。 */
+
+:root {
+  --bg: #06070f;
+  --bg-2: #0c1022;
+  --ink: #eaf2ff;
+  --ink-soft: #8b9bc4;
+  --cyan: #35e8ff;
+  --magenta: #ff3d9a;
+  --amber: #ffd23d;
+  --line: rgba(120, 160, 220, .22);
+  --panel: rgba(10, 14, 30, .82);
+  --font: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo",
+          system-ui, -apple-system, sans-serif;
+  --ease: cubic-bezier(.22, 1, .36, 1);
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  /* 100vh は iOS Safari では URL バーを無視した「大きいビューポート」なので使わない。
+     dvh → -webkit-fill-available の順にフォールバックさせる。 */
+  height: 100%;
+  height: -webkit-fill-available;
+  height: 100dvh;
+  /* ページ自体を固定して、引っぱって更新・ゴムバンドスクロールを根元から止める */
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* セーフエリアの実寸プローブ（見えない） */
+#safeprobe {
+  position: fixed;
+  top: 0; left: 0;
+  width: 0; height: 0;
+  visibility: hidden;
+  pointer-events: none;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+           env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+#wrap {
+  position: absolute;
+  inset: 0;
+  /* スクロール・ダブルタップズームを canvas 上で無効化 */
+  touch-action: none;
+}
+
+#canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ---------- DOM オーバーレイ（タイトル／ポーズ／リザルト／設定） ---------- */
+#ui {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;             /* 空のときはタップを canvas に通す */
+  padding: max(16px, env(safe-area-inset-top))   max(16px, env(safe-area-inset-right))
+           max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+}
+#ui.active { pointer-events: auto; }
+
+.panel {
+  width: min(420px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;              /* パネル内だけは縦スクロールを許す */
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  padding: 26px 22px;
+  text-align: center;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .55);
+  animation: rise .34s var(--ease) both;
+}
+@keyframes rise {
+  from { opacity: 0; transform: translate3d(0, 22px, 0) scale(.97); }
+  to   { opacity: 1; transform: none; }
+}
+
+.logo {
+  margin: 0;
+  font-size: clamp(40px, 14vw, 62px);
+  font-weight: 800;
+  letter-spacing: .14em;
+  line-height: 1;
+  background: linear-gradient(180deg, #ffffff 0%, var(--cyan) 55%, var(--magenta) 130%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.tagline { margin: 10px 0 0; color: var(--ink-soft); font-size: 14px; letter-spacing: .1em; }
+.headline { margin: 0 0 4px; font-size: 26px; font-weight: 800; letter-spacing: .06em; }
+
+.score-big {
+  font-size: clamp(46px, 17vw, 74px);
+  font-weight: 800;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.score-label { color: var(--ink-soft); font-size: 12px; letter-spacing: .22em; margin-bottom: 2px; }
+.newbest { color: var(--amber); font-weight: 800; letter-spacing: .14em; font-size: 14px; margin-top: 6px; }
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 18px 0 6px;
+}
+.stat { background: rgba(255, 255, 255, .05); border-radius: 12px; padding: 9px 4px; }
+.stat b { display: block; font-size: 19px; font-variant-numeric: tabular-nums; }
+.stat span { display: block; font-size: 10px; color: var(--ink-soft); letter-spacing: .12em; margin-top: 2px; }
+
+.btn {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 15px 18px;
+  min-height: 52px;                 /* タップ領域を 44px 以上に */
+  border: 0;
+  border-radius: 15px;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: .1em;
+  color: #04121a;
+  background: linear-gradient(180deg, #7ff4ff, var(--cyan));
+  box-shadow: 0 5px 0 #1d8ea3, 0 12px 26px rgba(53, 232, 255, .28);
+  cursor: pointer;
+  touch-action: manipulation;       /* ダブルタップズームだけ止める（タップは即応） */
+  transition: transform .09s ease, box-shadow .09s ease;
+}
+.btn:active { transform: translateY(5px); box-shadow: 0 0 0 #1d8ea3, 0 6px 14px rgba(53, 232, 255, .2); }
+.btn.ghost {
+  color: var(--ink);
+  background: rgba(255, 255, 255, .07);
+  box-shadow: 0 3px 0 rgba(255, 255, 255, .09);
+  font-size: 15px;
+  min-height: 46px;
+  padding: 12px 16px;
+}
+.btn.ghost:active { transform: translateY(3px); box-shadow: none; }
+
+.row { display: flex; gap: 10px; }
+.row .btn { flex: 1; }
+
+.hint { margin: 16px 0 0; color: var(--ink-soft); font-size: 12px; line-height: 1.75; }
+.hint b { color: var(--ink); }
+
+/* 設定のトグル行 */
+.opt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 13px 14px;
+  margin-top: 9px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, .04);
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.opt .val { color: var(--cyan); font-weight: 800; font-size: 14px; letter-spacing: .06em; }
+.opt .val.off { color: var(--ink-soft); }
+.opt small { display: block; color: var(--ink-soft); font-size: 11px; margin-top: 3px; letter-spacing: .02em; }
+
+.howto { margin: 18px 0 4px; text-align: left; }
+.howto li { color: var(--ink-soft); font-size: 13px; line-height: 1.85; margin-bottom: 2px; }
+.howto li b { color: var(--ink); }
+
+/* 端末が横向きのとき：ゲーム自体は縦のプレイフィールドをレターボックス表示するので
+   遊べるが、縦向きを勧める一言を出す。iOS は manifest の orientation を無視するため、
+   向きを強制することはできない。 */
+.rotate-hint {
+  display: none;
+  margin: 14px 0 0;
+  color: var(--amber);
+  font-size: 12px;
+  letter-spacing: .06em;
+}
+@media (orientation: landscape) and (max-height: 460px) {
+  .rotate-hint { display: block; }
+  .panel { padding: 18px 20px; }
+  .logo { font-size: 38px; }
+  .stats { margin: 12px 0 4px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel { animation: none; }
+  .btn { transition: none; }
+}

@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="GRAVIX">
+  <!-- 図形だけで作る。<text> を使うと、ラスタライズする環境にフォントが無いときに
+       別の書体で焼き込まれてしまう（ルートの icons/icon.svg がその状態）。
+       描画は中央 409px の安全円の内側に収めてあるので、maskable でも欠けない。 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#111737"/>
+      <stop offset="1" stop-color="#06070f"/>
+    </linearGradient>
+    <linearGradient id="cy" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8df7ff"/>
+      <stop offset="1" stop-color="#35e8ff"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" fill="url(#bg)"/>
+
+  <!-- 通路の縁（にじみ → 本線 の重ね描き。ゲーム本編と同じ作り） -->
+  <rect x="96" y="132" width="320" height="26" rx="13" fill="#35e8ff" opacity=".18"/>
+  <rect x="96" y="140" width="320" height="10" rx="5" fill="url(#cy)"/>
+  <rect x="96" y="354" width="320" height="26" rx="13" fill="#35e8ff" opacity=".18"/>
+  <rect x="96" y="362" width="320" height="10" rx="5" fill="url(#cy)"/>
+
+  <!-- 天井と床から生えた障害物 -->
+  <rect x="146" y="150" width="54" height="88" rx="9" fill="#ff3d9a" opacity=".28"/>
+  <rect x="152" y="150" width="42" height="82" rx="7" fill="#ff3d9a"/>
+  <rect x="312" y="274" width="54" height="88" rx="9" fill="#ff3d9a" opacity=".28"/>
+  <rect x="318" y="280" width="42" height="82" rx="7" fill="#ff3d9a"/>
+
+  <!-- 重力反転の軌跡 -->
+  <path d="M126 330 C 196 330, 206 200, 268 196" fill="none" stroke="#35e8ff"
+        stroke-width="20" stroke-linecap="round" opacity=".22"/>
+  <path d="M126 330 C 196 330, 206 200, 268 196" fill="none" stroke="#35e8ff"
+        stroke-width="7" stroke-linecap="round" opacity=".85"/>
+
+  <!-- プレイヤー -->
+  <path d="M262 166 L306 178 L318 200 L306 222 L262 230 Z" fill="#35e8ff" opacity=".35"/>
+  <path d="M266 172 L302 182 L312 200 L302 218 L266 226 Z" fill="#eaffff" stroke="#35e8ff" stroke-width="4" stroke-linejoin="round"/>
+</svg>
