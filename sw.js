@@ -1,5 +1,5 @@
 /* Service Worker：オフラインでも動かす */
-const CACHE = "natsu-study-v16";
+const CACHE = "natsu-study-v17";
 const ASSETS = [
   "./",
   "./index.html",
@@ -46,6 +46,11 @@ self.addEventListener("fetch", (e) => {
      取り込んでしまい、オフライン時には学習アプリの index.html を
      ゲームの URL で返してしまう。素通しするのが正解。 */
   if (url.pathname.includes("/game/")) return;
+
+  /* /soccer/ も学習アプリとは別物。ここで cache-first に流すと、
+     11MB の動画が学習アプリのキャッシュに入り、動画のシーク（Range リクエスト）にも
+     キャッシュ済みの全体レスポンスを返してしまう。素通しする。 */
+  if (url.pathname.includes("/soccer/")) return;
 
   /* /mlb/ は開くたびに更新されるページなので network-first。
      オフラインのときだけキャッシュを使う。 */

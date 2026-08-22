@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ボールなし ドリブルれんしゅう</title>
+<meta name="description" content="小学1年生・サッカーをはじめて1か月。ボールがなくてもできるドリブル練習8種目を、動画とアニメーションで。">
+<meta name="theme-color" content="#16a35d">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E⚽%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/soccer.css">
+</head>
+<body>
+<header class="top">
+  <p class="eyebrow">サッカーを はじめた 1ねんせいへ</p>
+  <h1>ボールなし<br>ドリブルれんしゅう</h1>
+  <p class="lead">ボールがなくても、おうちで できる 8つの れんしゅう。<br>いっしょに まねっこ しよう！</p>
+</header>
+
+<main>
+  <section class="player">
+    <div class="screen">
+      <canvas id="stage" width="720" height="1280" aria-label="れんしゅうの アニメーション"></canvas>
+    </div>
+    <div class="bar">
+      <button id="play" class="btn primary" type="button">▶︎ さいせい</button>
+      <button id="loop" class="btn" type="button" aria-pressed="false">🔁 くりかえし</button>
+      <button id="sound" class="btn" type="button" aria-pressed="true">🔔 おと</button>
+    </div>
+    <input id="seek" class="seek" type="range" min="0" max="1000" value="0" step="1" aria-label="さいせい いち">
+    <p class="time"><span id="now">0:00</span> / <span id="total">0:00</span> ・ <span id="chapter">タイトル</span></p>
+    <p class="dl">スマホに ほぞんして みる：<a id="mp4" href="video/dribble-noball.mp4" download>動画をダウンロード（MP4）</a></p>
+  </section>
+
+  <section class="menu">
+    <h2>メニュー</h2>
+    <p class="hint">タップすると その れんしゅうから さいせい します。</p>
+    <ol id="list"></ol>
+  </section>
+
+  <section class="notes">
+    <h2>おうちの方へ</h2>
+    <ul>
+      <li>用意するものは <b>くつ下 2 足</b>だけ。1 畳ほどのスペースがあればできます（ジグザグだけ 3〜4m）。</li>
+      <li>8 種目を続けて約 3 分。全部やらなくても、<b>1 日 2〜3 種目・5 分</b>で十分です。</li>
+      <li>回数はめやすです。「速く」より <b>「小さく・正確に」</b>。フォームが崩れたら回数を減らしてください。</li>
+      <li>ボールを使える日は、同じ動きをそのままボールでやると効果が高いです。</li>
+      <li>いちばん大事なのは <b>7 の「かおを あげて タッチ」</b>。足元だけを見るクセがつく前に習慣にしておくと、あとが楽になります。</li>
+    </ul>
+  </section>
+</main>
+
+<footer>
+  <a href="../">← なつやすみ スタディ</a> ・ <a href="../game/">GRAVIX</a>
+</footer>
+
+<script src="js/drills.js"></script>
+<script src="js/draw.js"></script>
+<script src="js/scenes.js"></script>
+<script src="js/moves.js"></script>
+<script src="js/story.js"></script>
+<script src="js/player.js"></script>
+</body>
+</html>

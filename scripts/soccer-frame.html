@@ -1,0 +1,23 @@
+<!doctype html>
+<!-- 動画書き出し用のハーネス。公開はしない（scripts/ は Pages から除外）。 -->
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;800&display=swap" rel="stylesheet">
+<style>html,body{margin:0;background:#222}canvas{display:block}</style>
+<canvas id="c" width="720" height="1280"></canvas>
+<script src="../soccer/js/drills.js"></script>
+<script src="../soccer/js/draw.js"></script>
+<script src="../soccer/js/scenes.js"></script>
+<script src="../soccer/js/moves.js"></script>
+<script src="../soccer/js/story.js"></script>
+<script>
+  const cv = document.getElementById("c");
+  const ctx = cv.getContext("2d", { alpha: false });
+  window.__total = SD.TOTAL;
+  window.__fontReady = Promise.all([
+    document.fonts.load('800 60px "M PLUS Rounded 1c"'),
+    document.fonts.load('500 24px "M PLUS Rounded 1c"'),
+  ]).then(() => document.fonts.ready);
+  window.__jpeg = (t) => { SStory.frame(ctx, t); return cv.toDataURL("image/jpeg", 0.94).slice(23); };
+  window.__png = (t) => { SStory.frame(ctx, t); return cv.toDataURL("image/png").slice(22); };
+</script>

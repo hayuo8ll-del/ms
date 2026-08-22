@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current State
 
-This repository hosts **three independent static apps** that share one GitHub
+This repository hosts **four independent static apps** that share one GitHub
 Pages deployment. All are dependency-free vanilla HTML/CSS/JavaScript with no
 build step, no package manager, and no bundler.
 
@@ -13,6 +13,7 @@ build step, no package manager, and no bundler.
 | repo root | **なつやすみ スタディ** — summer-vacation study PWA for Japanese elementary 1st/5th graders |
 | `mlb/` | Japanese MLB daily stats (built by `backend/`) |
 | `game/` | **GRAVIX** — one-tap gravity-flip action game |
+| `soccer/` | **ボールなし ドリブルれんしゅう** — animated soccer drill video + player page |
 
 They do not share CSS, JS, state or service workers. Changing one must not
 touch the others.
@@ -23,7 +24,7 @@ Service Worker requires an HTTP origin (not `file://`). Serve from the **repo
 root** so paths match production:
 
 ```bash
-python3 -m http.server 8000   # / = study app, /mlb/ , /game/
+python3 -m http.server 8000   # / = study app, /mlb/ , /game/ , /soccer/
 ```
 
 Test commands that do exist:
@@ -207,6 +208,57 @@ in Node.
   is what makes headless Playwright checks practical — advance thousands of
   ticks instantly, then screenshot.
 
+## Fourth app: ボールなし ドリブルれんしゅう (`soccer/`)
+
+A 3'20" practice video for a 1st-grader one month into soccer, plus a page that
+plays the same animation live. Published at `/ms/soccer/`. Shares nothing with
+the other apps; it has no service worker and no `localStorage`.
+
+```
+soccer/index.html    page shell (canvas player + menu + notes for parents)
+soccer/css/soccer.css
+soccer/js/drills.js  8種目の定義とタイムライン（純データ、DOM に触れない）
+soccer/js/draw.js    部品：キャラクター（正面／真上）、そうぞうのボール、文字
+soccer/js/scenes.js  ステージ・HUD・パネル
+soccer/js/moves.js   種目ごとの動き（拍 → 足とボールの座標）
+soccer/js/story.js   SStory.frame(ctx, t) = t 秒の 1 コマ
+soccer/js/player.js  ページの再生・くりかえし・メトロノーム（公開ページのみ）
+soccer/video/dribble-noball.mp4   720x1280 / 30fps / H.264+AAC / 約11MB
+scripts/soccer-frame.html         書き出し用ハーネス（非公開）
+scripts/render-soccer-video.mjs   Chromium で 1 コマずつ描いて ffmpeg へ流す
+scripts/build-soccer-audio.mjs    音を合成して WAV に（バイナリ素材ゼロ）
+scripts/soccer-shots.mjs          指定秒のコマを PNG で下見
+```
+
+- **`SStory.frame(ctx, t)` is a pure function of `t`** — no state carried between
+  frames, no `Date`/`performance`/`Math.random`. That is what lets the renderer
+  step time by hand (`--from/--to`) instead of screen-recording, so a slow
+  machine cannot drop frames or drift out of sync with the click track. Keep it
+  that way; the same function drives both the MP4 and the page.
+- **Timings live only in `drills.js`.** Both the audio (Node) and the drawing
+  (browser) derive every beat from it, so a tempo change moves the clicks and
+  the feet together. `drills.js` is loaded in Node with `eval` — it must stay
+  DOM-free.
+- Motion is written in **beats, not seconds** (`SMove`), so the おてほん can be
+  replayed at 60% speed without redoing the choreography.
+- Rebuild the video (needs libx264 + AAC — Playwright's bundled ffmpeg is VP8-only):
+
+  ```bash
+  npm i ffmpeg-static            # anywhere; or set FFMPEG=/path/to/ffmpeg
+  node scripts/build-soccer-audio.mjs /tmp/soccer-audio.wav
+  node scripts/render-soccer-video.mjs soccer/video/dribble-noball.mp4 \
+       --audio /tmp/soccer-audio.wav          # 6000 コマ・4 分ほど
+  ```
+
+- The rounded Japanese face (M PLUS Rounded 1c) is loaded from Google Fonts by
+  both `soccer/index.html` and `scripts/soccer-frame.html`, so the render box
+  needs network. Without it, Linux falls back to IPAGothic and the video looks
+  different from the page.
+- Root `sw.js` **passes `/soccer/` through uncached** — see rule 1 under
+  [Service workers](#service-workers-two-of-them-one-origin). Caching it would
+  put the 11MB MP4 in the study app's cache and answer the video's Range
+  requests with a whole-file response, breaking seeking in Safari.
+
 ## Service workers (two of them, one origin)
 
 There are two registrations: root `sw.js` (scope `/ms/`) and `game/sw.js`
@@ -226,8 +278,9 @@ get wrong, and all three are load-bearing:
    other's stored response.
 
 Root `sw.js` fetch rules, in order: non-GET → ignore; cross-origin → pass
-through uncached (MLB API/photos); `/game/` → pass through (rule 1); `/mlb/` →
-network-first; everything else → cache-first with an `./index.html` fallback.
+through uncached (MLB API/photos); `/game/` and `/soccer/` → pass through
+(rule 1); `/mlb/` → network-first; everything else → cache-first with an
+`./index.html` fallback.
 
 ## Publishing (GitHub Pages)
 
@@ -245,6 +298,7 @@ publisher** for the whole site and serves all three apps from one deployment:
 | `https://hayuo8ll-del.github.io/ms/` | なつやすみ スタディ (repo root) |
 | `https://hayuo8ll-del.github.io/ms/mlb/` | Japanese MLB stats (`mlb/`) |
 | `https://hayuo8ll-del.github.io/ms/game/` | GRAVIX (`game/`) |
+| `https://hayuo8ll-del.github.io/ms/soccer/` | ボールなし ドリブルれんしゅう (`soccer/`) |
 
 - It stages `_site` from the repo root with `tar`, excluding `.github/`,
   `backend/` and `scripts/` (none are referenced by the site; `scripts/` holds
