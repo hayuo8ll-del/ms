@@ -218,12 +218,12 @@ the other apps; it has no service worker and no `localStorage`.
 soccer/index.html    page shell (canvas player + menu + notes for parents)
 soccer/css/soccer.css
 soccer/js/drills.js  8種目の定義とタイムライン（純データ、DOM に触れない）
-soccer/js/draw.js    部品：キャラクター（正面／真上）、そうぞうのボール、文字
+soccer/js/draw.js    部品：キャラクター（骨格つき）、ボール、接触エフェクト、紙の粒子
 soccer/js/scenes.js  ステージ・HUD・パネル
-soccer/js/moves.js   種目ごとの動き（拍 → 足とボールの座標）
+soccer/js/moves.js   種目ごとの動き（拍 → 足・ボール・重心・接触・表情）
 soccer/js/story.js   SStory.frame(ctx, t) = t 秒の 1 コマ
 soccer/js/player.js  ページの再生・くりかえし・メトロノーム（公開ページのみ）
-soccer/video/dribble-noball.mp4   720x1280 / 30fps / H.264+AAC / 約11MB
+soccer/video/dribble-noball.mp4   720x1280 / 60fps / H.264+AAC / 約13MB
 scripts/soccer-frame.html         書き出し用ハーネス（非公開）
 scripts/render-soccer-video.mjs   Chromium で 1 コマずつ描いて ffmpeg へ流す
 scripts/build-soccer-audio.mjs    音を合成して WAV に（バイナリ素材ゼロ）
@@ -241,13 +241,25 @@ scripts/soccer-shots.mjs          指定秒のコマを PNG で下見
   DOM-free.
 - Motion is written in **beats, not seconds** (`SMove`), so the おてほん can be
   replayed at 60% speed without redoing the choreography.
+- **What makes it read as animation** (all of it derived from `t` alone, so the
+  renderer stays a pure function): a jointed rig — knees and elbows are the
+  midpoint of the quadratic that used to *be* the limb — plus squash/stretch
+  about the contact point, head/hair lag sampled from the pose 0.1 beat earlier,
+  arm pump driven by the step phase, blinks and brow/mouth from `effort`.
+  Contact is sold with a ball squash, a dust ring and a foot after-image
+  (the same `pose()` re-evaluated at `beat - 0.075`). The stage has parallax
+  (bushes, a far goal), a vignette and a fixed-seed grain tile. The camera
+  eases in during practice and shakes on dash/stop, so `frontStage`/`topStage`
+  paint `PAD` px beyond the frame — shrink that padding and the corners tear.
+  Segments are joined by a `wipe()` computed from the distance to the nearest
+  segment boundary, matched by a whoosh in the audio at the same instant.
 - Rebuild the video (needs libx264 + AAC — Playwright's bundled ffmpeg is VP8-only):
 
   ```bash
   npm i ffmpeg-static            # anywhere; or set FFMPEG=/path/to/ffmpeg
   node scripts/build-soccer-audio.mjs /tmp/soccer-audio.wav
   node scripts/render-soccer-video.mjs soccer/video/dribble-noball.mp4 \
-       --audio /tmp/soccer-audio.wav          # 6000 コマ・4 分ほど
+       --fps 60 --audio /tmp/soccer-audio.wav   # 12000 コマ・6 分ほど
   ```
 
 - The rounded Japanese face (M PLUS Rounded 1c) is loaded from Google Fonts by
@@ -256,7 +268,7 @@ scripts/soccer-shots.mjs          指定秒のコマを PNG で下見
   different from the page.
 - Root `sw.js` **passes `/soccer/` through uncached** — see rule 1 under
   [Service workers](#service-workers-two-of-them-one-origin). Caching it would
-  put the 11MB MP4 in the study app's cache and answer the video's Range
+  put the 13MB MP4 in the study app's cache and answer the video's Range
   requests with a whole-file response, breaking seeking in Safari.
 
 ## Service workers (two of them, one origin)

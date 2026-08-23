@@ -39,13 +39,28 @@ function pad(t0, dur, freqs, amp) {
   });
 }
 
+/* 画面の切り替え（ワイプ）に合わせた短い風切り音。乱数は固定シードで毎回同じ音にする */
+let noiseSeed = 12345;
+const noise = () => {
+  noiseSeed = (noiseSeed * 1103515245 + 12345) & 0x7fffffff;
+  return (noiseSeed / 0x40000000) - 1;
+};
+function whoosh(t0, dur, amp) {
+  add(t0, dur, amp, (t, u) => {
+    const env = Math.sin(Math.PI * Math.min(1, u)) ** 1.6;
+    const f = 320 + 1500 * Math.sin(Math.PI * u);
+    return env * (0.55 * Math.sin(2 * Math.PI * f * t) + 0.45 * noise() * (0.3 + u));
+  });
+}
+
 const N = (n) => 440 * Math.pow(2, (n - 69) / 12);  /* MIDI番号 → Hz */
 const CHORDS = [[60, 64, 67], [57, 60, 64], [65, 69, 72], [55, 59, 62]];
 for (let i = 0, t = 0; t < SD.TOTAL; i++, t += 4) {
   pad(t, 4.4, CHORDS[i % CHORDS.length].map((n) => N(n - 12)), 0.075);
 }
 
-SD.SEGS.forEach((seg) => {
+SD.SEGS.forEach((seg, si) => {
+  if (si > 0) whoosh(seg.start - 0.3, 0.6, 0.1);   /* 映像のワイプと同じ時刻 */
   if (seg.kind === "title") {
     [60, 64, 67, 72].forEach((n, i) => bell(seg.start + 0.15 + i * 0.11, N(n), 1.4, 0.2));
   }
