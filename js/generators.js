@@ -146,7 +146,9 @@ function fracDiff() {
     choices: uniqChoices([ans, `${a + b}/${d1 + d2}`, `${num}/${L}`, `${a + b}/${L}`]) };
 }
 function fracReduce() {
-  const g = ri(2, 6); const base = ri(2, 5); const d0 = ri(base + 1, 8);
+  // こたえ（base/d0）が それ以上 約分できない 組みあわせだけ 使う（3/6 などを 正解に しない）
+  const g = ri(2, 6); let base, d0;
+  do { base = ri(2, 5); d0 = ri(base + 1, 8); } while (gcd(base, d0) !== 1);
   const n = base * g, d = d0 * g; const ans = `${base}/${d0}`;
   return { prompt: "約分しよう", q: `${n}/${d} =`, answer: ans, input: "choice",
     choices: uniqChoices([ans, `${n}/${d}`, `${base + 1}/${d0}`, `${base}/${d0 + 1}`]) };
@@ -419,7 +421,9 @@ function generateMathSet(grade, n, diff) {
   for (let i = 0; i < n; i++) {
     let item, sig, guard = 0;
     do {
-      item = pick(gens)();
+      const gi = ri(0, gens.length - 1);
+      item = gens[gi]();
+      item.gen = gi; item.genDiff = diff || "normal";   // 「にた もんだい」を 作りなおす ための 目じるし
       sig = (item.prompt || "") + "|" + item.q + "|" + item.answer;
       guard++;
     } while (_mathRecent.includes(sig) && guard < 40);
@@ -429,4 +433,75 @@ function generateMathSet(grade, n, diff) {
     out.push(item);
   }
   return out;
+}
+
+/* まちがえた 問題と おなじ タイプの 問題を 1問 作る（れんしゅう用）。
+   gen / genDiff が ない（古い データなど）ときは null。 */
+function generateSimilar(grade, q) {
+  if (!q || q.gen === undefined || q.gen === null) return null;
+  const gens = grade === "g1" ? mathG1(q.genDiff || "normal") : mathG5(q.genDiff || "normal");
+  const g = gens[q.gen];
+  if (!g) return null;
+  let item, guard = 0;
+  do { item = g(); guard++; } while (item.q === q.q && item.answer === q.answer && guard < 20);
+  item.gen = q.gen; item.genDiff = q.genDiff;
+  if (!item.why) item.why = mathWhy(item);
+  return item;
+}
+
+
+/* ===== まちがいの ヒント ===== */
+/* こどもが 入れた こたえ（given）と 問題文から、「どこで つまずいたか」を 推しはかる。
+   はっきり 言えない ときは null（むりに 決めつけない）。 */
+function mathMistake(it, given) {
+  const q = (it.q || "").trim(), a = String(it.answer), g = String(given ?? "").trim();
+  if (!g || g === a) return null;
+  const gn = Number(g), an = Number(a), isNum = g !== "" && !isNaN(gn) && !isNaN(an);
+  const d = isNum ? Math.round((gn - an) * 1000) / 1000 : null;
+  let m;
+
+  if ((m = q.match(/^(\d+) \+ (\d+)(?: \+ (\d+))? =$/))) {
+    const x = +m[1], y = +m[2];
+    if (!m[3] && isNum && gn === Math.abs(x - y)) return "ひきざんを して しまったかな？「＋」は あわせる（ふえる）しるしだよ。";
+    if (isNum && Math.abs(d) === 10) return d < 0 ? "くり上がりの 1を わすれて いないかな？ 1のくらいが 10を こえたら、10のくらいに 1 ふやそう。" : "10 おおく なって いるよ。くり上がりは 1回だけ だね。";
+    if (isNum && Math.abs(d) <= 2) return `おしい！ ${Math.abs(d)} だけ ${d > 0 ? "おおい" : "すくない"}よ。メモに ○を かいて かぞえなおして みよう。`;
+  }
+  if ((m = q.match(/^(\d+) - (\d+) =$/))) {
+    const x = +m[1], y = +m[2];
+    if (isNum && gn === x + y) return "たしざんを して しまったかな？「−」は とる（へる）しるしだよ。";
+    if (isNum && Math.abs(d) === 10) return "くり下がりに 気を つけよう。1のくらいで ひけない ときは、10のくらいから 10 かりて くるよ。";
+    if (isNum && Math.abs(d) <= 2) return `おしい！ ${Math.abs(d)} だけ ${d > 0 ? "おおい" : "すくない"}よ。ゆびや メモで もういちど かぞえよう。`;
+  }
+  if ((m = q.match(/^(\d+) \+ □ = (\d+)$/)) && isNum && gn === +m[1] + +m[2])
+    return "たして しまったかな？ □は 「ぜんぶ − わかっている かず」で もとめるよ。";
+  if ((m = q.match(/^(\d+)\/(\d+) ([+-]) (\d+)\/(\d+) =$/))) {
+    const [n1, d1, op, n2, d2] = [+m[1], +m[2], m[3], +m[4], +m[5]];
+    const bad = op === "+" ? `${n1 + n2}/${d1 + d2}` : null;
+    if (bad && g === bad) return "分母どうしも たして しまったね。分数の たしざんは 分母を そろえて、分子だけを たすよ。";
+    if (d1 === d2 && g.includes("/") && g.split("/")[1] === String(d1 * 2)) return "分母は たさないよ。分母が おなじなら、そのまま つかおう。";
+    if (d1 !== d2 && g.includes("/")) return "分母が ちがう ときは、まず 通分（分母を そろえる）してから 計算しよう。";
+  }
+  if (/^(\d+)\/(\d+) × (\d+) =$/.test(q) && g.includes("/")) {
+    const [, n, den, k] = q.match(/^(\d+)\/(\d+) × (\d+) =$/).map(Number);
+    if (g === `${n * k}/${den * k}`) return "分母にも かけて しまったね。整数を かける ときは 分子だけに かけるよ。";
+  }
+  if (/[\d.]+ [×÷] \d+ =$/.test(q) && isNum && an !== 0) {
+    const r = gn / an;
+    if ([10, 100, 0.1, 0.01].some(k => Math.abs(r - k) < 1e-9)) return "数字の ならびは あっているよ！ 小数点の いちを もういちど たしかめよう。";
+  }
+  if (/ていへん/.test(q) && isNum && Math.abs(gn - an * 2) < 1e-9) return "「÷ 2」を わすれて いるよ。三角形は 長方形の はんぶん だね。";
+  if (/へいきん/.test(q) && (m = q.match(/^([\d, ]+) の/)) && isNum) {
+    const v = m[1].split(",").map(s => +s.trim()), sum = v.reduce((x, y) => x + y, 0);
+    if (gn === sum) return `それは ごうけい だね。さいごに こすう（${v.length}）で わろう。`;
+  }
+  if ((m = q.match(/^(\d+)の (\d+)% は？$/)) && isNum && gn === +m[1] * +m[2]) return "% は 100で わった 大きさ だよ。さいごに ÷ 100 を わすれずに。";
+  if (/= □/.test(q) && isNum && an !== 0) {
+    const r = gn / an;
+    if ([10, 100, 1000, 0.1, 0.01, 0.001].some(k => Math.abs(r - k) < 1e-9)) return "0の かずが ちがうよ。「1つ ぶんが いくつに なるか」を もういちど かくにんしよう。";
+  }
+  if ((m = q.match(/たて(\d+)cm よこ(\d+)cm 高さ(\d+)cm/)) && isNum && gn === +m[1] + +m[2] + +m[3]) return "たして しまったね。体積は たて × よこ × 高さ の かけざん だよ。";
+  if ((m = q.match(/時速(\d+)kmで (\d+)時間/)) && isNum && gn === +m[1] + +m[2]) return "道のりは 速さ × 時間 の かけざん だよ。";
+  if ((m = q.match(/^(\d+)円が (\d+)こで/)) && isNum && gn === +m[1] + +m[2]) return `たして しまったかな？ ${m[1]}円が ${m[2]}こ だから、${m[1]}円を ${m[2]}かい たす（かけざん）だよ。`;
+  if (isNum && Number.isInteger(an) && Math.abs(d) === 1 && /[+\-×÷]/.test(q)) return "1 だけ ずれて いるよ。さいごの けいさんを もういちど 見なおそう。";
+  return null;
 }

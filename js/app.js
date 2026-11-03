@@ -1,8 +1,10 @@
-/* ===== なつやすみ スタディ：本体 ===== */
+/* ===== まいにち スタディ：本体 ===== */
+/* 保存キーは 旧名（natsuyasumi_v1）のまま。変えると これまでの きろくが きえる。 */
 
 const STORE_KEY = "natsuyasumi_v1";
 const QUESTIONS_PER_ROUND = 10;
 const MAX_WRONG = 60;
+const CLEAR_HITS = 2;       // にがて問題は 2回 正かいして はじめて こくふく（すぐ わすれない ように）
 
 /* ---------- じょうたい（保存データ） ---------- */
 function freshProfile() {
@@ -17,8 +19,10 @@ function freshProfile() {
     owned: { avatars: ["kid"], themes: ["orange"] },
     avatar: "kid",
     theme: "orange",
-    settings: { sound: true, speak: null, perRound: QUESTIONS_PER_ROUND, attackTime: 60, difficulty: "normal", voiceURI: null },
+    settings: { sound: true, speak: null, perRound: QUESTIONS_PER_ROUND, attackTime: 60, difficulty: "normal", voiceURI: null, dailyGoal: 3 },
     bestAttack: 0,      // タイムアタックの最高正解数
+    goalDate: null,     // さいごに「きょうの めあて」を たっせいした日
+    goalDays: 0,        // めあてを たっせいした 日数（のべ）
   };
 }
 const DIFF = { easy: "やさしい", normal: "ふつう", hard: "むずかしい" };
@@ -31,6 +35,8 @@ function migrate(p, grade) {
   if (p.settings.attackTime === undefined) p.settings.attackTime = 60;
   if (p.settings.difficulty === undefined) p.settings.difficulty = "normal";
   if (p.settings.voiceURI === undefined) p.settings.voiceURI = null;
+  if (p.settings.dailyGoal === undefined) p.settings.dailyGoal = 3;
+  for (const w of p.wrong) if (w.hits === undefined) w.hits = 0;
   if (!p.owned) p.owned = { avatars: ["kid"], themes: ["orange"] };
   if (!p.owned.avatars) p.owned.avatars = ["kid"];
   if (!p.owned.themes) p.owned.themes = ["orange"];
@@ -49,7 +55,9 @@ function loadState() {
   s.profiles.g1.settings.speak = true; s.profiles.g5.settings.speak = false;
   return s;
 }
-function saveState() { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
+function saveState() { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {} }
+/* ブラウザが 容量ふそくの ときに きろくを 消さないよう「ずっと 保存」を おねがいする（対応ブラウザのみ） */
+try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) {}
 
 let state = loadState();
 function prof() { return state.profiles[state.grade]; }
@@ -231,13 +239,41 @@ function daysBetween(a, b) {
   return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86400000);
 }
 
+/* ---------- きょうの めあて（毎日 つづける ための 目ひょう） ---------- */
+function roundsToday() { const t = todayStr(); return prof().log.filter(l => l.date === t).length; }
+function dailyGoal() { return prof().settings.dailyGoal || 3; }
+/* めあてを はじめて たっせいした 瞬間だけ true（ボーナスは 1日1回） */
+function checkGoal() {
+  const p = prof(), t = todayStr();
+  if (p.goalDate === t || roundsToday() < dailyGoal()) return false;
+  p.goalDate = t; p.goalDays = (p.goalDays || 0) + 1; p.coins += 15;
+  return true;
+}
+/* つぎに やると いい 教科：正答率が ひくい／しばらく やっていない 教科を えらぶ */
+function recommendSubject() {
+  const p = prof();
+  const last = {};
+  p.log.forEach((l, i) => { last[l.subject] = i; });
+  let best = null, bestScore = -Infinity;
+  for (const s of SUBJECTS[state.grade]) {
+    const st = p.stats[s.id];
+    const rate = st.a ? st.c / st.a : 0.5;
+    const ago = last[s.id] === undefined ? p.log.length + 5 : p.log.length - last[s.id];
+    const score = (1 - rate) * 3 + Math.min(ago, 8) * 0.5;
+    if (score > bestScore) { bestScore = score; best = s; }
+  }
+  return best;
+}
+
 /* ---------- にがて問題プール ---------- */
 function wrongKey(x) { return `${x.subject}|${x.q}|${x.answer}`; }
 function addWrong(subject, q) {
   const p = prof();
   const snap = { subject, q: q.q || "", answer: q.answer, choices: q.choices || null,
-    prompt: q.prompt || "", svg: q.svg || "", input: q.input || "choice" };
-  if (p.wrong.some(w => wrongKey(w) === wrongKey(snap))) return;
+    prompt: q.prompt || "", svg: q.svg || "", input: q.input || "choice",
+    why: q.why || "", gen: q.gen ?? null, genDiff: q.genDiff || null, hits: 0 };
+  const same = p.wrong.find(w => wrongKey(w) === wrongKey(snap));
+  if (same) { same.hits = 0; return; }        // また まちがえたら 正かい回数は やりなおし
   p.wrong.push(snap);
   if (p.wrong.length > MAX_WRONG) p.wrong.shift();
 }
@@ -247,6 +283,16 @@ function removeWrong(subject, q) {
   const before = p.wrong.length;
   p.wrong = p.wrong.filter(w => wrongKey(w) !== key);
   return p.wrong.length < before;
+}
+/* にがて問題に 正かいした：CLEAR_HITS 回で こくふく。のこり回数を かえす（-1 = にがてに 入っていない） */
+function hitWrong(subject, q) {
+  const p = prof();
+  const key = `${subject}|${q.q || ""}|${q.answer}`;
+  const w = p.wrong.find(x => wrongKey(x) === key);
+  if (!w) return -1;
+  w.hits = (w.hits || 0) + 1;
+  if (w.hits >= CLEAR_HITS) { removeWrong(subject, q); return 0; }
+  return CLEAR_HITS - w.hits;
 }
 
 /* ---------- 見た目（テーマ／アバター） ---------- */
@@ -276,13 +322,15 @@ function checkBadges(roundResult) {
   if (p.reviewCleared >= 10) grant("review10");
   if (p.owned.avatars.length + p.owned.themes.length > 2) grant("shopper");
   if (p.writeCount >= 20) grant("writer");
+  if ((p.goalDays || 0) >= 1) grant("goal1");
+  if ((p.goalDays || 0) >= 10) grant("goal10");
   if (p.bestAttack >= 15) grant("speed");
   return earned;
 }
 
 /* ---------- 画面ユーティリティ ---------- */
 const screen = () => document.getElementById("screen");
-function render(html) { screen().innerHTML = html; window.scrollTo(0, 0); }
+function render(html) { closeMemo(); screen().innerHTML = html; window.scrollTo(0, 0); }
 function refreshTop() {
   const coinEl = document.getElementById("coinCount");
   const before = +coinEl.textContent || 0;
@@ -302,7 +350,7 @@ function showGradeSelect() {
   clearAttackTimer();
   render(`
     <h1 class="title">だれが べんきょうする？ 🌻</h1>
-    <p class="subtitle">なつやすみ、いっしょに たのしく べんきょうしよう！</p>
+    <p class="subtitle">まいにち すこしずつ、いっしょに たのしく べんきょうしよう！</p>
     <div class="grade-choose">
       <button class="card grade-card" data-grade="g1">
         <span class="emoji">🧒</span><span class="name">1年生</span>
@@ -340,6 +388,21 @@ function showHome() {
       <span><span class="t-name">にがてを ふくしゅう</span><span class="t-sub">${p.wrong.length}問 のこってる</span></span>
     </button>` : "";
 
+  const done = roundsToday(), goal = dailyGoal();
+  const rec = recommendSubject();
+  const dots = Array.from({ length: goal }, (_, i) => `<i class="${i < done ? "on" : ""}"></i>`).join("");
+  const goalCard = `
+    <div class="goal-card ${done >= goal ? "clear" : ""}">
+      <div class="goal-main">
+        <div class="goal-title">${done >= goal ? "🎉 きょうの めあて たっせい！" : "🎯 きょうの めあて"}</div>
+        <div class="goal-sub">${done >= goal
+          ? `${done}かい べんきょうしたよ。あしたも まってるね！`
+          : `あと <b>${goal - done}かい</b> で たっせい（ボーナス +15🪙）`}</div>
+        <div class="goal-dots" aria-label="${done}/${goal}">${dots}</div>
+      </div>
+      ${rec ? `<button class="goal-rec" id="recBtn"><span class="goal-rec-label">おすすめ</span><span class="goal-rec-emoji">${rec.emoji}</span><span class="goal-rec-name">${rec.name}</span></button>` : ""}
+    </div>`;
+
   render(`
     <div class="hero">
       <div class="hero-avatar">${avatarEmoji(p.avatar)}</div>
@@ -348,6 +411,7 @@ function showHome() {
         <div class="hero-sub">${streakMsg}</div>
       </div>
     </div>
+    ${goalCard}
     <div class="diff-select">
       <span class="diff-label">むずかしさ</span>
       <div class="seg">
@@ -380,6 +444,7 @@ function showHome() {
     b.onclick = () => startRound(b.dataset.subject));
   screen().querySelectorAll("[data-diff]").forEach(b =>
     b.onclick = () => { prof().settings.difficulty = b.dataset.diff; saveState(); showHome(); });
+  if (rec) document.getElementById("recBtn").onclick = () => startRound(rec.id);
   document.getElementById("attackBtn").onclick = showAttackMenu;
   document.getElementById("writeBtn").onclick = showWritingMenu;
   document.getElementById("badgeBtn").onclick = showBadges;
@@ -591,7 +656,7 @@ function showQuestion() {
       <button class="key ok" data-k="ok">こたえる</button>
     </div>` : "";
 
-  const label = round.review ? "🩹 ふくしゅう" : subjectName(round.subject);
+  const label = q.extra ? "🔁 れんしゅう" : round.review ? "🩹 ふくしゅう" : subjectName(round.subject);
   const head = round.timed
     ? `<div class="quiz-head">
          <span class="qnum">⚡${round.correct}問</span>
@@ -614,11 +679,7 @@ function showQuestion() {
     </div>
     ${bodyChoice}${bodyNumber}
     <div class="feedback" id="feedback"></div>
-    <button class="memo-toggle" id="memoToggle">✏️ メモ（けいさん用）</button>
-    <div class="memo-wrap" id="memoWrap" style="display:none">
-      <canvas id="memoCanvas" class="memo-canvas"></canvas>
-      <button class="key del memo-clear" id="memoClear">メモを けす</button>
-    </div>
+    <button class="memo-toggle" id="memoToggle">✏️ メモを ひらく（ひろい 自由帳）</button>
   `);
 
   round.locked = false; round.current = "";
@@ -629,29 +690,279 @@ function showQuestion() {
   } else {
     screen().querySelectorAll("[data-k]").forEach(b => b.onclick = () => keypad(b.dataset.k));
   }
-  setupMemo();
+  resetMemo(q);
+  document.getElementById("memoToggle").onclick = () => openMemo(q);
   speak(toReadable(q)); // 自動よみあげ（設定オン時）
 }
 
-/* けいさん用メモ（手書き）— 各問題ごとにまっさら、開閉はラウンド中いじ */
-let memoOpen = false, memoSketch = null;
-function setupMemo() {
-  const wrap = document.getElementById("memoWrap");
-  const toggle = document.getElementById("memoToggle");
-  if (!wrap || !toggle) return;
-  const openIt = () => {
-    wrap.style.display = "block";
-    toggle.textContent = "✏️ メモを とじる";
-    memoSketch = makeSketch(document.getElementById("memoCanvas"), { color: "#2b6ad4", width: 4 });
+/* ========== けいさんメモ（ぜんがめんの 自由帳） ==========
+   ページの 中に キャンバスを おくと、2本ゆびの ピンチや スクロールが ブラウザの
+   ズーム・ページスクロールに とられて 書きにくい。そこで メモは 画面の 上に かぶさる
+   専用シートに して、ジェスチャーを ぜんぶ アプリが 受けとる：
+     1本ゆび … 書く（✋モードでは うごかす）　2本ゆび … ひろげる／ちぢめる／うごかす
+     マウスホイール … スクロール（Ctrl/⌘＋ホイールで ズーム）
+   線は「点の ならび」で 保存して ズームの たびに かきなおすので、拡大しても ぼやけない。
+   メモは 問題ごとに まっさら。とじても その問題の あいだは のこる。 */
+const MEMO_W = 1000, MEMO_H = 1400, MEMO_GRID = 40, MEMO_MIN = 0.35, MEMO_MAX = 4;
+const MEMO_PENS = [
+  { id: "blue", color: "#2b6ad4", label: "あお" },
+  { id: "red", color: "#e0453a", label: "あか" },
+  { id: "black", color: "#2f2417", label: "くろ" },
+];
+const memo = {
+  strokes: [], q: null, open: false, built: false,
+  s: 1, ox: 0, oy: 0, tool: "pen", pen: "blue",
+  pts: new Map(), cur: null, pan: null, pinch: null, blocked: false,
+};
+function resetMemo(q) {
+  memo.q = q; memo.strokes = []; memo.cur = null;
+  memo.s = 1; memo.ox = 0; memo.oy = 0;
+}
+function memoEls() {
+  return {
+    sheet: document.getElementById("memoSheet"), stage: document.getElementById("memoStage"),
+    grid: document.getElementById("memoGrid"), ink: document.getElementById("memoInk"),
   };
-  if (memoOpen) openIt();
-  toggle.onclick = () => {
-    memoOpen = !memoOpen;
-    if (memoOpen) openIt();
-    else { wrap.style.display = "none"; toggle.textContent = "✏️ メモ（けいさん用）"; memoSketch = null; }
-  };
-  const clr = document.getElementById("memoClear");
-  if (clr) clr.onclick = () => memoSketch && memoSketch.clear();
+}
+function buildMemo() {
+  if (memo.built) return;
+  memo.built = true;
+  const el = document.createElement("div");
+  el.id = "memoSheet"; el.className = "memo-sheet"; el.hidden = true;
+  el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-label", "けいさんメモ");
+  el.innerHTML = `
+    <div class="memo-top">
+      <div class="memo-q" id="memoQ"></div>
+      <button class="memo-close" id="memoClose">✅ とじて こたえる</button>
+    </div>
+    <div class="memo-stage" id="memoStage">
+      <canvas id="memoGrid" class="memo-layer"></canvas>
+      <canvas id="memoInk" class="memo-layer"></canvas>
+      <div class="memo-zoom">
+        <button class="memo-zbtn" data-z="in" aria-label="おおきく">＋</button>
+        <button class="memo-zbtn memo-pct" data-z="reset" id="memoPct" aria-label="100%に もどす">100%</button>
+        <button class="memo-zbtn" data-z="out" aria-label="ちいさく">−</button>
+        <button class="memo-zbtn" data-z="all" aria-label="ぜんたいを みる">⤢</button>
+      </div>
+      <div class="memo-help" id="memoHelp">1本ゆびで かく ／ 2本ゆびで ひろげる・うごかす</div>
+    </div>
+    <div class="memo-tools" role="toolbar" aria-label="メモの どうぐ">
+      ${MEMO_PENS.map(p => `<button class="memo-tool" data-pen="${p.id}" aria-label="${p.label}ペン"><i class="memo-dot" style="background:${p.color}"></i><span>${p.label}</span></button>`).join("")}
+      <button class="memo-tool" data-tool="eraser" aria-label="けしゴム"><b>🧽</b><span>けす</span></button>
+      <button class="memo-tool" data-tool="hand" aria-label="うごかす"><b>✋</b><span>うごかす</span></button>
+      <button class="memo-tool" data-act="undo" aria-label="ひとつ もどす"><b>↩️</b><span>もどす</span></button>
+      <button class="memo-tool" data-act="clear" aria-label="ぜんぶ けす"><b>🗑️</b><span>ぜんぶ</span></button>
+    </div>`;
+  document.body.appendChild(el);
+
+  // ブラウザの ズーム・スクロール・ダブルタップ拡大を シートの 中では とめる
+  const stop = e => e.preventDefault();
+  el.addEventListener("touchmove", stop, { passive: false });
+  el.addEventListener("gesturestart", stop);
+  el.addEventListener("gesturechange", stop);
+  el.addEventListener("dblclick", stop);
+
+  document.getElementById("memoClose").onclick = () => closeMemo();
+  el.querySelectorAll("[data-pen]").forEach(b => b.onclick = () => { memo.tool = "pen"; memo.pen = b.dataset.pen; memoToolbar(); });
+  el.querySelectorAll("[data-tool]").forEach(b => b.onclick = () => { memo.tool = b.dataset.tool; memoToolbar(); });
+  el.querySelector('[data-act="undo"]').onclick = () => { memo.strokes.pop(); memoDraw(); };
+  el.querySelector('[data-act="clear"]').onclick = () => { if (memo.strokes.length) { memo.strokes = []; memoDraw(); } };
+  el.querySelectorAll("[data-z]").forEach(b => b.onclick = () => {
+    const { stage } = memoEls(), cx = stage.clientWidth / 2, cy = stage.clientHeight / 2;
+    const z = b.dataset.z;
+    if (z === "in") memoZoomAt(memo.s * 1.25, cx, cy);
+    else if (z === "out") memoZoomAt(memo.s / 1.25, cx, cy);
+    else if (z === "reset") memoZoomAt(1, cx, cy);
+    else { memo.s = Math.max(MEMO_MIN, Math.min(stage.clientWidth / MEMO_W, stage.clientHeight / MEMO_H)); memo.ox = 0; memo.oy = 0; memoClamp(); memoDraw(); }
+  });
+
+  const stage = document.getElementById("memoStage");
+  stage.addEventListener("pointerdown", memoDown);
+  stage.addEventListener("pointermove", memoMove);
+  stage.addEventListener("pointerup", memoUp);
+  stage.addEventListener("pointercancel", memoUp);
+  stage.addEventListener("contextmenu", e => e.preventDefault());
+  stage.addEventListener("wheel", e => {
+    e.preventDefault();
+    const r = stage.getBoundingClientRect();
+    if (e.ctrlKey || e.metaKey) memoZoomAt(memo.s * Math.exp(-e.deltaY * 0.01), e.clientX - r.left, e.clientY - r.top);
+    else { memo.ox += e.deltaX / memo.s; memo.oy += e.deltaY / memo.s; memoClamp(); memoDraw(); }
+  }, { passive: false });
+  window.addEventListener("resize", () => { if (memo.open) memoResize(); });
+  document.addEventListener("keydown", e => { if (memo.open && e.key === "Escape") closeMemo(); });
+}
+function memoToolbar() {
+  const { sheet } = memoEls();
+  sheet.querySelectorAll("[data-pen]").forEach(b => b.classList.toggle("on", memo.tool === "pen" && memo.pen === b.dataset.pen));
+  sheet.querySelectorAll("[data-tool]").forEach(b => b.classList.toggle("on", memo.tool === b.dataset.tool));
+  memoEls().stage.dataset.tool = memo.tool;
+}
+function openMemo(q) {
+  buildMemo();
+  const { sheet } = memoEls();
+  const qq = q || memo.q || {};
+  document.getElementById("memoQ").innerHTML =
+    `${qq.prompt ? `<span class="memo-q-p">${qq.prompt}</span>` : ""}${qq.svg ? `<span class="memo-q-svg">${qq.svg}</span>` : ""}${qq.q ? `<span class="memo-q-t">${qq.q}</span>` : ""}`;
+  sheet.hidden = false;
+  memo.open = true;
+  document.documentElement.classList.add("memo-lock");
+  memoToolbar();
+  memoResize();
+  document.getElementById("memoHelp").classList.toggle("gone", memo.strokes.length > 0);
+}
+function closeMemo() {
+  if (!memo.open) return;
+  memo.open = false; memo.pts.clear(); memo.cur = null; memo.pinch = null; memo.pan = null;
+  memoEls().sheet.hidden = true;
+  document.documentElement.classList.remove("memo-lock");
+  const t = document.getElementById("memoToggle");
+  if (t) t.textContent = memo.strokes.length ? "✏️ メモを ひらく（かきかけ あり）" : "✏️ メモを ひらく（ひろい 自由帳）";
+}
+function memoResize() {
+  const { stage, grid, ink } = memoEls();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  for (const c of [grid, ink]) {
+    c.width = Math.max(1, Math.round(stage.clientWidth * dpr));
+    c.height = Math.max(1, Math.round(stage.clientHeight * dpr));
+  }
+  memo.dpr = dpr;
+  memoClamp(); memoDraw();
+}
+/* 紙の そとへ 行きすぎない ように する（紙が 画面より 小さい ときは まんなかに） */
+function memoClamp() {
+  const { stage } = memoEls();
+  const vw = stage.clientWidth / memo.s, vh = stage.clientHeight / memo.s;
+  const pad = 40;
+  memo.ox = vw >= MEMO_W ? (MEMO_W - vw) / 2 : Math.min(Math.max(memo.ox, -pad), MEMO_W - vw + pad);
+  memo.oy = vh >= MEMO_H ? (MEMO_H - vh) / 2 : Math.min(Math.max(memo.oy, -pad), MEMO_H - vh + pad);
+}
+function memoZoomAt(ns, sx, sy) {
+  ns = Math.max(MEMO_MIN, Math.min(MEMO_MAX, ns));
+  const wx = memo.ox + sx / memo.s, wy = memo.oy + sy / memo.s;   // 指の 下の 点を 動かさない
+  memo.s = ns; memo.ox = wx - sx / ns; memo.oy = wy - sy / ns;
+  memoClamp(); memoDraw();
+}
+function memoXform(ctx) {
+  const k = memo.dpr * memo.s;
+  ctx.setTransform(k, 0, 0, k, -memo.ox * k, -memo.oy * k);
+}
+function memoStrokePath(ctx, st) {
+  const p = st.p;
+  ctx.globalCompositeOperation = st.erase ? "destination-out" : "source-over";
+  ctx.strokeStyle = st.color; ctx.lineWidth = st.w;
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(p[0], p[1]);
+  if (p.length === 2) ctx.lineTo(p[0] + 0.1, p[1] + 0.1);
+  for (let i = 2; i < p.length; i += 2) ctx.lineTo(p[i], p[i + 1]);
+  ctx.stroke();
+}
+function memoDraw() {
+  const { grid, ink } = memoEls();
+  if (!grid) return;
+  const g = grid.getContext("2d"), c = ink.getContext("2d");
+  // 方眼の 紙（ひっ算の くらいを そろえやすい ように マス目つき）
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, grid.width, grid.height);
+  memoXform(g);
+  g.fillStyle = "#fffdf8"; g.fillRect(0, 0, MEMO_W, MEMO_H);
+  g.lineWidth = 1 / memo.s;
+  for (let x = MEMO_GRID; x < MEMO_W; x += MEMO_GRID) {
+    g.strokeStyle = x % (MEMO_GRID * 5) === 0 ? "rgba(58,155,245,.30)" : "rgba(58,155,245,.14)";
+    g.beginPath(); g.moveTo(x, 0); g.lineTo(x, MEMO_H); g.stroke();
+  }
+  for (let y = MEMO_GRID; y < MEMO_H; y += MEMO_GRID) {
+    g.strokeStyle = y % (MEMO_GRID * 5) === 0 ? "rgba(58,155,245,.30)" : "rgba(58,155,245,.14)";
+    g.beginPath(); g.moveTo(0, y); g.lineTo(MEMO_W, y); g.stroke();
+  }
+  g.strokeStyle = "rgba(0,0,0,.18)"; g.lineWidth = 2 / memo.s; g.strokeRect(0, 0, MEMO_W, MEMO_H);
+  // インク
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.clearRect(0, 0, ink.width, ink.height);
+  memoXform(c);
+  for (const st of memo.strokes) memoStrokePath(c, st);
+  if (memo.cur) memoStrokePath(c, memo.cur);
+  c.globalCompositeOperation = "source-over";
+  const pct = document.getElementById("memoPct");
+  if (pct) pct.textContent = Math.round(memo.s * 100) + "%";
+}
+function memoPos(e) {
+  const r = memoEls().stage.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+function memoDown(e) {
+  if (e.target.closest(".memo-zoom")) return;
+  e.preventDefault();
+  try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+  const pos = memoPos(e);
+  memo.pts.set(e.pointerId, pos);
+  document.getElementById("memoHelp").classList.add("gone");
+  if (memo.pts.size === 2) {
+    // 2本めの ゆび：書きはじめの 線は 「ピンチの つもり」だった ので すてる（長い線は のこす）
+    if (memo.cur && memo.cur.p.length < 16) memo.cur = null;
+    else if (memo.cur) { memo.strokes.push(memo.cur); memo.cur = null; }
+    memo.pan = null;
+    const [a, b] = [...memo.pts.values()];
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    memo.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, s: memo.s, wx: memo.ox + mx / memo.s, wy: memo.oy + my / memo.s };
+    memo.blocked = true;   // ピンチの あと、のこった 1本ゆびで 線を 引かない
+    memoDraw();
+    return;
+  }
+  if (memo.pts.size > 2 || memo.blocked) return;
+  if (memo.tool === "hand" || e.button === 1 || e.button === 2) {
+    memo.pan = { x: pos.x, y: pos.y, ox: memo.ox, oy: memo.oy };
+    return;
+  }
+  const wx = memo.ox + pos.x / memo.s, wy = memo.oy + pos.y / memo.s;
+  const erase = memo.tool === "eraser";
+  const pen = MEMO_PENS.find(p => p.id === memo.pen) || MEMO_PENS[0];
+  memo.cur = { p: [wx, wy], color: erase ? "#000" : pen.color, w: erase ? 28 : 4, erase };
+  memoDraw();
+}
+function memoMove(e) {
+  if (!memo.pts.has(e.pointerId)) return;
+  e.preventDefault();
+  const pos = memoPos(e);
+  memo.pts.set(e.pointerId, pos);
+  if (memo.pinch && memo.pts.size >= 2) {
+    const [a, b] = [...memo.pts.values()];
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const ns = Math.max(MEMO_MIN, Math.min(MEMO_MAX, memo.pinch.s * (Math.hypot(a.x - b.x, a.y - b.y) / memo.pinch.d)));
+    memo.s = ns; memo.ox = memo.pinch.wx - mx / ns; memo.oy = memo.pinch.wy - my / ns;
+    memoClamp(); memoDraw();
+    return;
+  }
+  if (memo.pan) {
+    memo.ox = memo.pan.ox - (pos.x - memo.pan.x) / memo.s;
+    memo.oy = memo.pan.oy - (pos.y - memo.pan.y) / memo.s;
+    memoClamp(); memoDraw();
+    return;
+  }
+  if (memo.cur) {
+    const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+    const r = memoEls().stage.getBoundingClientRect();
+    const c = memoEls().ink.getContext("2d");
+    memoXform(c);
+    c.globalCompositeOperation = memo.cur.erase ? "destination-out" : "source-over";
+    c.strokeStyle = memo.cur.color; c.lineWidth = memo.cur.w; c.lineCap = "round"; c.lineJoin = "round";
+    for (const ev of evs) {
+      const p = memo.cur.p, lx = p[p.length - 2], ly = p[p.length - 1];
+      const wx = memo.ox + (ev.clientX - r.left) / memo.s, wy = memo.oy + (ev.clientY - r.top) / memo.s;
+      if (Math.abs(wx - lx) + Math.abs(wy - ly) < 0.6 / memo.s) continue;
+      p.push(wx, wy);
+      c.beginPath(); c.moveTo(lx, ly); c.lineTo(wx, wy); c.stroke();   // 1区間だけ かきたす（はやい）
+    }
+    c.globalCompositeOperation = "source-over";
+  }
+}
+function memoUp(e) {
+  memo.pts.delete(e.pointerId);
+  if (memo.pts.size < 2) memo.pinch = null;
+  if (memo.pts.size === 0) {
+    memo.pan = null; memo.blocked = false;
+    if (memo.cur) { memo.strokes.push(memo.cur); memo.cur = null; memoDraw(); }
+  }
 }
 
 function keypad(k) {
@@ -675,16 +986,16 @@ function answerChoice(btn, value) {
     else if (b === btn) b.classList.add("wrong");
     b.disabled = true;
   });
-  finishQuestion(ok);
+  finishQuestion(ok, value);
 }
 
 function submitAnswer(value) {
   round.locked = true;
   const q = round.questions[round.idx];
-  finishQuestion(value === q.answer);
+  finishQuestion(value === q.answer, value);
 }
 
-function finishQuestion(ok) {
+function finishQuestion(ok, given) {
   if (round.ended) return;
   const q = round.questions[round.idx];
   const p = prof();
@@ -697,8 +1008,11 @@ function finishQuestion(ok) {
     fb.textContent = round.timed ? "⭕ せいかい！" : "せいかい！ ⭕ +10🪙";
     fb.className = "feedback ok";
     beep("ok");
-    if (round.review) { if (removeWrong(subj, q)) p.reviewCleared++; }
-    else if (!round.timed) removeWrong(subj, q);
+    if (!round.timed) {
+      const left = hitWrong(subj, q);
+      if (left === 0) { p.reviewCleared++; fb.textContent += "　🩹 にがて こくふく！"; }
+      else if (left > 0) fb.textContent += `　（あと${left}回 正かいで こくふく）`;
+    }
   } else {
     if (round.timed) round.combo = 0;
     fb.textContent = `おしい！ こたえは「${q.answer}」`;
@@ -721,7 +1035,7 @@ function finishQuestion(ok) {
 
   // まちがえたら かいせつを 出す（タイムアタック以外は 読んでから 自分で すすむ）
   if (!ok) {
-    showExplain(q, goNext);
+    showExplain(q, given, subj, goNext);
     if (round.timed) round.nextTimer = setTimeout(goNext, 1500);
     return;
   }
@@ -729,8 +1043,14 @@ function finishQuestion(ok) {
 }
 
 /* ---------- かいせつ ---------- */
-function explainFor(q) {
+/* 解説は 4つの 部品で くみたてる：
+   ① あなたの こたえ と 正しい こたえ を ならべる
+   ② まちがいの ヒント（どこで つまずいたか） … mathMistake / choiceMistake
+   ③ とき方（ステップごとに 番号つき） … explainFor
+   ④ ポイント（つぎに まちがえない コツ） … pointFor */
+function explainFor(q, subj) {
   if (q.why) return q.why;                                   // 算数など、生成時に付いたもの
+  if (subj === "math" && typeof mathWhy === "function") { const w = mathWhy(q); if (w) return w; }
   const text = q.q || "";
   for (const k of Object.keys(WHY)) if (text.includes(k)) return WHY[k];
   const a = q.answer;
@@ -749,24 +1069,73 @@ function explainFor(q) {
   if ((m = text.match(/^「(.+?)」/)) && m[1] !== a) return `こたえは 「${a}」。「${m[1]}」と セットで おぼえよう。`;
   return `こたえは 「${a}」。`;
 }
-function showExplain(q, onNext) {
+/* 選んだ こたえが、べつの 問題の こたえ だった ときに「それは ○○の こと」と 教える */
+function choiceMistake(q, given, subj) {
+  if (!given || given === q.answer) return null;
+  const bank = (DATA[state.grade] || {})[subj];
+  if (!bank) return null;
+  const other = bank.find(x => x.answer === given && x.q !== q.q);
+  if (!other) return null;
+  let m;
+  if ((m = other.q.match(/「(.+?)」の\s*(?:よみ|読み)/))) return `「${given}」と 読むのは 「${m[1]}」だよ。にているから まちがえやすいね。`;
+  if ((m = other.q.match(/「(.+?)」は\s*(?:えいご|英語)で/))) return `「${given}」は 「${m[1]}」の ことだよ。`;
+  if ((m = other.q.match(/「(.+?)」の\s*(?:いみ|意味)/))) return `「${given}」は 「${m[1]}」の いみだよ。`;
+  if ((m = other.q.match(/「(.+?)」の\s*(?:はんたい|対義語)/))) return `「${given}」は 「${m[1]}」の はんたいの ことばだよ。`;
+  return null;
+}
+function pointFor(q, subj) {
+  const t = (q.prompt || "") + (q.q || "");
+  if (subj === "math") {
+    if (/分数|\/\d/.test(t)) return "分数は 「分母が なにを あらわすか」を まず かくにん。メモに 図を かくと わかりやすいよ。";
+    if (/\./.test(q.q || "")) return "小数は 小数点の いちを そろえて 書くと まちがいが へるよ。";
+    if (/[+−-]/.test(q.q || "")) return "くらいを そろえて メモに 書いて、1のくらいから じゅんに けいさんしよう。";
+    return "わからない ときは ✏️メモに しきや 図を かいて かんがえよう。";
+  }
+  if (/よみ|読み/.test(t)) return "ことばの 中で 声に 出して 3回 読むと おぼえやすいよ。";
+  if (subj === "english") return "🔊で 音を きいて、声に 出して まねして みよう。";
+  if (/四字熟語|慣用句|意味|いみ/.test(t)) return "いみと いっしょに、つかう 場めんを そうぞうして おぼえよう。";
+  return "にがて ふくしゅう で もういちど 出るよ。つぎは きっと できる！";
+}
+function whySteps(why) {
+  const parts = String(why).split("。").map(s => s.trim()).filter(Boolean).map(s => s + "。");
+  if (parts.length < 2) return `<div class="explain-body">${why}</div>`;
+  return `<ol class="explain-steps">${parts.map(s => `<li>${s}</li>`).join("")}</ol>`;
+}
+function showExplain(q, given, subj, onNext) {
   const fb = document.getElementById("feedback");
   if (!fb) return;
-  const why = explainFor(q);
+  const why = explainFor(q, subj);
+  const hint = subj === "math" ? mathMistake(q, given) : choiceMistake(q, given, subj);
+  const point = round.timed ? "" : pointFor(q, subj);
+  const similar = (!round.timed && subj === "math") ? generateSimilar(state.grade, q) : null;
   const box = document.createElement("div");
   box.className = "explain";
   box.innerHTML = `
-    <div class="explain-head">💡 かいせつ<button class="speak-inline" id="whySpeak" title="よみあげ">🔊</button></div>
-    <div class="explain-ans">こたえ： <b>${q.answer}</b></div>
-    <div class="explain-body">${why}</div>
-    ${round.timed ? "" : `<button class="big-btn green" id="whyNext" style="margin-top:12px">わかった！ つぎへ ➡️</button>`}`;
+    <div class="explain-head">💡 かいせつ<button class="speak-inline" id="whySpeak" title="よみあげ" aria-label="かいせつを よみあげ">🔊</button></div>
+    <div class="explain-compare">
+      ${given !== undefined && given !== "" ? `<div class="cmp ng"><span class="cmp-l">あなたの こたえ</span><span class="cmp-v">${given}</span></div>` : ""}
+      <div class="cmp ok"><span class="cmp-l">ただしい こたえ</span><span class="cmp-v">${q.answer}</span></div>
+    </div>
+    ${hint ? `<div class="explain-hint"><span class="explain-tag">🔍 どこが ちがった？</span>${hint}</div>` : ""}
+    <div class="explain-tag">📝 とき方</div>
+    ${whySteps(why)}
+    ${point ? `<div class="explain-point"><span class="explain-tag">⭐ ポイント</span>${point}</div>` : ""}
+    ${round.timed ? "" : `
+      <button class="big-btn green" id="whyNext" style="margin-top:12px">わかった！ つぎへ ➡️</button>
+      ${similar ? `<button class="big-btn ghost" id="whySimilar" style="margin-top:10px">🔁 にた もんだいで れんしゅう</button>` : ""}`}`;
   fb.after(box);
   box.scrollIntoView({ block: "nearest", behavior: "smooth" });
   // かいせつも 記号・単位を なおしてから 読む（生のままだと「＝」「cm²」が 読めない）
-  const readable = toReadable({ q: `こたえは、${q.answer}。${why}` });
+  const readable = toReadable({ q: `こたえは、${q.answer}。${hint ? hint : ""}${why}` });
   document.getElementById("whySpeak").onclick = () => speak(readable, true);
   const nextBtn = document.getElementById("whyNext");
   if (nextBtn) nextBtn.onclick = onNext;
+  const simBtn = document.getElementById("whySimilar");
+  if (simBtn) simBtn.onclick = () => {
+    // つぎの 問題の まえに 1問 さしこむ（このラウンドの 問題数が 1 ふえる）
+    round.questions.splice(round.idx + 1, 0, { ...similar, extra: true });
+    onNext();
+  };
   if (!round.timed) speak(readable);   // よみあげ設定が オンなら かいせつも 読む
 }
 
@@ -804,7 +1173,8 @@ function finishRound() {
     p.lastStudyDate = today;
   }
   p.log.push({ date: today, subject: round.subject, correct: round.correct, total: round.questions.length });
-  if (p.log.length > 200) p.log = p.log.slice(-200);
+  if (p.log.length > 400) p.log = p.log.slice(-400);
+  const goalNow = checkGoal();
 
   const newBadges = checkBadges({ correct: round.correct, total: round.questions.length });
   saveState(); refreshTop();
@@ -817,6 +1187,16 @@ function finishRound() {
     const b = BADGES.find(x => x.id === id);
     return `<div class="badge-pop">🎊 あたらしいバッジ ${b.emoji} 「${b.name}」ゲット！</div>`;
   }).join("");
+
+  // つぎの ステップ：よく できたら むずかしく、むずかしすぎたら やさしく（算数・各教科とも 選択肢の数が かわる）
+  const rate = round.correct / round.questions.length;
+  const order = ["easy", "normal", "hard"], di = order.indexOf(difficulty());
+  let stepUp = "";
+  if (!round.review && rate >= 0.9 && di < 2) stepUp = `<button class="big-btn ghost" id="diffUp">⬆️ 「${DIFF[order[di + 1]]}」に チャレンジ！</button>`;
+  else if (!round.review && rate <= 0.4 && di > 0) stepUp = `<button class="big-btn ghost" id="diffDown">🌱 「${DIFF[order[di - 1]]}」で じしんを つけよう</button>`;
+  const goalNote = goalNow
+    ? `<div class="badge-pop">🎯 きょうの めあて たっせい！ ボーナス +15🪙</div>`
+    : roundsToday() < dailyGoal() ? `<div class="reward">🎯 きょうの めあて：あと ${dailyGoal() - roundsToday()}かい</div>` : "";
 
   const reviewNote = round.review
     ? `<div class="reward">のこりの にがて問題：${p.wrong.length}問</div>` : "";
@@ -831,8 +1211,10 @@ function finishRound() {
         <div class="score">${round.correct} / ${round.questions.length} 問せいかい</div>
         <div class="reward">コインを <b>${gained}🪙</b> ゲット！${perfect ? "<br>（ぜんもん正かいボーナス +20）" : ""}</div>
       </div>
+      ${goalNote}
       ${reviewNote}
       ${badgeHtml}
+      ${stepUp}
       ${againDisabled
         ? `<div class="badge-pop">🎉 にがてを ぜんぶ こくふく！</div>`
         : `<button class="big-btn green" id="againBtn">${againLabel}</button>`}
@@ -840,6 +1222,9 @@ function finishRound() {
     </div>
   `);
   animateRing();
+  const setDiff = d => { prof().settings.difficulty = d; saveState(); startRound(round.subject); };
+  if (document.getElementById("diffUp")) document.getElementById("diffUp").onclick = () => setDiff(order[di + 1]);
+  if (document.getElementById("diffDown")) document.getElementById("diffDown").onclick = () => setDiff(order[di - 1]);
   if (!againDisabled) document.getElementById("againBtn").onclick = () => round.review ? startReview() : startRound(round.subject);
   document.getElementById("otherBtn").onclick = showHome;
 }
@@ -1134,7 +1519,7 @@ function showParent() {
 
   const doneDates = new Set(p.log.map(l => l.date));
   let cal = "";
-  for (let i = 13; i >= 0; i--) {
+  for (let i = 27; i >= 0; i--) {
     const d = new Date(); d.setDate(d.getDate() - i);
     const key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
     cal += `<div class="cal-cell ${doneDates.has(key) ? "done" : ""}">${doneDates.has(key) ? "💮" : d.getDate()}</div>`;
@@ -1160,8 +1545,9 @@ function showParent() {
       <div class="stat-row"><span>にがて こくふく数</span><b>${p.reviewCleared}問</b></div>
       <div class="stat-row"><span>かきとり れんしゅう</span><b>${p.writeCount}文字</b></div>
       <div class="stat-row"><span>タイムアタック さいこう</span><b>${p.bestAttack}問</b></div>
+      <div class="stat-row"><span>めあて たっせい日数</span><b>${p.goalDays || 0}日</b></div>
       <div style="margin-top:10px" class="calendar">${cal}</div>
-      <div class="hint" style="margin-top:6px">💮 = べんきょうした日（直近14日）</div>
+      <div class="hint" style="margin-top:6px">💮 = べんきょうした日（直近4週間）</div>
     </div>
 
     <div class="panel">
@@ -1175,6 +1561,12 @@ function showParent() {
         <span>むずかしさ</span>
         <select id="difficulty">
           ${["easy", "normal", "hard"].map(k => `<option value="${k}" ${p.settings.difficulty === k ? "selected" : ""}>${DIFF[k]}</option>`).join("")}
+        </select>
+      </div>
+      <div class="setting-row">
+        <span>きょうの めあて（1日の回数）</span>
+        <select id="dailyGoal">
+          ${[1, 2, 3, 4, 5].map(n => `<option value="${n}" ${dailyGoal() === n ? "selected" : ""}>${n}かい</option>`).join("")}
         </select>
       </div>
       <div class="setting-row">
@@ -1225,10 +1617,27 @@ function showParent() {
       <button class="big-btn ghost" id="resetBtn" style="margin-top:16px;color:#ff5a5a">この学年のデータを けす</button>
     </div>
 
+    <div class="panel">
+      <h3>💾 データの バックアップ</h3>
+      <div class="hint">
+        学習の きろくは この ブラウザの 中だけに 保存されています。
+        機種変更・ブラウザの データ削除・学年が 上がって 端末を かえる ときに そなえて、
+        ときどき バックアップファイルを 保存しておくと、あとから そのまま つづきが できます。
+        （1年生・5年生 両方の きろくが 入ります）
+      </div>
+      <button class="big-btn blue" id="exportBtn" style="margin-top:12px">⬇️ バックアップを 保存</button>
+      <label class="big-btn ghost file-btn" style="margin-top:10px">⬆️ バックアップから もどす
+        <input type="file" id="importFile" accept="application/json,.json" hidden>
+      </label>
+    </div>
+
     <button class="big-btn" id="backBtn">もどる</button>
   `);
 
   document.getElementById("difficulty").onchange = e => { p.settings.difficulty = e.target.value; saveState(); };
+  document.getElementById("dailyGoal").onchange = e => { p.settings.dailyGoal = +e.target.value; saveState(); };
+  document.getElementById("exportBtn").onclick = exportBackup;
+  document.getElementById("importFile").onchange = e => { const f = e.target.files && e.target.files[0]; if (f) importBackup(f); e.target.value = ""; };
   document.getElementById("perRound").onchange = e => { p.settings.perRound = +e.target.value; saveState(); };
   document.getElementById("sound").onchange = e => { p.settings.sound = e.target.value === "on"; saveState(); };
   document.getElementById("speak").onchange = e => {
@@ -1246,6 +1655,37 @@ function showParent() {
     }
   };
   document.getElementById("backBtn").onclick = showHome;
+}
+
+/* ---------- バックアップ（書き出し／読みこみ） ---------- */
+function exportBackup() {
+  const data = JSON.stringify({ app: "natsuyasumi", version: 1, exportedAt: new Date().toISOString(), state }, null, 1);
+  const blob = new Blob([data], { type: "application/json" });
+  const a = document.createElement("a");
+  const d = new Date();
+  a.href = URL.createObjectURL(blob);
+  a.download = `study-backup-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+function importBackup(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const obj = JSON.parse(reader.result);
+      const s = obj && obj.state;
+      if (!s || !s.profiles || !s.profiles.g1 || !s.profiles.g5) throw new Error("bad");
+      if (!confirm("いまの きろくを、バックアップの 内容に おきかえます。よろしいですか？")) return;
+      migrate(s.profiles.g1, "g1"); migrate(s.profiles.g5, "g5");
+      if (s.grade !== "g1" && s.grade !== "g5") s.grade = "g1";
+      state = s; saveState(); refreshTop();
+      alert("バックアップから もどしました！ つづきから べんきょうできます。");
+      showParent();
+    } catch (e) {
+      alert("この ファイルは よみこめませんでした。「バックアップを 保存」で 作った ファイルを えらんでください。");
+    }
+  };
+  reader.readAsText(file);
 }
 
 /* ---------- ヘッダーのボタン ---------- */

@@ -356,6 +356,8 @@ const BADGES = [
   { id: "shopper",   emoji: "🛍️", name: "はじめてのお買いもの", desc: "ショップで こうかん" },
   { id: "writer",    emoji: "✍️", name: "かきとり名人", desc: "20文字れんしゅう" },
   { id: "speed",     emoji: "⚡", name: "スピードスター", desc: "タイムアタックで15問正かい" },
+  { id: "goal1",     emoji: "🎯", name: "めあて たっせい", desc: "きょうの めあてを はじめて たっせい" },
+  { id: "goal10",    emoji: "🗓️", name: "つづける名人", desc: "めあてを 10日 たっせい" },
 ];
 
 /* 教科メニュー */
