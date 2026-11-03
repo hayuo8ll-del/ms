@@ -1,5 +1,5 @@
 /* Service Worker：オフラインでも動かす */
-const CACHE = "natsu-study-v18";
+const CACHE = "natsu-study-v19";
 const ASSETS = [
   "./",
   "./index.html",
@@ -7,6 +7,7 @@ const ASSETS = [
   "./js/data.js",
   "./js/generators.js",
   "./js/strokes.js",
+  "./js/srs.js",
   "./js/app.js",
   "./manifest.webmanifest",
   "./icons/icon.svg",

@@ -3,8 +3,7 @@
 
 const STORE_KEY = "natsuyasumi_v1";
 const QUESTIONS_PER_ROUND = 10;
-const MAX_WRONG = 60;
-const CLEAR_HITS = 2;       // にがて問題は 2回 正かいして はじめて こくふく（すぐ わすれない ように）
+const MAX_WRONG = 100;      // 間隔反復で 長く のこるので 少し 多めに もつ
 
 /* ---------- じょうたい（保存データ） ---------- */
 function freshProfile() {
@@ -38,7 +37,7 @@ function migrate(p, grade) {
   if (p.settings.dailyGoal === undefined) p.settings.dailyGoal = 3;
   if (p.settings.rate === undefined) p.settings.rate = null;       // null = 学年の おすすめ（1年 ゆっくり）
   if (p.settings.praise === undefined) p.settings.praise = true;
-  for (const w of p.wrong) if (w.hits === undefined) w.hits = 0;
+  for (const w of p.wrong) migrateReview(w, todayStr());   // 旧「2回正かい」方式 → 間隔反復（js/srs.js）
   if (!p.owned) p.owned = { avatars: ["kid"], themes: ["orange"] };
   if (!p.owned.avatars) p.owned.avatars = ["kid"];
   if (!p.owned.themes) p.owned.themes = ["orange"];
@@ -265,11 +264,8 @@ function confetti() {
 }
 
 /* ---------- 日付ヘルパー ---------- */
-function todayStr() { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
-function daysBetween(a, b) {
-  const [ay, am, ad] = a.split("-").map(Number), [by, bm, bd] = b.split("-").map(Number);
-  return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86400000);
-}
+/* daysBetween / addDays / dateKey は js/srs.js にある */
+function todayStr() { return dateKey(new Date()); }
 
 /* ---------- きょうの めあて（毎日 つづける ための 目ひょう） ---------- */
 function roundsToday() { const t = todayStr(); return prof().log.filter(l => l.date === t).length; }
@@ -303,9 +299,9 @@ function addWrong(subject, q) {
   const p = prof();
   const snap = { subject, q: q.q || "", answer: q.answer, choices: q.choices || null,
     prompt: q.prompt || "", svg: q.svg || "", input: q.input || "choice",
-    why: q.why || "", gen: q.gen ?? null, genDiff: q.genDiff || null, hits: 0 };
+    why: q.why || "", gen: q.gen ?? null, genDiff: q.genDiff || null, step: 0, due: todayStr() };
   const same = p.wrong.find(w => wrongKey(w) === wrongKey(snap));
-  if (same) { same.hits = 0; return; }        // また まちがえたら 正かい回数は やりなおし
+  if (same) { reviewWrong(same, todayStr()); return; }   // また まちがえたら さいしょから
   p.wrong.push(snap);
   if (p.wrong.length > MAX_WRONG) p.wrong.shift();
 }
@@ -316,16 +312,19 @@ function removeWrong(subject, q) {
   p.wrong = p.wrong.filter(w => wrongKey(w) !== key);
   return p.wrong.length < before;
 }
-/* にがて問題に 正かいした：CLEAR_HITS 回で こくふく。のこり回数を かえす（-1 = にがてに 入っていない） */
+/* にがて問題に 正かいした。にがてに 入っていなければ null。
+   こくふく したら リストから はずす（js/srs.js の reviewCorrect が 予定を きめる） */
 function hitWrong(subject, q) {
   const p = prof();
   const key = `${subject}|${q.q || ""}|${q.answer}`;
   const w = p.wrong.find(x => wrongKey(x) === key);
-  if (!w) return -1;
-  w.hits = (w.hits || 0) + 1;
-  if (w.hits >= CLEAR_HITS) { removeWrong(subject, q); return 0; }
-  return CLEAR_HITS - w.hits;
+  if (!w) return null;
+  const r = reviewCorrect(w, todayStr());
+  if (r.cleared) removeWrong(subject, q);
+  return r;
 }
+function dueCount() { return dueList(prof().wrong, todayStr()).length; }
+function dayWord(n) { return n <= 0 ? "きょう" : n === 1 ? "あした" : n === 7 ? "1週間ご" : `${n}日ご`; }
 
 /* ---------- 見た目（テーマ／アバター） ---------- */
 const THEME_KEYS = Object.keys(SHOP.themes[0].vars);
@@ -414,10 +413,15 @@ function showHome() {
   const hour = new Date().getHours();
   const hello = hour < 11 ? "おはよう！" : hour < 18 ? "こんにちは！" : "こんばんは！";
   const streakMsg = p.streak > 0 ? `🔥 ${p.streak}日れんぞく つづいてるよ` : "きょうから はじめよう";
-  const reviewTile = p.wrong.length > 0 ? `
+  const due = dueCount(), nextIn = nextDueIn(p.wrong, todayStr());
+  const reviewTile = due > 0 ? `
     <button class="tile warn full" id="reviewBtn">
       <span class="t-emoji">🩹</span>
-      <span><span class="t-name">にがてを ふくしゅう</span><span class="t-sub">${p.wrong.length}問 のこってる</span></span>
+      <span><span class="t-name">きょうの ふくしゅう</span><span class="t-sub">${due}問 まってるよ（にがて ぜんぶで ${p.wrong.length}問）</span></span>
+    </button>` : p.wrong.length > 0 ? `
+    <button class="tile full" id="reviewBtn">
+      <span class="t-emoji">📅</span>
+      <span><span class="t-name">きょうの ふくしゅうは おわり！</span><span class="t-sub">つぎは ${dayWord(nextIn)}。いま れんしゅう しても OK（${p.wrong.length}問）</span></span>
     </button>` : "";
 
   const done = roundsToday(), goal = dailyGoal();
@@ -481,7 +485,7 @@ function showHome() {
   document.getElementById("writeBtn").onclick = showWritingMenu;
   document.getElementById("badgeBtn").onclick = showBadges;
   document.getElementById("shopBtn").onclick = showShop;
-  if (p.wrong.length > 0) document.getElementById("reviewBtn").onclick = startReview;
+  if (p.wrong.length > 0) document.getElementById("reviewBtn").onclick = () => startReview(due > 0);
 }
 
 /* ========== ラウンド（クイズ） ========== */
@@ -529,13 +533,15 @@ function startRound(subject) {
   round = { subject, questions, idx: 0, correct: 0, current: "", locked: false, review: false };
   showQuestion();
 }
-function startReview() {
+/* onlyDue = true：きょう 予定の 問題（ふるい じゅん）。false：予定に かかわらず れんしゅう（予定は すすまない） */
+function startReview(onlyDue = true) {
   clearAttackTimer();
   const p = prof();
   const n = p.settings.perRound || QUESTIONS_PER_ROUND;
-  const pool = shuffle(p.wrong.map(w => ({ ...w })));
-  const questions = pool.slice(0, Math.min(n, pool.length));
-  round = { subject: "review", questions, idx: 0, correct: 0, current: "", locked: false, review: true };
+  const pool = onlyDue ? dueList(p.wrong, todayStr()) : shuffle(p.wrong.slice());
+  const questions = shuffle(pool.slice(0, Math.min(n, pool.length)).map(w => ({ ...w })));
+  if (!questions.length) { showHome(); return; }
+  round = { subject: "review", questions, idx: 0, correct: 0, current: "", locked: false, review: true, onlyDue };
   showQuestion();
 }
 
@@ -1045,6 +1051,7 @@ function answerChoice(btn, value) {
 }
 
 function submitAnswer(value) {
+  if (round.locked) return;   // 二重に こたえない（同じ 問題を 2回 数えない）
   round.locked = true;
   const q = round.questions[round.idx];
   finishQuestion(value === q.answer, value);
@@ -1064,17 +1071,17 @@ function finishQuestion(ok, given) {
     fb.className = "feedback ok";
     beep("ok");
     if (!round.timed) {
-      const left = hitWrong(subj, q);
-      if (left === 0) { p.reviewCleared++; fb.textContent += "　🩹 にがて こくふく！"; }
-      else if (left > 0) fb.textContent += `　（あと${left}回 正かいで こくふく）`;
-      if (praiseOn()) speak(left === 0 ? "やったね！ にがて こくふく！" : pickOne(PRAISE_OK), true);
+      const r = hitWrong(subj, q);
+      if (r && r.cleared) { p.reviewCleared++; fb.textContent += "　🩹 にがて こくふく！"; }
+      else if (r && r.advanced) fb.textContent += `　📅 つぎは ${dayWord(r.days)} ふくしゅう`;
+      if (praiseOn()) speak(r && r.cleared ? "やったね！ にがて こくふく！" : pickOne(PRAISE_OK), true);
     }
   } else {
     if (round.timed) round.combo = 0;
     fb.textContent = `おしい！ こたえは「${q.answer}」`;
     fb.className = "feedback ng";
     beep("ng");
-    if (!round.review && !round.timed) addWrong(subj, q);
+    if (!round.timed) addWrong(subj, q);   // ふくしゅう中に まちがえても 予定は さいしょから
   }
   // 統計（タイムアタックは除外して純粋な学習ログを保つ）
   if (!round.timed && p.stats[subj]) { p.stats[subj].a++; if (ok) p.stats[subj].c++; }
@@ -1260,9 +1267,10 @@ function finishRound() {
     ? `<div class="badge-pop">🎯 きょうの めあて たっせい！ ボーナス +15🪙</div>`
     : roundsToday() < dailyGoal() ? `<div class="reward">🎯 きょうの めあて：あと ${dailyGoal() - roundsToday()}かい</div>` : "";
 
+  const dueLeft = dueCount();
   const reviewNote = round.review
-    ? `<div class="reward">のこりの にがて問題：${p.wrong.length}問</div>` : "";
-  const againLabel = round.review ? "もういちど ふくしゅう" : `もういちど ${subjectName(round.subject)}`;
+    ? `<div class="reward">きょうの ふくしゅう：あと ${dueLeft}問<br>にがて ぜんぶ：${p.wrong.length}問${p.wrong.length && !dueLeft ? `（つぎは ${dayWord(nextDueIn(p.wrong, todayStr()))}）` : ""}</div>` : "";
+  const againLabel = round.review ? (dueLeft ? "つづけて ふくしゅう" : "もういちど れんしゅう") : `もういちど ${subjectName(round.subject)}`;
   const againDisabled = round.review && p.wrong.length === 0;
 
   render(`
@@ -1292,7 +1300,7 @@ function finishRound() {
   const setDiff = d => { prof().settings.difficulty = d; saveState(); startRound(round.subject); };
   if (document.getElementById("diffUp")) document.getElementById("diffUp").onclick = () => setDiff(order[di + 1]);
   if (document.getElementById("diffDown")) document.getElementById("diffDown").onclick = () => setDiff(order[di - 1]);
-  if (!againDisabled) document.getElementById("againBtn").onclick = () => round.review ? startReview() : startRound(round.subject);
+  if (!againDisabled) document.getElementById("againBtn").onclick = () => round.review ? startReview(dueLeft > 0) : startRound(round.subject);
   document.getElementById("otherBtn").onclick = showHome;
 }
 
@@ -1609,6 +1617,7 @@ function showParent() {
       <div class="stat-row"><span>いまの連続日数</span><b>${p.streak}日</b></div>
       <div class="stat-row"><span>ためたコイン</span><b>${p.coins}🪙</b></div>
       <div class="stat-row"><span>にがて問題（未こくふく）</span><b>${p.wrong.length}問</b></div>
+      <div class="stat-row"><span>きょう ふくしゅう予定</span><b>${dueCount()}問</b></div>
       <div class="stat-row"><span>にがて こくふく数</span><b>${p.reviewCleared}問</b></div>
       <div class="stat-row"><span>かきとり れんしゅう</span><b>${p.writeCount}文字</b></div>
       <div class="stat-row"><span>タイムアタック さいこう</span><b>${p.bestAttack}問</b></div>

@@ -83,11 +83,13 @@ function countBy(diff) { const step = pick(diff === "hard" ? [2, 5, 10] : [2, 5]
 function ineqG1(diff) { const hi = diff === "hard" ? 99 : 20; const a = ri(1, hi), b = ri(1, hi); const ans = a > b ? ">" : a < b ? "<" : "="; return { prompt: "□に 入る しるしは？", q: `${a} □ ${b}`, answer: ans, input: "choice", choices: [">", "<", "="] }; }
 
 /* ===== 1年生の算数（やさしい/ふつう/むずかしい） ===== */
+/* ちがう 2つの 数（「大きいのは どっち？」で 同じ 数が ならぶと 選択肢が 「6」「6」に なる） */
+function twoDiff(lo, hi) { const a = ri(lo, hi); let b = ri(lo, hi - 1); if (b >= a) b++; return [a, b]; }
 function mathG1(diff) {
   if (diff === "easy") return [
     () => { const a = ri(1, 5), b = ri(1, 9 - a); return { prompt: "たしざん", q: `${a} + ${b} =`, answer: `${a + b}`, input: "number" }; },
     () => { const a = ri(2, 9), b = ri(1, a); return { prompt: "ひきざん", q: `${a} - ${b} =`, answer: `${a - b}`, input: "number" }; },
-    () => { const a = ri(1, 10), b = ri(1, 10); return { prompt: "大きいのは どっち？", q: `${a}  と  ${b}`, answer: a >= b ? `${a}` : `${b}`, input: "choice", choices: [`${a}`, `${b}`] }; },
+    () => { const [a, b] = twoDiff(1, 10); return { prompt: "大きいのは どっち？", q: `${a}  と  ${b}`, answer: a >= b ? `${a}` : `${b}`, input: "choice", choices: [`${a}`, `${b}`] }; },
     () => { const a = ri(1, 9); return { prompt: "10は □と", q: `10 = ${a} + □`, answer: `${10 - a}`, input: "number" }; },
     seqNextG1,
     () => moneyG1("easy"),
@@ -99,7 +101,7 @@ function mathG1(diff) {
     () => { const a = ri(11, 18), b = ri(a - 9, 9); return { prompt: "くり下がり ひきざん", q: `${a} - ${b} =`, answer: `${a - b}`, input: "number" }; },
     () => { const a = ri(1, 6), b = ri(1, 6), c = ri(1, 6); return { prompt: "3つの たしざん", q: `${a} + ${b} + ${c} =`, answer: `${a + b + c}`, input: "number" }; },
     () => { const t = ri(6, 18), a = ri(1, t - 1); return { prompt: "□に 入る かず", q: `${a} + □ = ${t}`, answer: `${t - a}`, input: "number" }; },
-    () => { const a = ri(1, 100), b = ri(1, 100); return { prompt: "大きいのは どっち？", q: `${a}  と  ${b}`, answer: a >= b ? `${a}` : `${b}`, input: "choice", choices: [`${a}`, `${b}`] }; },
+    () => { const [a, b] = twoDiff(1, 100); return { prompt: "大きいのは どっち？", q: `${a}  と  ${b}`, answer: a >= b ? `${a}` : `${b}`, input: "choice", choices: [`${a}`, `${b}`] }; },
     clockHalf,
     add2d1d,
     sub2d1d,
@@ -114,7 +116,7 @@ function mathG1(diff) {
     () => { const a = ri(4, 9), b = ri(11 - a, 9); return { q: `${a} + ${b} =`, answer: `${a + b}`, input: "number" }; },
     () => { const a = ri(3, 9), b = ri(1, a); return { q: `${a} - ${b} =`, answer: `${a - b}`, input: "number" }; },
     () => { const a = ri(11, 18), b = ri(a - 9, 9); return { q: `${a} - ${b} =`, answer: `${a - b}`, input: "number" }; },
-    () => { const a = ri(1, 20), b = ri(1, 20); return { prompt: "大きいのは どっち？", q: `${a}  と  ${b}`, answer: a >= b ? `${a}` : `${b}`, input: "choice", choices: [`${a}`, `${b}`] }; },
+    () => { const [a, b] = twoDiff(1, 20); return { prompt: "大きいのは どっち？", q: `${a}  と  ${b}`, answer: a >= b ? `${a}` : `${b}`, input: "choice", choices: [`${a}`, `${b}`] }; },
     clockOClock,
     clockHalf,
     () => { const a = ri(1, 9); return { prompt: "10は □と", q: `10 = ${a} + □`, answer: `${10 - a}`, input: "number" }; },
@@ -137,12 +139,12 @@ function fracSame(dMin, dMax) {
 }
 // 分数の異分母たし算（通分）
 function fracDiff() {
-  let d1 = ri(2, 6), d2 = ri(2, 6); if (d1 === d2) d2 = d2 % 6 + 1;
+  const [d1, d2] = twoDiff(2, 6);   // 分母は 2〜6 の ちがう 数（1 に しない）
   const a = ri(1, d1 - 1), b = ri(1, d2 - 1);
   const L = lcm(d1, d2); const num = a * (L / d1) + b * (L / d2);
   const g = gcd(num, L);
   const ans = num % L === 0 ? `${num / L}` : `${num / g}/${L / g}`;
-  return { prompt: "分数のたし算（通分）", q: `${a}/${d1} + ${b}/${d2} =`, answer: ans, input: "choice",
+  return { prompt: "分数のたし算（通分・約分も）", q: `${a}/${d1} + ${b}/${d2} =`, answer: ans, input: "choice",
     choices: uniqChoices([ans, `${a + b}/${d1 + d2}`, `${num}/${L}`, `${a + b}/${L}`]) };
 }
 function fracReduce() {
@@ -203,7 +205,7 @@ function fracTimesInt() {
   const d = ri(3, 8), a = ri(1, d - 1), k = ri(2, 5);
   const num = a * k; const g = gcd(num, d);
   const ans = num % d === 0 ? `${num / d}` : `${num / g}/${d / g}`;
-  return { prompt: "分数 × 整数", q: `${a}/${d} × ${k} =`, answer: ans, input: "choice",
+  return { prompt: "分数 × 整数（約分も）", q: `${a}/${d} × ${k} =`, answer: ans, input: "choice",
     choices: uniqChoices([ans, `${num}/${d}`, `${a}/${d * k}`, `${a * k}/${d * k}`]) };
 }
 function avg3(vMax) {
@@ -222,12 +224,12 @@ function fracSubSame(dMin, dMax) {
 }
 // 分数の異分母ひき算（通分）
 function fracSubDiff() {
-  let d1 = ri(2, 6), d2 = ri(2, 6); if (d1 === d2) d2 = d2 % 6 + 1;
+  let [d1, d2] = twoDiff(2, 6);
   let a = ri(1, d1 - 1), b = ri(1, d2 - 1);
   if (a / d1 < b / d2) { [a, b] = [b, a]; [d1, d2] = [d2, d1]; }   // 引く数が大きくならないように
   const L = lcm(d1, d2); const num = a * (L / d1) - b * (L / d2); const g = gcd(num, L) || 1;
   const ans = num === 0 ? "0" : (num % L === 0 ? `${num / L}` : `${num / g}/${L / g}`);
-  return { prompt: "分数のひき算（通分）", q: `${a}/${d1} - ${b}/${d2} =`, answer: ans, input: "choice",
+  return { prompt: "分数のひき算（通分・約分も）", q: `${a}/${d1} - ${b}/${d2} =`, answer: ans, input: "choice",
     choices: uniqChoices([ans, `${num}/${L}`, `${a + b}/${L}`, `${a}/${d2}`]) };
 }
 // 小数のたし算
@@ -340,9 +342,9 @@ function mathWhy(it) {
   }
   if ((m = q.match(/^(\d+) □ (\d+)$/))) {
     const x = +m[1], y = +m[2];
-    if (x > y) return `${x} は ${y} より 大きいから 「だいなり」。くちが 大きい ほうを むくよ。`;
-    if (x < y) return `${x} は ${y} より 小さいから 「しょうなり」。くちが 大きい ほうを むくよ。`;
-    return `${x} と ${y} は おなじだから 「イコール」。`;
+    if (x > y) return `${x} は ${y} より 大きいから 「>」（だいなり）。くちが 大きい ほうを むくよ。${x} > ${y}。`;
+    if (x < y) return `${x} は ${y} より 小さいから 「<」（しょうなり）。くちが 大きい ほうを むくよ。${x} < ${y}。`;
+    return `${x} と ${y} は おなじだから 「=」（イコール）。${x} = ${y}。`;
   }
   // おかね
   if ((m = q.match(/^(\d+)円が (\d+)こで/))) return `${m[1]}円 が ${m[2]}こ だから、${m[1]} × ${m[2]} = ${a}円。`;
