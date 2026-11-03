@@ -19,7 +19,7 @@ function freshProfile() {
     owned: { avatars: ["kid"], themes: ["orange"] },
     avatar: "kid",
     theme: "orange",
-    settings: { sound: true, speak: null, perRound: QUESTIONS_PER_ROUND, attackTime: 60, difficulty: "normal", voiceURI: null, dailyGoal: 3 },
+    settings: { sound: true, speak: null, perRound: QUESTIONS_PER_ROUND, attackTime: 60, difficulty: "normal", voiceURI: null, dailyGoal: 3, rate: null, praise: true },
     bestAttack: 0,      // タイムアタックの最高正解数
     goalDate: null,     // さいごに「きょうの めあて」を たっせいした日
     goalDays: 0,        // めあてを たっせいした 日数（のべ）
@@ -36,6 +36,8 @@ function migrate(p, grade) {
   if (p.settings.difficulty === undefined) p.settings.difficulty = "normal";
   if (p.settings.voiceURI === undefined) p.settings.voiceURI = null;
   if (p.settings.dailyGoal === undefined) p.settings.dailyGoal = 3;
+  if (p.settings.rate === undefined) p.settings.rate = null;       // null = 学年の おすすめ（1年 ゆっくり）
+  if (p.settings.praise === undefined) p.settings.praise = true;
   for (const w of p.wrong) if (w.hits === undefined) w.hits = 0;
   if (!p.owned) p.owned = { avatars: ["kid"], themes: ["orange"] };
   if (!p.owned.avatars) p.owned.avatars = ["kid"];
@@ -114,6 +116,25 @@ const READ_RULES = [
   [/、\s*、/g, "、"], [/。\s*。/g, "。"], [/、\s*。/g, "。"],
   [/([？！?!])\s*。/g, "$1"], [/、\s*」/g, "」"],
 ];
+/* よみあげエンジンが 読みまちがえやすい ことば（長い ものから 先に 置きかえる）。
+   「何」は あとに つづく ことばで「なん／なに」が かわるので、ここで 決めておく。 */
+const READ_FIX = [
+  ["何曜日", "なんようび"], ["何かげつ", "なんかげつ"], ["何という", "なんという"],
+  ["何日", "なんにち"], ["何時", "なんじ"], ["何月", "なんがつ"], ["何年", "なんねん"],
+  ["何歳", "なんさい"], ["何才", "なんさい"], ["何回", "なんかい"], ["何人", "なんにん"],
+  ["何本", "なんぼん"], ["何まい", "なんまい"], ["何びき", "なんびき"], ["何こ", "なんこ"],
+  ["何ばい", "なんばい"], ["何円", "なんえん"], ["何分", "なんぷん"], ["何秒", "なんびょう"],
+  ["何で", "なにで"], ["何から", "なにから"], ["何を", "なにを"], ["何に", "なにに"],
+  ["何いろ", "なにいろ"], ["何色", "なにいろ"], ["何が", "なにが"],
+  ["℃", "ど"], ["…", "、"],
+];
+/* 数字の 読み：前が 数字の ときは 置きかえない（「11日」を「1いちにち」に しない） */
+const READ_FIX_NUM = [[/(^|[^0-9.])1しゅうかん/g, "$1いっしゅうかん"], [/(^|[^0-9.])1往復/g, "$1いちおうふく"]];
+function fixReading(t) {
+  for (const [w, r] of READ_FIX) if (t.includes(w)) t = t.split(w).join(r);
+  for (const [re, r] of READ_FIX_NUM) t = t.replace(re, r);
+  return t;
+}
 function toReadable(q) {
   let body = q.q || "";
   // 「よみ／読み」を答える問題は 答えを 先に 言わない：さいしょの「」だけ ふせて、
@@ -125,7 +146,7 @@ function toReadable(q) {
   }
   // 見出しの（cm²）（LCM）などの 単位・記号だけの かっこは 読まない
   let head = (q.prompt || "").replace(/[（(][A-Za-z0-9²³%・\s]+[）)]/g, "").trim();
-  let t = (head ? head + "。 " : "") + body;
+  let t = fixReading((head ? head + "。 " : "") + body);
   t = t.replace(/(\d+)\/(\d+)/g, "$2ぶんの$1");                    // 分数
   for (const [re, rep] of AREA_RULES) t = t.replace(re, rep);      // cm² など（英字置換より先）
   t = t.replace(/[A-Za-z]+/g, w => UNIT_WORDS[w] || w);            // 単位記号（かたまり一致のみ）
@@ -192,18 +213,22 @@ function enVoice() {
   return list.find(v => v.localService) || list[0];
 }
 /* 日本語と英語が まざった 文を、それぞれの ボイスで 順に 読む */
-function speak(text, force) {
+/* よむ はやさ（保護者メニューで えらぶ。未設定なら 1年＝ゆっくり、5年＝ふつう） */
+const RATES = { slow: 0.8, normal: 0.95, fast: 1.12 };
+const RATE_LABEL = { slow: "ゆっくり", normal: "ふつう", fast: "はやい" };
+function rateKey() { return prof().settings.rate || (state.grade === "g1" ? "slow" : "normal"); }
+function speak(text, force, slow) {
   if (!force && !prof().settings.speak) return;
   try {
     if (!("speechSynthesis" in window) || !text) return;
     speechSynthesis.cancel();
     const ja = chooseVoice(), en = enVoice();
-    const rate = state.grade === "g1" ? 0.88 : 0.95;   // 1年生は ゆっくり
+    const rate = RATES[rateKey()] * (slow ? 0.72 : 1);   // 🐢 は さらに ゆっくり
     for (const seg of splitSpeech(text)) {
       const u = new SpeechSynthesisUtterance(seg.text);
       const v = seg.en ? en : ja;
       u.lang = seg.en ? (en ? en.lang : "en-US") : (ja ? ja.lang : "ja-JP");
-      u.rate = seg.en ? Math.min(1, rate + 0.05) : rate;
+      u.rate = seg.en ? Math.min(slow ? 0.7 : 1.05, rate + 0.03) : rate;
       u.pitch = 1.0;
       // ボイス代入に 失敗しても 読み上げ自体は 続ける
       if (v) { try { u.voice = v; } catch (e) {} }
@@ -211,6 +236,13 @@ function speak(text, force) {
     }
   } catch (e) {}
 }
+/* ほめことば・はげまし（毎回 ちがう ことばに する） */
+const PRAISE_OK = ["せいかい！", "すごい！", "やったね！", "よく できたね！", "その ちょうし！", "かんぺき！", "いいね！"];
+const PRAISE_NG = ["おしい！", "だいじょうぶ！", "ドンマイ！", "もう すこし！"];
+function pickOne(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+function praiseOn() { return prof().settings.praise !== false; }
+/* 選択肢の ことばを 読める 形に する（記号・単位・英語も なおす） */
+function choiceReadable(c) { return toReadable({ q: String(c) }); }
 // ボイス一覧は非同期で読み込まれるため、変化時に確保しておく
 if ("speechSynthesis" in window) {
   speechSynthesis.getVoices();
@@ -644,7 +676,8 @@ function showQuestion() {
   const bodyChoice = choices ? `
     <div class="choices">
       ${choices.map(c => `<button class="choice" data-choice="${encodeURIComponent(c)}">${c}</button>`).join("")}
-    </div>` : "";
+    </div>
+    ${round.timed ? "" : `<p class="choice-hint">🔊 こたえを ながおし すると よみあげるよ</p>`}` : "";
 
   const bodyNumber = q.input === "number" ? `
     <div class="answer-box" id="answerBox"></div>
@@ -673,6 +706,7 @@ function showQuestion() {
     ${head}
     <div class="question-card">
       <button class="speak-btn" id="speakBtn" title="よみあげ" aria-label="よみあげ">🔊</button>
+      <button class="speak-btn slow" id="slowBtn" title="ゆっくり よみあげ" aria-label="ゆっくり よみあげ">🐢</button>
       ${q.prompt ? `<div class="prompt">${q.prompt}</div>` : ""}
       ${q.svg || ""}
       ${q.q ? `<div class="q ${q.q.length > 12 ? "small" : ""}">${q.q}</div>` : ""}
@@ -684,9 +718,13 @@ function showQuestion() {
 
   round.locked = false; round.current = "";
   document.getElementById("speakBtn").onclick = () => speak(toReadable(q), true);
+  document.getElementById("slowBtn").onclick = () => speak(toReadable(q), true, true);
   if (choices) {
-    screen().querySelectorAll("[data-choice]").forEach(b =>
-      b.onclick = () => answerChoice(b, decodeURIComponent(b.dataset.choice)));
+    screen().querySelectorAll("[data-choice]").forEach(b => {
+      const v = decodeURIComponent(b.dataset.choice);
+      setupLongPress(b, () => speak(choiceReadable(v), true));
+      b.onclick = () => { if (b.dataset.lp === "1") { b.dataset.lp = ""; return; } answerChoice(b, v); };
+    });
   } else {
     screen().querySelectorAll("[data-k]").forEach(b => b.onclick = () => keypad(b.dataset.k));
   }
@@ -965,6 +1003,23 @@ function memoUp(e) {
   }
 }
 
+/* ながおしで よみあげ（えらぶ ボタンを おしたまま 0.45秒）。ながおしの あとの click は こたえに しない */
+function setupLongPress(el, fn) {
+  let timer = null, sx = 0, sy = 0;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  el.addEventListener("pointerdown", e => {
+    sx = e.clientX; sy = e.clientY; el.dataset.lp = "";
+    cancel();
+    timer = setTimeout(() => { timer = null; el.dataset.lp = "1"; el.classList.add("reading"); fn();
+      setTimeout(() => el.classList.remove("reading"), 600); }, 450);
+  });
+  el.addEventListener("pointermove", e => { if (Math.abs(e.clientX - sx) + Math.abs(e.clientY - sy) > 12) cancel(); });
+  el.addEventListener("pointerup", cancel);
+  el.addEventListener("pointercancel", () => { cancel(); el.dataset.lp = ""; });
+  el.addEventListener("pointerleave", cancel);
+  el.addEventListener("contextmenu", e => e.preventDefault());
+}
+
 function keypad(k) {
   if (round.locked) return;
   const box = document.getElementById("answerBox");
@@ -1012,6 +1067,7 @@ function finishQuestion(ok, given) {
       const left = hitWrong(subj, q);
       if (left === 0) { p.reviewCleared++; fb.textContent += "　🩹 にがて こくふく！"; }
       else if (left > 0) fb.textContent += `　（あと${left}回 正かいで こくふく）`;
+      if (praiseOn()) speak(left === 0 ? "やったね！ にがて こくふく！" : pickOne(PRAISE_OK), true);
     }
   } else {
     if (round.timed) round.combo = 0;
@@ -1039,7 +1095,8 @@ function finishQuestion(ok, given) {
     if (round.timed) round.nextTimer = setTimeout(goNext, 1500);
     return;
   }
-  round.nextTimer = setTimeout(goNext, round.timed ? 450 : 900);
+  // ほめことばを 言いおわる まで 少し まつ（つぎの 問題の よみあげで 切れない ように）
+  round.nextTimer = setTimeout(goNext, round.timed ? 450 : (praiseOn() ? 1300 : 900));
 }
 
 /* ---------- かいせつ ---------- */
@@ -1126,7 +1183,8 @@ function showExplain(q, given, subj, onNext) {
   fb.after(box);
   box.scrollIntoView({ block: "nearest", behavior: "smooth" });
   // かいせつも 記号・単位を なおしてから 読む（生のままだと「＝」「cm²」が 読めない）
-  const readable = toReadable({ q: `こたえは、${q.answer}。${hint ? hint : ""}${why}` });
+  const cheer = praiseOn() ? pickOne(PRAISE_NG) + " " : "";
+  const readable = toReadable({ q: `${cheer}こたえは、${q.answer}。${hint ? hint : ""}${why}` });
   document.getElementById("whySpeak").onclick = () => speak(readable, true);
   const nextBtn = document.getElementById("whyNext");
   if (nextBtn) nextBtn.onclick = onNext;
@@ -1136,7 +1194,11 @@ function showExplain(q, given, subj, onNext) {
     round.questions.splice(round.idx + 1, 0, { ...similar, extra: true });
     onNext();
   };
-  if (!round.timed) speak(readable);   // よみあげ設定が オンなら かいせつも 読む
+  // よみあげ設定が オンなら かいせつも 読む。オフでも ほめことば設定が オンなら ひとこと はげます
+  if (!round.timed) {
+    if (prof().settings.speak) speak(readable);
+    else if (cheer) speak(cheer + "かいせつを 読んで みよう。", true);
+  }
 }
 
 /* せいかい率の リング（結果画面） */
@@ -1222,6 +1284,11 @@ function finishRound() {
     </div>
   `);
   animateRing();
+  if (praiseOn()) {
+    const msg = perfect ? "ぜんもん せいかい！ すごいね！" : goalNow ? "きょうの めあて、たっせい！ よく がんばったね！"
+      : rate >= 0.6 ? "よく がんばったね！" : "おつかれさま！ つぎは もっと できるよ。";
+    setTimeout(() => speak(msg, true), 300);
+  }
   const setDiff = d => { prof().settings.difficulty = d; saveState(); startRound(round.subject); };
   if (document.getElementById("diffUp")) document.getElementById("diffUp").onclick = () => setDiff(order[di + 1]);
   if (document.getElementById("diffDown")) document.getElementById("diffDown").onclick = () => setDiff(order[di - 1]);
@@ -1590,6 +1657,19 @@ function showParent() {
         </select>
       </div>
       <div class="setting-row">
+        <span>よむ はやさ</span>
+        <select id="rate">
+          ${["slow", "normal", "fast"].map(k => `<option value="${k}" ${rateKey() === k ? "selected" : ""}>${RATE_LABEL[k]}</option>`).join("")}
+        </select>
+      </div>
+      <div class="setting-row">
+        <span>ほめことば・はげましの こえ</span>
+        <select id="praise">
+          <option value="on" ${praiseOn() ? "selected" : ""}>オン</option>
+          <option value="off" ${!praiseOn() ? "selected" : ""}>オフ</option>
+        </select>
+      </div>
+      <div class="setting-row">
         <span>タイムアタックの じかん</span>
         <select id="attackTime">
           ${[30, 60, 90, 120].map(n => `<option value="${n}" ${p.settings.attackTime === n ? "selected" : ""}>${n}秒</option>`).join("")}
@@ -1644,6 +1724,8 @@ function showParent() {
     p.settings.speak = e.target.value === "on"; saveState();
     if (p.settings.speak) speak("よみあげを おんに しました", true);
   };
+  document.getElementById("rate").onchange = e => { p.settings.rate = e.target.value; saveState(); speak("この はやさで よみあげます。", true); };
+  document.getElementById("praise").onchange = e => { p.settings.praise = e.target.value === "on"; saveState(); if (p.settings.praise) speak(pickOne(PRAISE_OK), true); };
   document.getElementById("attackTime").onchange = e => { p.settings.attackTime = +e.target.value; saveState(); };
   document.getElementById("voice").onchange = e => { p.settings.voiceURI = e.target.value || null; saveState(); speak("こんにちは。この こえで よみあげます。", true); };
   document.getElementById("voiceTest").onclick = () => speak("こんにちは。いっしょに べんきょう しましょう。", true);
