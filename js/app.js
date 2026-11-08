@@ -18,7 +18,7 @@ function freshProfile() {
     owned: { avatars: ["kid"], themes: ["orange"] },
     avatar: "kid",
     theme: "orange",
-    settings: { sound: true, speak: null, perRound: QUESTIONS_PER_ROUND, attackTime: 60, difficulty: "normal", voiceURI: null, dailyGoal: 3, rate: null, praise: true },
+    settings: { sound: true, speak: null, perRound: QUESTIONS_PER_ROUND, attackTime: 60, difficulty: "normal", voiceURI: null, dailyGoal: 3, rate: null, praise: true, strokeCheck: true },
     bestAttack: 0,      // タイムアタックの最高正解数
     goalDate: null,     // さいごに「きょうの めあて」を たっせいした日
     goalDays: 0,        // めあてを たっせいした 日数（のべ）
@@ -37,6 +37,7 @@ function migrate(p, grade) {
   if (p.settings.dailyGoal === undefined) p.settings.dailyGoal = 3;
   if (p.settings.rate === undefined) p.settings.rate = null;       // null = 学年の おすすめ（1年 ゆっくり）
   if (p.settings.praise === undefined) p.settings.praise = true;
+  if (p.settings.strokeCheck === undefined) p.settings.strokeCheck = true;
   for (const w of p.wrong) migrateReview(w, todayStr());   // 旧「2回正かい」方式 → 間隔反復（js/srs.js）
   if (!p.owned) p.owned = { avatars: ["kid"], themes: ["orange"] };
   if (!p.owned.avatars) p.owned.avatars = ["kid"];
@@ -361,7 +362,11 @@ function checkBadges(roundResult) {
 
 /* ---------- 画面ユーティリティ ---------- */
 const screen = () => document.getElementById("screen");
-function render(html) { closeMemo(); screen().innerHTML = html; window.scrollTo(0, 0); }
+function render(html) {
+  closeMemo();
+  document.documentElement.classList.remove("write-lock");   // かきとりの 全画面シートを ぬけた
+  screen().innerHTML = html; window.scrollTo(0, 0);
+}
 function refreshTop() {
   const coinEl = document.getElementById("coinCount");
   const before = +coinEl.textContent || 0;
@@ -1417,11 +1422,19 @@ let writeState = null;
 const MODEL_OPACITY = [0.22, 0.1, 0]; // こい / うすい / なし
 function startWriting(setId) {
   const set = WRITING_SETS[state.grade].find(s => s.id === setId);
-  writeState = { set, idx: 0, opacityStep: 0 };
+  writeState = { set, idx: 0, opacityStep: 0, perfect: 0 };
   showWritingCard();
 }
 
 const OP_LABEL = ["こい", "うすい", "なし"];
+/* かきとりは メモと おなじく 画面ぜんたいを つかう シートで 書く。
+   ブラウザの ダブルタップ拡大・ピンチ・スクロールを シートの 中では ぜんぶ 止める
+   （「、」や「・」のような みじかい 画を 2回 つづけて 書くと、ページが 拡大されていた）。
+   書き順チェック（js/strokecheck.js）が オンなら、1画 書くごとに お手本の 何画めかを はんていし、
+   ちがったら その画を 赤で 見せてから 消し、正しい 画を オレンジで 光らせる。 */
+const pad = { strokes: [], cur: null, refs: [], ds: null, k: 0, miss: 0, reject: null, size: 0, pid: null };
+function strokeCheckOn() { return prof().settings.strokeCheck !== false; }
+
 function showWritingCard() {
   const { set, idx } = writeState;
   const item = set.chars[idx];
@@ -1430,109 +1443,251 @@ function showWritingCard() {
   const showYomi = item.yomi && item.yomi !== item.c;
   const ds = STROKES[item.c];
   const op = MODEL_OPACITY[writeState.opacityStep];
+  Object.assign(pad, { strokes: [], cur: null, ds: ds || null, refs: ds ? strokeRefs(ds) : [], k: 0, miss: 0, reject: null, pid: null, warned: false });
 
   // お手本レイヤー（筆順データがあればSVG、なければフォント文字）
   const modelLayer = ds
     ? `<svg class="pad-model-svg" id="modelSvg" viewBox="0 0 109 109" style="opacity:${op}">
          ${ds.map(d => `<path d="${d}"/>`).join("")}</svg>`
     : `<div class="pad-model" id="modelSvg" style="opacity:${op}">${item.c}</div>`;
-  // 書き順アニメ用レイヤー（最初は非表示）
+  // 書き順アニメ・ヒント用レイヤー（最初は非表示）
   const orderLayer = ds
     ? `<svg class="pad-order-svg" id="orderSvg" viewBox="0 0 109 109">
-         ${ds.map(d => `<path d="${d}" pathLength="1"/>`).join("")}</svg>` : "";
+         ${ds.map(d => `<path d="${d}" pathLength="1"/>`).join("")}
+         <circle id="startDot" r="4.5" cx="-20" cy="-20"></circle></svg>` : "";
 
   render(`
-    <div class="quiz-head">
-      <span class="qnum">${idx + 1}/${total}</span>
-      <div class="progress"><i style="width:${pct}%"></i></div>
-      <span class="qnum">✍️ ${set.name}</span>
+    <div class="write-sheet" id="writeSheet">
+      <div class="write-top">
+        <button class="write-x" id="quitBtn" aria-label="やめる">✕</button>
+        <div class="progress"><i style="width:${pct}%"></i></div>
+        <span class="qnum">${idx + 1}/${total}</span>
+      </div>
+      <div class="write-info">
+        <span class="write-set">✍️ ${set.name}</span>
+        ${showYomi ? `<span>よみ：<b>${item.yomi}</b></span>` : ""}
+        <button class="speak-inline" id="speakBtn" aria-label="よみあげ">🔊</button>
+        ${ds ? `<span class="hint">${ds.length}かく</span>` : ""}
+      </div>
+      <div class="write-stage" id="writeStage">
+        <div class="pad-wrap" id="padWrap">
+          ${modelLayer}
+          ${orderLayer}
+          <canvas id="padCanvas" class="pad-canvas"></canvas>
+        </div>
+      </div>
+      <div class="write-status" id="writeStatus"></div>
+      <div class="write-tools">
+        <button class="memo-tool" id="orderBtn" ${ds ? "" : "disabled"}><b>▶️</b><span>書き順</span></button>
+        <button class="memo-tool" id="modelBtn"><b>👁️</b><span id="modelLabel">お手本 ${OP_LABEL[writeState.opacityStep]}</span></button>
+        <button class="memo-tool" id="undoBtn"><b>↩️</b><span>もどす</span></button>
+        <button class="memo-tool" id="clearBtn"><b>🗑️</b><span>けす</span></button>
+        <button class="memo-tool ${strokeCheckOn() && ds ? "on" : ""}" id="checkBtn" ${ds ? "" : "disabled"} aria-pressed="${strokeCheckOn()}" aria-label="書き順チェック"><b>${strokeCheckOn() ? "✅" : "⬜"}</b><span>チェック</span></button>
+      </div>
+      <button class="big-btn green write-done" id="doneBtn">かけた！ つぎへ ➡️</button>
     </div>
-    ${showYomi ? `<p class="subtitle" style="text-align:center;margin:2px 0 8px">よみ：${item.yomi}　<button class="speak-inline" id="speakBtn">🔊</button>　<span class="hint">${ds ? ds.length + "かく" : ""}</span></p>`
-               : `<div style="text-align:center;margin-bottom:6px"><button class="speak-inline" id="speakBtn">🔊 きく</button>　<span class="hint">${ds ? ds.length + "かく" : ""}</span></div>`}
-    <div class="pad-wrap">
-      ${modelLayer}
-      ${orderLayer}
-      <canvas id="padCanvas" class="pad-canvas"></canvas>
-    </div>
-    <div class="pad-controls pad-controls-3">
-      <button class="key" id="orderBtn" ${ds ? "" : "disabled"}>▶ 書き順</button>
-      <button class="key" id="modelBtn">お手本 ${OP_LABEL[writeState.opacityStep]}</button>
-      <button class="key del" id="clearBtn">けす</button>
-    </div>
-    <button class="big-btn green" id="doneBtn">かけた！ つぎへ ➡️</button>
-    <button class="big-btn ghost" id="quitBtn" style="margin-top:10px">やめる</button>
-    <div class="feedback" id="feedback"></div>
   `);
+  document.documentElement.classList.add("write-lock");
+
+  const sheet = document.getElementById("writeSheet");
+  const stop = e => e.preventDefault();
+  sheet.addEventListener("touchmove", stop, { passive: false });
+  sheet.addEventListener("gesturestart", stop);
+  sheet.addEventListener("gesturechange", stop);
+  sheet.addEventListener("dblclick", stop);
+  sheet.addEventListener("contextmenu", stop);
 
   setupPad();
+  writeStatus();
   document.getElementById("speakBtn").onclick = () => speak(item.yomi || item.c, true);
   document.getElementById("modelBtn").onclick = () => {
     writeState.opacityStep = (writeState.opacityStep + 1) % MODEL_OPACITY.length;
     document.getElementById("modelSvg").style.opacity = MODEL_OPACITY[writeState.opacityStep];
-    document.getElementById("modelBtn").textContent = "お手本 " + OP_LABEL[writeState.opacityStep];
+    document.getElementById("modelLabel").textContent = "お手本 " + OP_LABEL[writeState.opacityStep];
   };
-  document.getElementById("clearBtn").onclick = clearPad;
+  document.getElementById("undoBtn").onclick = () => {
+    if (!pad.strokes.length) return;
+    pad.strokes.pop();
+    if (pad.k > 0 && pad.k > pad.strokes.length) pad.k = pad.strokes.length;
+    padDraw(); writeStatus();
+  };
+  document.getElementById("clearBtn").onclick = () => { pad.strokes = []; pad.k = 0; padDraw(); writeStatus(); };
+  document.getElementById("checkBtn").onclick = () => {
+    prof().settings.strokeCheck = !strokeCheckOn(); saveState();
+    pad.strokes = []; pad.k = 0; pad.miss = 0;
+    const b = document.getElementById("checkBtn");
+    b.classList.toggle("on", strokeCheckOn());
+    b.setAttribute("aria-pressed", strokeCheckOn());
+    b.querySelector("b").textContent = strokeCheckOn() ? "✅" : "⬜";
+    padDraw(); writeStatus();
+  };
   document.getElementById("doneBtn").onclick = writingDone;
   document.getElementById("quitBtn").onclick = showWritingMenu;
-  if (ds) document.getElementById("orderBtn").onclick = animateStrokes;
+  if (ds) document.getElementById("orderBtn").onclick = () => animateStrokes();
 
   speak(item.yomi || item.c);   // 自動よみあげ（設定オン時）
-  if (ds) setTimeout(animateStrokes, 350);  // カード表示時に書き順を1回さいせい
+  if (ds) setTimeout(() => animateStrokes(), 350);  // カード表示時に書き順を1回さいせい
 }
 
-/* 書き順アニメ：ストロークを1画ずつ描く */
+/* 書き順チェックの ようすを 1行で 出す */
+function writeStatus(kind, extra) {
+  const el = document.getElementById("writeStatus");
+  if (!el) return;
+  const total = pad.refs.length;
+  let text, cls = "";
+  if (!pad.ds) text = "お手本を 見ながら 書いてみよう";
+  else if (!strokeCheckOn()) text = "じゆうに 書いてみよう（書き順チェック オフ）";
+  else if (kind === "order") { cls = "ng"; text = `❌ じゅんばんが ちがうよ。いまは <b>${pad.k + 1}画め</b>（オレンジの 線）`; }
+  else if (kind === "reverse") { cls = "ng"; text = `↩️ 書く むきが ぎゃくだよ。<b>●</b> から 書きはじめよう`; }
+  else if (kind === "off") { cls = "ng"; text = `🤔 かたちや ばしょが ちがうみたい。オレンジの 線を 見て もういちど`; }
+  else if (pad.k >= total) {
+    cls = "ok";
+    text = pad.miss === 0 ? "🎉 書き順 ぴったり！ 「かけた！」を おしてね" : `✅ ぜんぶ かけた！（書き順の まちがい ${pad.miss}回）`;
+  }
+  else if (kind === "ok") { cls = "ok"; text = `⭕ ${pad.k}画め OK！ つぎは <b>${pad.k + 1}画め</b>`; }
+  else text = `<b>${pad.k + 1}画め</b> から 書いてね（ぜんぶで ${total}画）`;
+  el.className = "write-status " + cls;
+  el.innerHTML = text + (extra || "");
+}
+
+/* パッドの 大きさを 画面に あわせる（正方形で いちばん 大きく） */
+function padLayout() {
+  const stage = document.getElementById("writeStage"), wrap = document.getElementById("padWrap"), cv = document.getElementById("padCanvas");
+  if (!stage || !wrap || !cv) return;
+  const size = Math.max(160, Math.floor(Math.min(stage.clientWidth, stage.clientHeight, 560)));
+  wrap.style.width = wrap.style.height = size + "px";
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width = Math.round(size * dpr); cv.height = Math.round(size * dpr);
+  pad.size = size; pad.dpr = dpr;
+  padDraw();
+}
+function padCtx109(ctx) { const k = pad.dpr * pad.size / 109; ctx.setTransform(k, 0, 0, k, 0, 0); }
+function padStrokePath(ctx, p, color, w) {
+  ctx.strokeStyle = color; ctx.lineWidth = w; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.beginPath(); ctx.moveTo(p[0][0], p[0][1]);
+  if (p.length === 1) ctx.lineTo(p[0][0] + 0.05, p[0][1] + 0.05);
+  for (let i = 1; i < p.length; i++) ctx.lineTo(p[i][0], p[i][1]);
+  ctx.stroke();
+}
+const PAD_W = 6.5;   // 線の 太さ（109 ます あたり）
+function padDraw() {
+  const cv = document.getElementById("padCanvas");
+  if (!cv) return;
+  const c = cv.getContext("2d");
+  c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, cv.width, cv.height);
+  padCtx109(c);
+  for (const s of pad.strokes) padStrokePath(c, s, "#2f2417", PAD_W);
+  if (pad.reject) padStrokePath(c, pad.reject, "rgba(242,84,91,.85)", PAD_W);
+  if (pad.cur) padStrokePath(c, pad.cur, "#2b6ad4", PAD_W);
+}
+let padResizeBound = false;
+function setupPad() {
+  const cv = document.getElementById("padCanvas");
+  padLayout();
+  if (!padResizeBound) { padResizeBound = true; window.addEventListener("resize", () => { if (document.getElementById("padCanvas")) padLayout(); }); }
+  const pos = e => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) / r.width * 109, (e.clientY - r.top) / r.height * 109]; };
+  cv.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    if (pad.pid !== null) return;          // 2本め の ゆび（手のひら など）は むし
+    pad.pid = e.pointerId;
+    try { cv.setPointerCapture(e.pointerId); } catch (err) {}
+    pad.cur = [pos(e)];
+    padDraw();
+  });
+  cv.addEventListener("pointermove", e => {
+    if (e.pointerId !== pad.pid || !pad.cur) return;
+    e.preventDefault();
+    const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+    for (const ev of evs) {
+      const p = pos(ev), l = pad.cur[pad.cur.length - 1];
+      if (Math.abs(p[0] - l[0]) + Math.abs(p[1] - l[1]) > 0.25) pad.cur.push(p);
+    }
+    padDraw();
+  });
+  const end = e => {
+    if (e.pointerId !== pad.pid) return;
+    pad.pid = null;
+    const s = pad.cur; pad.cur = null;
+    if (s) padFinishStroke(s, e.type === "pointercancel");
+  };
+  cv.addEventListener("pointerup", end);
+  cv.addEventListener("pointercancel", end);
+}
+/* 1画 書きおわった ときの はんてい */
+function padFinishStroke(s, cancelled) {
+  if (cancelled && s.length < 3) { padDraw(); return; }
+  if (!pad.ds || !strokeCheckOn() || pad.k >= pad.refs.length) {
+    pad.strokes.push(s); padDraw();
+    if (pad.ds && strokeCheckOn()) writeStatus("extra", "<br>（画が おおいよ。↩️もどす で けせるよ）");
+    return;
+  }
+  const pairs = pad.strokes.map((u, i) => [u, pad.refs[i]]);
+  const tol = writeState.opacityStep === 2 ? 26 : 22;   // お手本なしの ときは すこし ゆるく
+  const r = judgeStroke(s, pad.refs, pad.k, { tol, shift: strokeShift(pairs) });
+  if (r.result === "ok") {
+    pad.strokes.push(s); pad.k++;
+    padDraw();
+    writeStatus("ok");
+    if (pad.k >= pad.refs.length) { beep("ok"); if (praiseOn()) speak(pad.miss === 0 ? "書き順 ぴったり！" : "ぜんぶ かけたね！", true); }
+    return;
+  }
+  // まちがい：赤で 見せてから 消し、正しい 画を 光らせる
+  pad.miss++;
+  pad.reject = s; padDraw();
+  beep("ng");
+  writeStatus(r.result);
+  hintStroke(pad.k, r.result === "reverse");
+  setTimeout(() => { if (pad.reject === s) { pad.reject = null; padDraw(); } }, 900);
+}
+
+/* 書き順アニメ：ストロークを1画ずつ描く（only を わたすと その画だけ ＝ ヒント） */
 let strokeTimers = [];
-function animateStrokes() {
+function animateStrokes(only) {
   const svg = document.getElementById("orderSvg");
   if (!svg) return;
   strokeTimers.forEach(clearTimeout); strokeTimers = [];
   const paths = [...svg.querySelectorAll("path")];
-  paths.forEach(p => { p.style.transition = "none"; p.style.strokeDashoffset = "1"; p.style.opacity = "1"; });
+  const dot = document.getElementById("startDot");
+  if (dot) dot.setAttribute("cx", "-20");
+  // まだ 番が きていない 画は かくしておく（線の はしの まるい 点が 先に 見えてしまうため）
+  paths.forEach(p => { p.style.transition = "none"; p.style.strokeDashoffset = "1"; p.style.opacity = "0"; });
   void svg.getBoundingClientRect(); // reflow
   let t = 0;
   paths.forEach((p, i) => {
+    if (only !== undefined && only !== i) return;
     const dur = 460, gap = 170;
     strokeTimers.push(setTimeout(() => {
+      p.style.opacity = "1";
       p.style.transition = `stroke-dashoffset ${dur}ms linear`;
       p.style.strokeDashoffset = "0";
     }, t));
     t += dur + gap;
   });
+  // ヒントは しばらく したら 消す（お手本を じゃましない）
+  if (only !== undefined) strokeTimers.push(setTimeout(() => {
+    paths[only].style.transition = "opacity .4s"; paths[only].style.opacity = "0";
+    if (dot) dot.setAttribute("cx", "-20");
+  }, 2600));
 }
-
-/* 指／マウス／スタイラスで描けるキャンバスを用意する共通関数 */
-function makeSketch(canvas, { color = "#3a2b1a", width = 12 } = {}) {
-  const rect = canvas.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = Math.max(1, Math.round(rect.width * dpr));
-  canvas.height = Math.max(1, Math.round(rect.height * dpr));
-  const ctx = canvas.getContext("2d");
-  ctx.scale(dpr, dpr);
-  ctx.lineWidth = width; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.strokeStyle = color;
-  let drawing = false;
-  const pos = e => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
-  canvas.addEventListener("pointerdown", e => {
-    drawing = true; canvas.setPointerCapture(e.pointerId);
-    const [x, y] = pos(e); ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 0.1, y + 0.1); ctx.stroke();
-  });
-  canvas.addEventListener("pointermove", e => { if (!drawing) return; const [x, y] = pos(e); ctx.lineTo(x, y); ctx.stroke(); });
-  const stop = () => { drawing = false; };
-  canvas.addEventListener("pointerup", stop);
-  canvas.addEventListener("pointercancel", stop);
-  canvas.addEventListener("pointerleave", stop);
-  return { ctx, clear: () => ctx.clearRect(0, 0, canvas.width, canvas.height) };
+/* まちがえた ときの ヒント：正しい 画を オレンジで 書いて みせ、書きはじめに ● を おく */
+function hintStroke(i, showStart) {
+  animateStrokes(i);
+  const dot = document.getElementById("startDot"), ref = pad.refs[i];
+  // 書きはじめの ●（むきが ぎゃくの ときは 大きく して 目立たせる）
+  if (dot && ref) { dot.setAttribute("cx", ref[0][0]); dot.setAttribute("cy", ref[0][1]); dot.setAttribute("r", showStart ? 6 : 4.5); }
 }
-
-let padCtx = null, padCanvas = null;
-function setupPad() {
-  padCanvas = document.getElementById("padCanvas");
-  padCtx = makeSketch(padCanvas, { color: "#3a2b1a", width: 12 }).ctx;
-}
-function clearPad() { if (padCtx && padCanvas) padCtx.clearRect(0, 0, padCanvas.width, padCanvas.height); }
 
 function writingDone() {
   const p = prof();
-  p.coins += 5; p.writeCount++;
+  // 書き順チェック中に まだ 画が のこっている ときは 1回だけ 知らせる（もう一度 おせば すすむ）
+  if (pad.ds && strokeCheckOn() && pad.k < pad.refs.length && !pad.warned) {
+    pad.warned = true;
+    writeStatus("", `<br>まだ ${pad.refs.length - pad.k}画 のこってるよ（もう一度 おすと つぎへ）`);
+    return;
+  }
+  const perfect = pad.ds && strokeCheckOn() && pad.k >= pad.refs.length && pad.miss === 0;
+  p.coins += 5 + (perfect ? 3 : 0); p.writeCount++;
+  if (perfect) writeState.perfect = (writeState.perfect || 0) + 1;
   const today = todayStr();
   if (p.lastStudyDate !== today) {
     if (p.lastStudyDate && daysBetween(p.lastStudyDate, today) === 1) p.streak++;
@@ -1547,8 +1702,7 @@ function writingDone() {
     showWritingCard();
     if (newBadges.length) {
       const b = BADGES.find(x => x.id === newBadges[0]);
-      const fb = document.getElementById("feedback");
-      if (fb) { fb.className = "feedback ok"; fb.textContent = `🎊 ${b.emoji} 「${b.name}」ゲット！`; }
+      writeStatus("", `<br>🎊 ${b.emoji} 「${b.name}」ゲット！`);
     }
   } else {
     finishWriting(newBadges);
@@ -1566,7 +1720,8 @@ function finishWriting(newBadges) {
     <div class="result">
       <div class="big-emoji">🏆</div>
       <div class="score">${writeState.set.name} ぜんぶ かけた！</div>
-      <div class="reward">${total}文字 れんしゅう！ コイン ${total * 5}🪙 ゲット！</div>
+      <div class="reward">${total}文字 れんしゅう！ コイン ${total * 5 + (writeState.perfect || 0) * 3}🪙 ゲット！
+        ${writeState.perfect ? `<br>書き順 ぴったり：${writeState.perfect}文字（+${writeState.perfect * 3}🪙）` : ""}</div>
       ${badgeHtml}
       <button class="big-btn green" id="againBtn">もういちど</button>
       <button class="big-btn blue" id="menuBtn">ほかの かきとり</button>
