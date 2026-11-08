@@ -54,6 +54,8 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; height: 100%; }
+/* ボタンを つづけて タップしても ブラウザが ダブルタップ拡大しない（ピンチ拡大は できる） */
+html { touch-action: manipulation; }
 body {
   font-family: var(--font);
   color: var(--ink);
@@ -538,9 +540,43 @@ html.memo-lock, html.memo-lock body { overflow: hidden; }
 .pad-model-svg path { fill: none; stroke: #000; stroke-width: 4.5; stroke-linecap: round; stroke-linejoin: round; }
 .pad-order-svg path {
   fill: none; stroke: var(--orange); stroke-width: 5.5; stroke-linecap: round; stroke-linejoin: round;
-  stroke-dasharray: 1; stroke-dashoffset: 1; opacity: 0;
+  /* 線の長さ 1 ＋ すきま 2：書く まえの 位置（offset 1）で 見える 点が「終点」ではなく「書きはじめ」に くる */
+  stroke-dasharray: 1 2; stroke-dashoffset: 1; opacity: 0;
 }
 .pad-canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+.pad-order-svg circle { fill: var(--orange); stroke: #fff; stroke-width: 1.5; }
+
+/* かきとり：メモと おなじ 全画面シート（ブラウザの ズーム・スクロールを 止める） */
+html.write-lock, html.write-lock body { overflow: hidden; }
+.write-sheet {
+  position: fixed; inset: 0; z-index: 55; display: flex; flex-direction: column; gap: var(--s2);
+  background: linear-gradient(180deg, var(--bg) 0%, var(--bg2) 100%);
+  touch-action: none; overscroll-behavior: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  padding: calc(env(safe-area-inset-top) + 10px) calc(env(safe-area-inset-right) + 16px)
+           calc(env(safe-area-inset-bottom) + 12px) calc(env(safe-area-inset-left) + 16px);
+}
+.write-top { display: flex; align-items: center; gap: var(--s2); }
+.write-top .progress { flex: 1; }
+.write-x {
+  width: 44px; height: 44px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 50%;
+  background: var(--card); color: var(--ink); font-size: 20px; font-weight: 900; cursor: pointer; font-family: inherit;
+}
+.write-info { display: flex; align-items: center; justify-content: center; gap: var(--s2); flex-wrap: wrap; font-size: var(--t-md); }
+.write-set { font-weight: 800; color: var(--ink-soft); font-size: var(--t-sm); }
+.write-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+.write-stage .pad-wrap { max-width: none; margin: 0; flex: 0 0 auto; }
+.write-status {
+  text-align: center; font-size: var(--t-md); font-weight: 800; min-height: 2.7em; line-height: 1.35;
+}
+.write-status.ok { color: var(--green-d); }
+.write-status.ng { color: var(--red); }
+.write-tools {
+  display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; background: var(--card);
+  border: 1px solid var(--line); border-radius: var(--r-md); padding: 4px;
+}
+.write-tools .memo-tool:disabled { opacity: .35; }
+.write-done { margin: 0; }
+@media (min-width: 720px) { .write-sheet > * { width: 100%; max-width: 640px; margin-left: auto; margin-right: auto; } }
 .pad-controls { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s2); max-width: 340px; margin: 0 auto 4px; }
 .pad-controls-3 { grid-template-columns: repeat(3, 1fr); }
 .pad-controls .key { padding: 12px 4px; font-size: var(--t-sm); }

@@ -1,7 +1,7 @@
 /* まいにち スタディ（学習アプリ）の 問題と 復習スケジュールを Node で検算する。
    実行: node scripts/test-study.mjs
 
-   js/data.js・js/generators.js・js/srs.js は DOM を さわらないので、
+   js/data.js・js/generators.js・js/srs.js・js/strokecheck.js は DOM を さわらないので、
    scripts/test-game.mjs と同じ new Function 方式で そのまま 読みこめる。
    算数は 問題文から「自分で 計算しなおした こたえ」と ジェネレーターの こたえを
    くらべる（ジェネレーターの コードを なぞるのではなく、別の 計算で たしかめる）。 */
@@ -13,9 +13,10 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (f) => fs.readFileSync(path.join(root, f), "utf8");
 const S = new Function(
-  [read("js/data.js"), read("js/generators.js"), read("js/strokes.js"), read("js/srs.js")].join("\n;\n") +
+  [read("js/data.js"), read("js/generators.js"), read("js/strokes.js"), read("js/srs.js"), read("js/strokecheck.js")].join("\n;\n") +
   "\n; return { DATA, BADGES, SUBJECTS, SHOP, WRITING_SETS, WHY, STROKES, mathG1, mathG5, generateMathSet, generateSimilar, mathWhy, mathMistake," +
-  " REVIEW_GAPS, dateKey, daysBetween, addDays, isDue, reviewWrong, reviewCorrect, reviewLeft, dueList, nextDueIn, migrateReview };"
+  " REVIEW_GAPS, dateKey, daysBetween, addDays, isDue, reviewWrong, reviewCorrect, reviewLeft, dueList, nextDueIn, migrateReview," +
+  " svgPathPoints, resampleStroke, strokeRefs, judgeStroke, strokeShift };"
 )();
 
 let failed = 0, passed = 0;
@@ -259,6 +260,48 @@ section("7. オフライン用ファイル一覧（sw.js）");
   const refs = [...html.matchAll(/(?:src|href)="([^"]+\.(?:js|css|webmanifest|svg|png))"/g)].map((m) => m[1]);
   const notCached = refs.filter((r) => !assets.includes(r));
   ok("index.html が 読みこむ ファイルは ぜんぶ ASSETS に ある", notCached.length === 0, show(notCached));
+}
+
+/* ---------- 8. 書き順チェック ---------- */
+section("8. 書き順チェック（js/strokecheck.js）— かきとりの 全文字で、手ぶれ・ずれを くわえて 書かせる");
+{
+  // 決まった 乱数（毎回 おなじ 結果に なる）
+  let seed = 7;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  const shake = (pts, amp, off) => {
+    const w = [(rnd() - 0.5) * amp, (rnd() - 0.5) * amp];
+    return pts.map((p, i) => [p[0] + off[0] + w[0] * Math.sin((i / pts.length) * 3) + (rnd() - 0.5) * amp * 0.3,
+                              p[1] + off[1] + w[1] * Math.cos((i / pts.length) * 3) + (rnd() - 0.5) * amp * 0.3]);
+  };
+  const chars = [...new Set(Object.values(S.WRITING_SETS).flat().flatMap((st) => st.chars.map((c) => c.c)))];
+  let okN = 0, okBad = [], ordN = 0, ordBad = [], revN = 0, revHit = 0;
+  for (const off of [[0, 0], [8, -6]]) for (const ch of chars) {
+    const ds = S.STROKES[ch]; if (!ds) continue;
+    const refs = S.strokeRefs(ds), raw = ds.map((d) => S.svgPathPoints(d)), pairs = [];
+    for (let k = 0; k < raw.length; k++) {
+      const u = shake(raw[k], 6, off);
+      const r = S.judgeStroke(u, refs, k, { tol: 22, shift: S.strokeShift(pairs) });
+      okN++;
+      if (r.result === "ok") pairs.push([u, refs[k]]); else okBad.push(`${ch} ${k + 1}画め → ${r.result}`);
+    }
+    if (off[0] === 0) for (let j = 1; j < raw.length; j++) {
+      ordN++;
+      const r = S.judgeStroke(shake(raw[j], 6, [0, 0]), refs, 0, { tol: 22 });
+      if (r.result === "ok") ordBad.push(`${ch}：${j + 1}画めを さきに 書いても OK に なった`);
+    }
+    const a = raw[0][0], b = raw[0][raw[0].length - 1];
+    if (off[0] === 0 && Math.hypot(a[0] - b[0], a[1] - b[1]) > 15) {
+      revN++;
+      if (S.judgeStroke(shake(raw[0], 6, [0, 0]).reverse(), refs, 0, { tol: 22 }).result === "reverse") revHit++;
+    }
+  }
+  ok(`正しい 書き順なら ぜんぶ OK（${okN}画、字の ずれ あり／なし）`, okBad.length === 0, show(okBad));
+  ok(`じゅんばんを かえると OK に しない（${ordN}とおり）`, ordBad.length === 0, show(ordBad));
+  ok(`むきが ぎゃくだと 98%以上 見つける（${revHit}/${revN}）`, revHit / revN >= 0.98);
+  ok("SVG の パスを 点に できる（相対 c・S を ふくむ）", S.svgPathPoints("M10,10c0,0,10,0,10,10s10,10,10,0").length > 20);
+  const line = S.resampleStroke([[0, 0], [10, 0]], 5);
+  ok("点を 等間隔に とりなおす", line.length === 5 && Math.abs(line[2][0] - 5) < 1e-9);
+  ok("1点だけ（点を うつ）の 画でも こわれない", S.judgeStroke([[50, 50]], S.strokeRefs(S.STROKES["山"]), 0).result !== undefined);
 }
 
 /* ---------- 結果 ---------- */
